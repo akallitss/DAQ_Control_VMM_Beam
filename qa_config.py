@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Standalone QA watcher configuration for the P2 SPS beam test.
+Standalone QA watcher configuration for the P2 VMM SPS beam test.
 Edit the constants below, then run this script to regenerate config/qa_config.json.
 The flask UI's Start QA Watcher button reads that JSON to launch qa_watcher.py.
 """
@@ -9,10 +9,10 @@ The flask UI's Start QA Watcher button reads that JSON to launch qa_watcher.py.
 import json
 import os
 
-from run_config_beam import BASE_DATA_DIR
+from run_config_beam import BASE_DATA_DIR, CAPTURE_DURATION_S
 
 BASE_DATA = BASE_DATA_DIR
-# QA lives in this repo (p2_daq_analysis/detector_qa.py) and runs with this
+# The pcapng QA lives in this repo (vmm_qa/vmm_pcapng_qa.py) and runs with this
 # repo's venv — no external analysis repository needed at the beam.
 DAQ_REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -23,17 +23,25 @@ CONFIG = {
     # Repository containing the QA script and the venv to run it with.
     # qa_script_rel_path / qa_python_rel_path are relative to analysis_dir.
     'analysis_dir': DAQ_REPO_DIR,
-    'qa_script_rel_path': 'p2_daq_analysis/detector_qa.py',
+    'qa_script_rel_path': 'vmm_qa/vmm_pcapng_qa.py',
     'qa_python_rel_path': '.venv/bin/python',
 
-    # Subdirectory name for combined hits files (must match processor_config)
-    'combined_hits_inner_dir': 'combined_hits_root',
+    # Subdirectory of each subrun holding the capture files
+    'raw_inner_dir': 'raw_daq_data',
 
-    # QA file mode:
-    #   'all'      — rerun QA with all accumulated files whenever a new one appears (default)
-    #   'first'    — run QA once per subrun using only file_num=0 (fast for long runs)
-    #   'per_file' — independent QA plot set for each file_num
-    'qa_file_mode': 'first',
+    # QA outputs land in <qa_out_base>/<run>/<subrun>/<pcap_basename>/
+    # (PNGs + events.json — the flask Online QA gallery and the events
+    # counter both read this tree).
+    'qa_out_base': f'{BASE_DATA}analysis/',
+
+    # dumpcap rotation interval; files with no higher-seq sibling and no
+    # .capture_done marker finalize after 2x this (see qa_watcher docstring).
+    'capture_duration_s': CAPTURE_DURATION_S,
+
+    # Passed through to vmm_pcapng_qa.py
+    'data_format': 'SRS',   # 'SRS' (continuous) or 'TRG' (external trigger markers)
+    'calibration': None,    # vmm-sdat calibration JSON path; None = no calibration
+    'max_packets': None,    # optional packet cap per file; None = read whole file
 
     # Run filtering
     'include_runs': None,  # e.g. ['run_1', 'run_2'] — only process these; None = all
@@ -41,7 +49,7 @@ CONFIG = {
 
     # Watcher behavior
     'poll_interval':   10,  # seconds between scans
-    'stale_run_days':   1,  # runs with no new combined_hits for this many days are skipped
+    'stale_run_days':   1,  # runs with no new capture files for this many days are skipped
     'memory_kill_pct': 80,  # kill the QA process if system RAM usage exceeds this % (retried next poll)
 
     # CPU throttling — keep QA from starving the DAQ.
