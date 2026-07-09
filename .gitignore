@@ -217,3 +217,8 @@ config/pedestal_qa_config.json
 config/processor_config.json
 config/qa_config.json
 config/json_run_configs/
+
+# Runtime state written by flask / qa_watcher
+config/current_run_state.json
+config/qa_state.json
+config/qa_reset.json
