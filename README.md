@@ -49,6 +49,11 @@ Everything machine-specific lives in the `SITES` dict at the top of
 
 ## Deploying on the DAQ computer (SPS)
 
+> **`TODO_SPS.txt`** in the repo root is the working checklist for this
+> section: one entry per `TODO-SPS` field with concrete commands to *find*
+> each value (scan for the CAEN/TTi IPs, identify the capture NIC, etc.)
+> and a final verification list. Start there when setting up the machine.
+
 ### 1. Install
 
 ```bash
