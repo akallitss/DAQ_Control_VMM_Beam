@@ -1,0 +1,171 @@
+================================================================================
+ TODO-SPS CHECKLIST — things to fill in on the VMM DAQ computer at the beam
+================================================================================
+Every item below is marked TODO-SPS in the code (grep -rn TODO-SPS).
+Work through them top to bottom on the DAQ machine; when done, switch
+SITE = 'sps' in run_config_beam.py and run:
+    .venv/bin/python run_config_beam.py     # prints a summary — read it!
+
+--------------------------------------------------------------------------------
+ 1. base_data_dir                                    run_config_beam.py (SITES)
+--------------------------------------------------------------------------------
+ What : directory on the DAQ machine's DATA disk where runs/ analysis/ etc.
+        are created. Keep the trailing slash.
+ How  : find the big data partition:
+            df -h                      # look for the large, mostly-empty disk
+            lsblk -f                   # partition layout
+        Create the tree and make sure your user can write:
+            mkdir -p /local/p2/p2data/sps_vmm_2026 && touch /local/p2/p2data/sps_vmm_2026/.w
+        Also copy config/detectors/ contents there (define_detectors etc. are
+        read from <base_data_dir>/config/detectors/).
+
+--------------------------------------------------------------------------------
+ 2. daq_host                                         run_config_beam.py (SITES)
+--------------------------------------------------------------------------------
+ What : IP where daq_control/flask reach the hv/lv/daq servers.
+ How  : everything runs on the SAME machine -> leave 127.0.0.1. Done.
+        (Only change it if services are ever split across machines; then use
+        `hostname -I` on the server machine.)
+        Separately: to open the GUI from the control room you need the DAQ
+        machine's LAN IP — `hostname -I` or `ip -br addr` — and port 5002
+        reachable (check any local firewall: `sudo ufw status` /
+        `sudo firewall-cmd --list-ports`).
+
+--------------------------------------------------------------------------------
+ 3. hv_ip  (CAEN mainframe)                          run_config_beam.py (SITES)
+--------------------------------------------------------------------------------
+ What : IP of the CAEN HV crate on the network the DAQ machine sees.
+ How  , in order of reliability:
+        a) Read it on the crate itself: front-panel display/menu shows the
+           LAN settings (or plug in the local keypad/screen).
+        b) If it was configured before, it is often written on a label/tape
+           on the crate, or known by whoever set up the crate (Dream DAQ
+           uses the same crate family — check DAQ_Control_Dream_Beam's
+           run_config_beam.py for the value already in use at SPS).
+        c) Scan the crate subnet from the DAQ machine:
+               sudo arp-scan --interface=<nic> 192.168.10.0/24
+               # or:  nmap -sn 192.168.10.0/24
+           CAEN mainframes show a CAEN OUI in the MAC vendor column.
+        Test:  ping <hv_ip>   and log in once with the CAEN GECO/web tool.
+
+--------------------------------------------------------------------------------
+ 4. hv_n_cards  +  P2_HV channel map                 run_config_beam.py
+--------------------------------------------------------------------------------
+ What : number of HV cards in the SPS crate, and (card, channel) for the P2
+        mesh and drift lines.
+ How  : count the cards physically / check the crate inventory, then follow
+        the SHV cables: which card slot + channel number the mesh and drift
+        of P2 are plugged into. Update:
+            hv_n_cards            (SITES['sps'])
+            P2_HV = {'mesh': (card, ch), 'drift': (card, ch)}
+        The GUI HV plot labels (P2_1_Mesh / P2_1_Drift) follow from this map.
+        Verify by ramping a few volts from the CAEN tool and watching which
+        channel moves.
+
+--------------------------------------------------------------------------------
+ 5. lv_units  (Aim-TTi PSU IPs)                      run_config_beam.py (SITES)
+--------------------------------------------------------------------------------
+ What : LAN IPs of the two TTi bench supplies (tti1, tti2).
+ How  : a) On each unit's front panel: Menu/Utilities -> Interface -> LAN
+           shows the current IP (they may be DHCP — consider setting a
+           static IP or a DHCP reservation so it survives power cycles).
+        b) LXI discovery from the DAQ machine:
+               lxi discover            # apt install lxi-tools
+        c) Subnet scan as in item 3 (vendor "Aim-TTi"/"TTi").
+        Test SCPI directly (port 9221 is fixed on these units):
+            nc -zv <ip> 9221
+            printf '*IDN?\n' | nc -q1 <ip> 9221      # should return the IDN string
+        Note which physical rail is on which unit+channel and set
+        lv_info['units'][name]['channels'] if not all 3 channels are used.
+
+--------------------------------------------------------------------------------
+ 6. interfaces  (capture NICs + ALINX config)        run_config_beam.py (SITES)
+--------------------------------------------------------------------------------
+ What : Linux name of each NIC that receives VMM UDP, and the absolute path
+        of the alinx-sc JSON config on the DAQ machine.
+ How  : list NICs and see which has a link up on the readout fibre/cable:
+            ip -br link                 # UP/DOWN per interface
+            ethtool <iface>             # link detected: yes
+        Confirm data actually arrives on it (with the front-end sending):
+            sudo tcpdump -i <iface> -nn udp -c 5
+        The UDP *source* IP printed there is the FEC/ALINX — the QA
+        auto-detects it, nothing to configure, but it is a good check.
+        ALINX config: locate the file used to arm the firmware:
+            locate config_alinx_noThresholds.json   # or: find / -name 'config_alinx*' 2>/dev/null
+        and test the slow control end to end:
+            alinx-sc --config-file <path> --read-link-status
+        SRS chain: if also capturing SRS, uncomment the 'srs' entry and set
+        its iface the same way (slow_control: 'none').
+
+--------------------------------------------------------------------------------
+ 7. trigger description                              run_config_beam.py
+--------------------------------------------------------------------------------
+ What : self.trigger — free-text description of the actual trigger formation
+        at SPS (goes into run_config.json for bookkeeping/analysis).
+ How  : write down the real setup once cabled, e.g. "scintillator coincidence
+        S1&S2 -> TCM ext trigger" or "self-triggered". If running with an
+        external trigger, also switch the QA to marker parsing:
+            qa_config.py: 'data_format': 'TRG'   (then rerun it to regenerate)
+
+--------------------------------------------------------------------------------
+ 8. det_center_coords                                run_config_beam.py
+--------------------------------------------------------------------------------
+ What : x/y/z of the P2 detector centre in beam-line coordinates.
+ How  : from the survey after installation (ask the survey team / take the
+        table position + detector offset). Informational, but saved with
+        every run — fill before production data.
+
+--------------------------------------------------------------------------------
+ 9. vmm_map                                          run_config_beam.py
+--------------------------------------------------------------------------------
+ What : iface -> which hybrid/VMM ids appear in the data (labels QA plots).
+ How  : take one short run (or the dry run below) and open the QA
+        hits_per_vmm plot / events.json "hits_per_vmm" keys — the VMM ids
+        present are the map. Match them to the physical hybrids from the
+        cabling sheet.
+
+--------------------------------------------------------------------------------
+ 10. Backup to EOS                                   backup_config.py
+--------------------------------------------------------------------------------
+ What : EOS_DIR, CERN_PRINCIPAL, GPG_PASS_FILE.
+ How  : EOS_DIR — the experiment's EOS space, e.g. an existing
+            /eos/project/.../p2_sps_beam/ or your user space
+            /eos/user/<initial>/<username>/p2_sps_beam/  (create it via
+            lxplus or CERNBox first). It must be FUSE-mounted on the DAQ
+            machine (ls /eos/... works).
+        CERN_PRINCIPAL — your CERN account, e.g. akallits@CERN.CH
+            (check with:  klist  after a kinit on lxplus).
+        GPG_PASS_FILE — store your CERN password encrypted:
+            echo -n '<password>' | gpg --encrypt -r <your-gpg-key> -o ~/.cern_pass.gpg
+        Test the chain once:
+            gpg -d ~/.cern_pass.gpg | kinit <principal>
+            rsync -a --dry-run <base_data_dir>/config/ /eos/<...>/config/
+
+--------------------------------------------------------------------------------
+ 11. Credentials / privileges on the DAQ machine
+--------------------------------------------------------------------------------
+ - hv_creds.txt in the repo root: CAEN username on line 1, password on
+   line 2 (gitignored). Ask whoever administers the crate.
+ - dumpcap without sudo:
+       sudo usermod -aG wireshark $USER    # then re-login, or:
+       sudo setcap cap_net_raw,cap_net_admin+eip $(which dumpcap)
+   Verify:  dumpcap -D    lists the interfaces without sudo.
+ - alinx-sc on PATH for the shell that runs start_servers.sh:  which alinx-sc
+
+--------------------------------------------------------------------------------
+ 12. Final verification (in order)
+--------------------------------------------------------------------------------
+ [ ] grep -rn TODO-SPS *.py        -> only comments/doc lines remain
+ [ ] SITE = 'sps'; .venv/bin/python run_config_beam.py  -> summary correct
+ [ ] ping + service tests of items 3/5/6 all pass
+ [ ] ./start_servers.sh ; each pane healthy (see README "First-connection tests")
+ [ ] Dry run WITHOUT beam: N_SUBRUNS=1, SUBRUN_MIN=1-2 -> HV ramps, LV CSV
+     fills, pcapngs rotate in runs/run_N/.../raw_daq_data/, QA PNGs appear,
+     "Hits this run" counts, Stop Run shuts down cleanly
+ [ ] Set the real run plan (N_SUBRUNS/SUBRUN_MIN/HV points) and go.
+
+================================================================================
+ Ports used (must not clash with the Dream stack on the same machine):
+   hv_control 2100 | vmm_daq 2101 | lv_control 2102 | flask GUI 5002
+ The Dream stack keeps its own ports (incl. flask 5001) — both can run at once.
+================================================================================
