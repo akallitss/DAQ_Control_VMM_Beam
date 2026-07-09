@@ -18,8 +18,8 @@ from datetime import datetime
 
 import requests
 
-from daq_status import (get_dream_daq_status, get_hv_control_status,
-                        get_daq_control_status, get_processor_watcher_status,
+from daq_status import (get_vmm_daq_status, get_hv_control_status,
+                        get_lv_control_status, get_daq_control_status,
                         get_qa_watcher_status)
 
 TELEGRAM_URL = "https://api.telegram.org/bot{token}/{method}"
@@ -299,21 +299,21 @@ class DaqMonitor:
     # Rules
     # ---------------------------------------------------------------
 
-    def rule_dream_daq_session_dead(self):
-        """Alert if the dream_daq tmux session is not running at all."""
-        info = get_dream_daq_status()
+    def rule_vmm_daq_session_dead(self):
+        """Alert if the vmm_daq tmux session is not running at all."""
+        info = get_vmm_daq_status()
         fields_str = str(info.get("fields", ""))
         if info["color"] == "danger" and "tmux not running" in fields_str:
-            return True, "dream_daq tmux session is not running."
-        return False, f"dream_daq: {info['status']}"
+            return True, "vmm_daq tmux session is not running."
+        return False, f"vmm_daq: {info['status']}"
 
     def rule_daq_control_session_dead(self):
-        """Alert if the daq_control tmux session is not running at all."""
+        """Alert if the vmm_daq_control tmux session is not running at all."""
         info = get_daq_control_status()
         fields_str = str(info.get("fields", ""))
         if info["color"] == "danger" and "tmux not running" in fields_str:
-            return True, "daq_control tmux session is not running."
-        return False, f"daq_control: {info['status']}"
+            return True, "vmm_daq_control tmux session is not running."
+        return False, f"vmm_daq_control: {info['status']}"
 
     def rule_hv_control_monitoring(self):
         """Alert if hv_control is not actively monitoring HV (dead, off, or unknown)."""
@@ -323,16 +323,30 @@ class DaqMonitor:
             return True, f"hv_control is not monitoring HV — status: {info['status']}"
         return False, f"hv_control: {info['status']}"
 
-    def rule_dream_daq_unknown_state(self):
-        """Alert if dream_daq is running but in an unrecognised state."""
-        info = get_dream_daq_status()
+    def rule_lv_disconnected(self):
+        """Alert if any TTi LV unit is disconnected or the LV session is dead."""
+        info = get_lv_control_status()
+        if info["status"] in ("LV Disconnected", "ERROR", "UNKNOWN STATE"):
+            return True, f"lv_control problem — status: {info['status']}"
+        return False, f"lv_control: {info['status']}"
+
+    def rule_vmm_daq_capture_error(self):
+        """Alert if a capture process exited with an error mid-subrun."""
+        info = get_vmm_daq_status()
+        if info["status"] == "CAPTURE ERROR":
+            return True, "vmm_daq reports a CAPTURE ERROR — check the terminal."
+        return False, f"vmm_daq: {info['status']}"
+
+    def rule_vmm_daq_unknown_state(self):
+        """Alert if vmm_daq is running but in an unrecognised state."""
+        info = get_vmm_daq_status()
         if info["status"] == "UNKNOWN STATE":
-            return True, "dream_daq is in UNKNOWN STATE — check the terminal."
-        return False, f"dream_daq: {info['status']}"
+            return True, "vmm_daq is in UNKNOWN STATE — check the terminal."
+        return False, f"vmm_daq: {info['status']}"
 
     def rule_daq_control_unknown_state(self):
         """Alert if daq_control is running but in an unrecognised state."""
         info = get_daq_control_status()
         if info["status"] == "UNKNOWN STATE":
-            return True, "daq_control is in UNKNOWN STATE — check the terminal."
-        return False, f"daq_control: {info['status']}"
+            return True, "vmm_daq_control is in UNKNOWN STATE — check the terminal."
+        return False, f"vmm_daq_control: {info['status']}"

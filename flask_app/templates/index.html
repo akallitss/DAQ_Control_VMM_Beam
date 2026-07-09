@@ -18,7 +18,7 @@
               <div class="stat-value" id="run-display">None</div>
             </div>
             <div class="stat">
-              <div class="stat-label">Events this run</div>
+              <div class="stat-label">Hits this run (analyzed)</div>
               <div class="stat-value" id="events-display">0</div>
             </div>
           </div>
@@ -32,7 +32,6 @@
               <button id="stop-sub-run" class="btn btn-warning">Stop Sub-Run</button>
               <button id="pause-toggle" class="btn btn-outline-warning">Pause After Subrun</button>
               <button id="restart-all" class="btn btn-outline-danger">Restart All</button>
-              <button id="take-pedestals" class="btn btn-secondary">Take Pedestals</button>
               <button id="git-reset" class="btn btn-secondary">Git Reset</button>
             </div>
           </div>
@@ -40,9 +39,7 @@
           <div class="btn-group-block">
             <span class="group-label">Watchers</span>
             <div class="d-flex flex-wrap gap-2">
-              <button id="processor-toggle" class="btn btn-info btn-sm">Start Processor</button>
               <button id="qa-toggle" class="btn btn-info btn-sm">Start QA</button>
-              <button id="pedestal-toggle" class="btn btn-info btn-sm">Start Pedestal QA</button>
               <button id="backup-toggle" class="btn btn-info btn-sm">Start Backup</button>
               <button id="rerun-qa" class="btn btn-outline-warning btn-sm ms-auto">Rerun QA</button>
             </div>
@@ -131,6 +128,24 @@
     </div>
   </div>
 
+  <!-- LV Monitor -->
+  <div class="panel mt-3">
+    <div class="panel-header">
+      <span class="panel-title">LV Monitor</span>
+      <span class="panel-header-note">TTi PSU voltage and current readings from LV control (same subrun as HV)</span>
+    </div>
+    <div class="panel-body">
+      <div class="row g-3">
+        <div class="col-12 col-xl-6">
+          <div id="lv-voltage-plot" style="width:100%;height:320px;"></div>
+        </div>
+        <div class="col-12 col-xl-6">
+          <div id="lv-current-plot" style="width:100%;height:320px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="{{ url_for('static', filename='plotly.min.js') }}"></script>
 </div>
 
@@ -157,9 +172,9 @@
           </select>
         </div>
         <div class="col-12 col-sm-6 col-lg-3">
-          <label for="detector-select" class="form-label">Detector:</label>
+          <label for="detector-select" class="form-label">Capture file:</label>
           <select id="detector-select" class="form-select" disabled>
-            <option value="">Select detector...</option>
+            <option value="">Select capture file...</option>
           </select>
         </div>
         <div class="col-12 col-sm-6 col-lg-3" id="qa-subdir-col" style="display:none;">
@@ -179,31 +194,6 @@
   </div>
 
   <div id="png-gallery" class="row g-3 mt-0"></div>
-</div>
-
-
-<!-- Pedestal QA Tab -->
-<div class="tab-pane fade" id="ped-viewer">
-  <div class="panel">
-    <div class="panel-header">
-      <span class="panel-title">Pedestal QA</span>
-    </div>
-    <div class="panel-body">
-      <div class="d-flex flex-wrap align-items-center gap-2">
-        <label for="ped-run-select" class="form-label mb-0">Pedestal run:</label>
-        <select id="ped-run-select" class="form-select" style="width:auto;">
-          <option value="">Loading...</option>
-        </select>
-        <button id="ped-reload" class="btn btn-outline-info btn-sm">Reload</button>
-        <a id="ped-pdf-link" class="btn btn-outline-light btn-sm d-none" target="_blank" href="#">PDF</a>
-      </div>
-
-      <div id="ped-summary" class="mt-3"></div>
-      <p id="ped-no-qa" class="text-muted d-none mb-0">No QA output for this run yet — the watcher will analyze it once the run finishes.</p>
-    </div>
-  </div>
-
-  <div id="ped-gallery" class="row g-3 mt-0"></div>
 </div>
 
 
@@ -240,7 +230,7 @@ function updateStatus() {
         .then(r => r.json())
         .then(data => {
             // Check subrun change
-            const daq = data["daq_control"];
+            const daq = data.find(s => s.name === "vmm_daq_control");
             const fields = daq?.fields || [];
 
             // Find the "Subrun" field (if it exists)
@@ -297,11 +287,12 @@ function updateStatus() {
                   </div>`;
             });
 
-            // "Events this run" is folded into the dream_daq card by /status, so it
+            // "Hits this run" is folded into the vmm_daq card by /status, so it
             // refreshes in lockstep with that card (1s) rather than a separate timer.
-            const dd = data.find(s => s.name === "dream_daq");
+            const dd = data.find(s => s.name === "vmm_daq");
             if (dd && dd.run_events != null) {
-                document.getElementById("events-display").textContent = dd.run_events;
+                document.getElementById("events-display").textContent =
+                    Number(dd.run_events).toLocaleString();
             }
 
             updateWatcherToggles(data);
@@ -464,6 +455,60 @@ async function updateHVPlots() {
     }
 }
 
+// --- LV Plots (near-copy of the HV pair; same run/subrun selector) ---
+async function updateLVPlots() {
+    try {
+        const run = document.getElementById("run-select").value;
+        const subrun = document.getElementById("hv-subrun-select").value;
+        const res = await fetch(`/lv_data?run=${encodeURIComponent(run)}&subrun=${encodeURIComponent(subrun)}`);
+        const data = await res.json();
+        if (!data || Object.keys(data).length === 0 || !data.success) return;
+
+        const time = data.time;
+        // One hue per PSU unit; channel = shade (ch1 darkest .. ch3 lightest).
+        const LV_UNIT_COLOR = { tti1: "#3987e5", tti2: "#c98500" };
+        function lvTraceColor(name) {
+            const m = name.match(/^(\w+?)_ch(\d)$/);
+            const base = LV_UNIT_COLOR[m ? m[1] : ""] || "#8b96a5";
+            const ch = m ? parseInt(m[2]) : 1;
+            return _hvLighten(base, (ch - 1) * 0.28);
+        }
+        const mkTraces = obj => Object.entries(obj).map(([key, values]) => ({
+            x: time, y: values, mode: 'lines', name: key,
+            line: { color: lvTraceColor(key), width: 2 }
+        }));
+
+        const uirev = `${run}/${subrun}`;
+        const axisStyle = { gridcolor: '#242e39', zerolinecolor: '#38434f', linecolor: '#38434f' };
+        const yTitleFont = { size: 17, color: '#cbd5e1' };
+        const commonLayout = {
+            legend: { orientation: 'h' },
+            hovermode: 'x unified',
+            uirevision: uirev,
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#8b96a5' },
+            hoverlabel: { bgcolor: '#1b222b', bordercolor: '#38434f' },
+            margin: { t: 20, r: 20, b: 30, l: 60 }
+        };
+        const plotConfig = { responsive: true, displaylogo: false };
+
+        Plotly.react('lv-voltage-plot', mkTraces(data.voltage), {
+            ...commonLayout,
+            xaxis: { ...axisStyle },
+            yaxis: { title: { text: 'LV Voltage (V)', font: yTitleFont }, ...axisStyle }
+        }, plotConfig);
+        Plotly.react('lv-current-plot', mkTraces(data.current), {
+            ...commonLayout,
+            xaxis: { ...axisStyle },
+            yaxis: { title: { text: 'LV Current (A)', font: yTitleFont }, ...axisStyle }
+        }, plotConfig);
+
+    } catch (err) {
+        console.error("LV update failed:", err);
+    }
+}
+
 async function loadRuns() {
     // Hack to only allow run_config_beam.json
   const runSelect = document.getElementById("run-select");
@@ -499,6 +544,7 @@ async function loadSubruns() {
     subrunSelect.value = newest;
     hvNewestSubrun = newest;
     updateHVPlots();
+    updateLVPlots();
   } else if (subruns.includes(prev)) {
     subrunSelect.value = prev;   // no new subrun -> keep the user's selection
   } else {
@@ -513,18 +559,13 @@ setInterval(loadSubruns, 5000);
 document.getElementById("run-select").addEventListener("change", loadSubruns);
 
 // redraw immediately when the user picks a subrun (don't wait for the 5s poll)
-document.getElementById("hv-subrun-select").addEventListener("change", updateHVPlots);
+document.getElementById("hv-subrun-select").addEventListener("change", () => {
+    updateHVPlots();
+    updateLVPlots();
+});
 
 // initial load
 loadRuns();
-
-// take pedestals button handler
-document.getElementById("take-pedestals").addEventListener("click", async () => {
-  const res = await fetch("/take_pedestals", { method: "POST" });
-  const data = await res.json();
-  showPopup(data.message, "#17a2b8");
-});
-
 
 // git reset button handler
 document.getElementById("git-reset").addEventListener("click", async () => {
@@ -628,7 +669,7 @@ async function stopRun() {
 }
 
 function updateRunToggle(statuses) {
-  const daq = statuses.find(s => s.name === "daq_control");
+  const daq = statuses.find(s => s.name === "vmm_daq_control");
   if (!daq) return;
   runActive = !RUN_IDLE_STATES.includes(daq.status);
   const btn = document.getElementById("run-toggle");
@@ -650,7 +691,7 @@ document.getElementById("run-toggle").addEventListener("click", () => {
 // DAQ is actually waiting at a boundary. One click toggles the flag (arm / cancel /
 // resume). Only meaningful during a run, so disable it when idle.
 function updatePauseToggle(statuses) {
-  const daq = statuses.find(s => s.name === "daq_control");
+  const daq = statuses.find(s => s.name === "vmm_daq_control");
   if (!daq) return;
   const btn = document.getElementById("pause-toggle");
   const armed  = !!daq.pause_armed;         // manual pause flag set
@@ -701,7 +742,7 @@ setInterval(updateRunDisplay, 5000);
 updateRunDisplay();
 
 
-// "Events this run" (#events-display) is now updated from the dream_daq card in
+// "Hits this run" (#events-display) is now updated from the vmm_daq card in
 // updateStatus() so it stays in sync with that card. (/get_run_events still exists
 // for other callers.)
 
@@ -933,23 +974,13 @@ function osJoin(...parts) {
 }
 
 
-// ---------------------------------------------------------------------------
-// Pedestal QA tab
-// ---------------------------------------------------------------------------
-
-let pedLastGenerated = null;   // summary.json "generated" stamp currently shown
-
-// Processor / QA / Pedestal QA / Backup single toggle buttons (moved to Run Control).
+// QA / Backup single toggle buttons (in Run Control).
 // A watcher's status is "STOPPED" when its tmux session isn't running; the button
 // text/action follow that state, refreshed each /status poll via updateWatcherToggles().
 const WATCHER_TOGGLES = [
-    { name: "processor_watcher", btn: "processor-toggle", label: "Processor",
-      start: "/start_processor", stop: "/stop_processor", confirm: "Stop the processor watcher?" },
-    { name: "qa_watcher", btn: "qa-toggle", label: "QA",
+    { name: "vmm_qa_watcher", btn: "qa-toggle", label: "QA",
       start: "/start_qa", stop: "/stop_qa", confirm: "Stop the QA watcher?" },
-    { name: "pedestal_watcher", btn: "pedestal-toggle", label: "Pedestal QA",
-      start: "/start_ped_qa", stop: "/stop_ped_qa", confirm: "Stop the pedestal QA watcher?" },
-    { name: "backup_watcher", btn: "backup-toggle", label: "Backup",
+    { name: "vmm_backup_watcher", btn: "backup-toggle", label: "Backup",
       start: "/start_backup", stop: "/stop_backup", confirm: "Stop the backup watcher?" },
 ];
 const watcherStopped = {};  // name -> bool, tracked from /status
@@ -981,148 +1012,6 @@ WATCHER_TOGGLES.forEach(cfg => {
         }
     });
 });
-
-async function loadPedRuns() {
-    const select = document.getElementById("ped-run-select");
-    const res = await fetch("/list_ped_runs");
-    const data = await res.json();
-    if (!data.success) {
-        select.innerHTML = `<option value="">${data.message}</option>`;
-        return;
-    }
-    // Rebuild only when the list actually changed — replacing the options
-    // closes an open dropdown and can revert a selection made mid-fetch.
-    const labels = data.runs.map(r => r.has_qa ? r.name : `${r.name}  (no QA yet)`);
-    const current = Array.from(select.options).map(o => o.textContent);
-    if (labels.length === current.length && labels.every((l, i) => l === current[i])) return;
-
-    const prev = select.value;   // read at rebuild time, after the await
-    select.innerHTML = "";
-    data.runs.forEach(r => {
-        const opt = document.createElement("option");
-        opt.value = r.name;
-        opt.textContent = r.has_qa ? r.name : `${r.name}  (no QA yet)`;
-        select.appendChild(opt);
-    });
-    if (prev && data.runs.some(r => r.name === prev)) {
-        select.value = prev;           // keep user's selection on refresh
-    }                                  // else newest run (first option) is selected
-}
-
-const PED_LEVEL_BADGE = { good: "success", warn: "warning", bad: "danger" };
-
-function renderPedSummary(s) {
-    const div = document.getElementById("ped-summary");
-    if (!s) { div.innerHTML = ""; return; }
-
-    const overall = PED_LEVEL_BADGE[s.overall] || "secondary";
-    let html = `
-      <div class="d-flex flex-wrap align-items-center gap-3 mb-2">
-        <span class="badge bg-${overall}" style="font-size:1em;">${s.overall.toUpperCase()}</span>
-        <span>${s.total_bad} bad / ${s.total_ch} channels</span>
-        <span class="text-muted">Ref CNS RMS: ${s.ref_cns_rms} ADC</span>
-        <span class="text-muted">Pedestals: ${s.pedestal_ts || "?"}</span>
-        <span class="text-muted small">analyzed ${s.generated}</span>
-      </div>
-      <div style="overflow-x:auto;">
-      <table class="table table-dark table-sm table-bordered" style="width:auto;font-size:0.9em;">
-        <thead><tr>
-          <th>FEU</th><th>Events</th><th>OK</th><th>Noisy/Float</th>
-          <th>Dead/Stuck</th><th>Other</th><th>Med CNS RMS</th><th>Problem DREAMs</th>
-        </tr></thead><tbody>`;
-
-    Object.keys(s.feus).sort((a, b) => a - b).forEach(feu => {
-        const f = s.feus[feu];
-        const lvl = PED_LEVEL_BADGE[f.level] || "secondary";
-        const badDreams = Object.entries(f.bad_dreams)
-            .map(([d, cls]) => `D${d} (${cls.replace("_cable", "")})`)
-            .join(", ") || "—";
-        html += `<tr>
-          <td><span class="badge bg-${lvl}">FEU ${String(feu).padStart(2, "0")}</span></td>
-          <td>${f.n_events}</td><td>${f.n_ok}</td><td>${f.n_noisy}</td>
-          <td>${f.n_dead}</td><td>${f.n_other}</td>
-          <td>${f.med_cns_rms ?? "N/A"}</td><td>${badDreams}</td>
-        </tr>`;
-    });
-    div.innerHTML = html + "</tbody></table></div>";
-}
-
-async function loadPedQA(bustCache = false, data = null) {
-    const run = document.getElementById("ped-run-select").value;
-    if (!run) return;
-
-    if (!data) {
-        const res = await fetch(`/ped_qa_data?run=${encodeURIComponent(run)}`);
-        data = await res.json();
-    }
-    const gallery = document.getElementById("ped-gallery");
-    const noQa = document.getElementById("ped-no-qa");
-    const pdfLink = document.getElementById("ped-pdf-link");
-
-    if (!data.success) {
-        gallery.innerHTML = `<p class="text-danger">Error: ${data.message}</p>`;
-        return;
-    }
-    if (!data.has_qa) {
-        pedLastGenerated = null;
-        renderPedSummary(null);
-        gallery.innerHTML = "";
-        noQa.classList.remove("d-none");
-        pdfLink.classList.add("d-none");
-        return;
-    }
-    noQa.classList.add("d-none");
-    pedLastGenerated = data.summary.generated;
-    renderPedSummary(data.summary);
-
-    if (data.pdf) {
-        pdfLink.href = data.pdf;
-        pdfLink.classList.remove("d-none");
-    } else {
-        pdfLink.classList.add("d-none");
-    }
-
-    gallery.innerHTML = "";
-    const suffix = bustCache ? `&t=${Date.now()}` : "";
-    data.images.forEach(imgUrl => {
-        const src = imgUrl + suffix;
-        // Overview plots (channel map, summary table) get double width
-        const wide = /00_channel_map|01_summary_table/.test(decodeURIComponent(imgUrl));
-        const col = document.createElement("div");
-        col.className = wide ? "col-12 col-md-8 col-xl-6" : "col-6 col-md-4 col-xl-3";
-        col.innerHTML = `
-            <div class="plot-card">
-                <img src="${src}" style="max-height:${wide ? 320 : 200}px;" alt="pedestal QA plot">
-            </div>`;
-        gallery.appendChild(col);
-        col.querySelector("img").addEventListener("click", () => openFullscreenImage(src));
-    });
-}
-
-document.querySelector('a[href="#ped-viewer"]').addEventListener("click", async () => {
-    await loadPedRuns();
-    await loadPedQA();
-});
-document.getElementById("ped-run-select").addEventListener("change", () => loadPedQA());
-document.getElementById("ped-reload").addEventListener("click", async () => {
-    await loadPedRuns();
-    await loadPedQA(true);
-});
-
-// While the tab is visible, pick up new runs / newly analyzed runs automatically
-setInterval(async () => {
-    const pane = document.getElementById("ped-viewer");
-    if (!pane.classList.contains("active")) return;
-    await loadPedRuns();  // no-op unless the run list changed
-    const run = document.getElementById("ped-run-select").value;
-    if (!run) return;
-    const res = await fetch(`/ped_qa_data?run=${encodeURIComponent(run)}`);
-    const data = await res.json();
-    if (data.success && data.has_qa && data.summary.generated !== pedLastGenerated) {
-        await loadPedQA(true, data);
-    }
-}, 10000);
-
 
 setInterval(updateStatus, 1000);  // update every 1s
 updateStatus();
@@ -1211,7 +1100,9 @@ updateMonitorStatus();
 setInterval(updateMonitorStatus, 10000);
 
 updateHVPlots();
+updateLVPlots();
 setInterval(updateHVPlots, 5000);  // update every 5s
+setInterval(updateLVPlots, 5000);
 
 
 // ---------------------------------------------------------------------------

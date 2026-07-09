@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on September 29 3:45 PM 2025
-Created in PyCharm
-Created as Cosmic_Bench_DAQ_Control/app.py
+Flask GUI for the P2 VMM SPS DAQ: run control, HV/LV monitoring plots, live
+capture status, online QA gallery.
 
-@author: Dylan Neff, Dylan
+Adapted from Dylan Neff's Dream Beam app.py: vmm_* tmux sessions, LV panel,
+processor/pedestal UI dropped, port 5002 (Dream co-hosts on 5001).
+
+@author: Alexandra Kallitsopoulou (based on Dylan Neff's original)
 """
 
 import os
@@ -23,10 +25,9 @@ from urllib.parse import quote
 from flask import Flask, render_template, jsonify, request, send_from_directory, abort
 from flask_socketio import SocketIO, emit
 
-from daq_status import (get_dream_daq_status, get_hv_control_status,
-                        get_daq_control_status, get_processor_watcher_status,
-                        get_qa_watcher_status, get_backup_watcher_status,
-                        get_pedestal_watcher_status)
+from daq_status import (get_vmm_daq_status, get_hv_control_status,
+                        get_lv_control_status, get_daq_control_status,
+                        get_qa_watcher_status, get_backup_watcher_status)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Add parent dir to path
 from run_config_beam import Config, BASE_DATA_DIR
@@ -39,15 +40,11 @@ CONFIG_TEMPLATE_DIR = f"{BASE_DIR}/config/json_templates"
 CONFIG_RUN_DIR = f"{BASE_DIR}/config/json_run_configs"
 CONFIG_PY_PATH = f"{BASE_DIR}/run_config_beam.py"
 BASH_DIR = f"{BASE_DIR}/bash_scripts"
-PROCESSOR_CONFIG_PATH = f"{BASE_DIR}/config/processor_config.json"
-PROCESSOR_TMUX = "processor_watcher"
 QA_CONFIG_PATH = f"{BASE_DIR}/config/qa_config.json"
 QA_RESET_PATH  = f"{BASE_DIR}/config/qa_reset.json"
-QA_TMUX = "qa_watcher"
+QA_TMUX = "vmm_qa_watcher"
 BACKUP_CONFIG_PATH = f"{BASE_DIR}/config/backup_config.json"
-BACKUP_TMUX = "backup_watcher"
-PED_QA_CONFIG_PATH = f"{BASE_DIR}/config/pedestal_qa_config.json"
-PED_QA_TMUX = "pedestal_watcher"
+BACKUP_TMUX = "vmm_backup_watcher"
 # Last run name seen in the daq_control log; persisted so "Current run" survives
 # the status line scrolling out of the tmux pane / between runs / server restarts.
 CURRENT_RUN_STATE_PATH = f"{BASE_DIR}/config/current_run_state.json"
@@ -84,8 +81,8 @@ def log_event(event, source, **details):
 app = Flask(__name__)
 socketio = SocketIO(app)
 
-TMUX_SESSIONS = ["daq_control", "dream_daq", "hv_control", "processor_watcher", "qa_watcher", "backup_watcher",
-                 "pedestal_watcher"]
+TMUX_SESSIONS = ["vmm_daq_control", "vmm_daq", "vmm_hv_control", "vmm_lv_control",
+                 "vmm_qa_watcher", "vmm_backup_watcher"]
 sessions = {}
 
 @app.route("/")
@@ -163,8 +160,9 @@ def _fmt_min(minutes):
     return f"{h}h{m:02d}m" if h else f"{m}m"
 
 
-# On-disk event total only changes when a subrun completes, so cache it briefly:
-# /status is polled every 1s and get_total_events_for_run walks every subrun's logs.
+# On-disk hit total only changes when the QA finishes a capture file, so cache
+# it briefly: /status is polled every 1s and get_total_events_for_run walks
+# every subrun's events.json files in the analysis tree.
 _events_cache = {"run": None, "t": 0.0, "total": 0}
 
 
@@ -174,24 +172,14 @@ def _ondisk_run_events(run_name):
     if c["run"] == run_name and now - c["t"] < 4.0:
         return c["total"]
     try:
-        total, _ = get_total_events_for_run(run_dir=RUN_DIR, run_name=run_name)
+        total, _ = get_total_events_for_run(run_dir=ANALYSIS_DIR, run_name=run_name)
     except Exception:
         total = 0
     c.update(run=run_name, t=now, total=total)
     return total
 
 
-def _live_events_from(dream_info):
-    """Live nb_of_events from an already-fetched dream_daq status (no re-capture)."""
-    if (dream_info or {}).get("status") != "RUNNING":
-        return 0
-    try:
-        return int(str(_status_field(dream_info, "Subrun Events")).strip())
-    except (TypeError, ValueError):
-        return 0
-
-
-def _run_progress(daq_info, dream_info):
+def _run_progress(daq_info, vmm_info):
     """{subrun_idx, subrun_total, elapsed_min, total_min} for the current run, from
     its run_config.json sub_runs + the live subrun name/elapsed. {} if unavailable.
     Elapsed = completed subruns' planned time + the current subrun's elapsed (capped
@@ -212,7 +200,7 @@ def _run_progress(daq_info, dream_info):
     subrun = _status_field(daq_info, "Subrun")
     if subrun in names:
         i = names.index(subrun)
-        cur = min(_hms_to_min(_status_field(dream_info, "Run Time")), durs[i])
+        cur = min(_hms_to_min(_status_field(vmm_info, "Run Time")), durs[i])
         prog["subrun_idx"]  = i + 1
         prog["elapsed_min"] = sum(durs[:i]) + cur
     return prog
@@ -224,21 +212,19 @@ def status_all():
     by_name = {}
 
     for s in TMUX_SESSIONS:
-        if s == "dream_daq":
-            info = get_dream_daq_status()
-        elif s == "hv_control":
+        if s == "vmm_daq":
+            info = get_vmm_daq_status()
+        elif s == "vmm_hv_control":
             info = get_hv_control_status()
-        elif s == "daq_control":
+        elif s == "vmm_lv_control":
+            info = get_lv_control_status()
+        elif s == "vmm_daq_control":
             info = get_daq_control_status()
             _save_current_run(_extract_daq_run(info))  # keep Current run in sync
-        elif s == "processor_watcher":
-            info = get_processor_watcher_status()
-        elif s == "qa_watcher":
+        elif s == "vmm_qa_watcher":
             info = get_qa_watcher_status()
-        elif s == "backup_watcher":
+        elif s == "vmm_backup_watcher":
             info = get_backup_watcher_status()
-        elif s == "pedestal_watcher":
-            info = get_pedestal_watcher_status()
         else:
             info = {"status": "READY", "color": "secondary", "fields": []}
 
@@ -246,26 +232,26 @@ def status_all():
         statuses.append(entry)
         by_name[s] = entry
 
-    # Enrich the dream_daq card with run progress (subrun x/N, elapsed/total time)
-    # and the live "Events this run" total, so both refresh with the 1s /status poll
+    # Enrich the vmm_daq card with run progress (subrun x/N, elapsed/total time)
+    # and the analyzed-hits total, so both refresh with the 1s /status poll
     # (instead of a separate slower timer).
-    dream = by_name.get("dream_daq")
-    if dream is not None:
-        prog = _run_progress(by_name.get("daq_control"), dream)
+    vmm = by_name.get("vmm_daq")
+    if vmm is not None:
+        prog = _run_progress(by_name.get("vmm_daq_control"), vmm)
         if prog.get("subrun_idx"):
-            dream.setdefault("fields", []).append(
+            vmm.setdefault("fields", []).append(
                 {"label": "Subrun", "value": f'{prog["subrun_idx"]}/{prog["subrun_total"]}'})
-            dream["fields"].append(
+            vmm["fields"].append(
                 {"label": "Progress",
                  "value": f'{_fmt_min(prog["elapsed_min"])} / {_fmt_min(prog["total_min"])}'})
         elif prog.get("subrun_total"):
-            dream.setdefault("fields", []).append(
+            vmm.setdefault("fields", []).append(
                 {"label": "Subrun", "value": f'–/{prog["subrun_total"]}'})
         if _current_run_cache:
-            dream["run_events"] = _ondisk_run_events(_current_run_cache) + _live_events_from(dream)
+            vmm["run_events"] = _ondisk_run_events(_current_run_cache)
 
     # Surface whether a post-sub-run pause is armed so the button reflects it.
-    daq = by_name.get("daq_control")
+    daq = by_name.get("vmm_daq_control")
     if daq is not None:
         daq["pause_armed"] = os.path.exists(PAUSE_FLAG_PATH)
 
@@ -299,12 +285,12 @@ def start_run():
 @app.route("/stop_sub_run", methods=["POST"])
 def stop_sub_run():
     try:
-        if is_dream_daq_running():
+        if is_vmm_daq_running():
             log_event('STOP_SUB_RUN', 'flask_button', remote_addr=request.remote_addr)
             subprocess.Popen([f"{BASH_DIR}/stop_sub_run.sh"])
             return jsonify({"success": True, "message": "Stopping Sub-Run"})
         else:
-            return jsonify({"success": False, "message": "Dream DAQ is not running"}), 400
+            return jsonify({"success": False, "message": "VMM DAQ is not running"}), 400
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -314,13 +300,11 @@ def stop_run():
         # Always stop the WHOLE run. stop_run.sh drops the .stop_run flag that
         # daq_control honors at its next checkpoint (before the next sub-run, or
         # before (re)starting the DAQ), so the run ends and HV powers off even when
-        # we're mid HV-ramp / file-copy / between sub-runs — states where the DAQ
-        # isn't "running". stop_dream.sh safely no-ops if RunCtrl isn't running.
-        # (Previously this fell back to stop_sub_run.sh when the DAQ wasn't actively
-        # taking data, which only stopped the current sub-run and let the run go on.)
-        dream_running = is_dream_daq_running()
+        # we're mid HV-ramp / between sub-runs — states where the DAQ isn't
+        # "running". stop_vmm.sh safely no-ops if no capture is running.
+        vmm_running = is_vmm_daq_running()
         log_event('STOP_RUN', 'flask_button', remote_addr=request.remote_addr,
-                  dream_running=dream_running)
+                  vmm_running=vmm_running)
         subprocess.Popen([f"{BASH_DIR}/stop_run.sh"])
         return jsonify({"success": True, "message": "Stopping Run"})
     except Exception as e:
@@ -399,53 +383,11 @@ def run_config_py():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
-@app.route("/take_pedestals", methods=["POST"])
-def take_pedestals():
-    try:
-        subprocess.Popen([f"{BASH_DIR}/run_pedestals.sh"])
-        return jsonify({"success": True, "message": "Taking pedestals"})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
-
-
 @app.route("/git_reset", methods=["POST"])
 def git_reset():
     try:
         subprocess.Popen([f"{BASH_DIR}/git_reset.sh"])
         return jsonify({"success": True, "message": "Git now up to date"})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
-
-
-@app.route("/start_processor", methods=["POST"])
-def start_processor():
-    try:
-        # Regenerate processor_config.json from processor_config.py
-        result = subprocess.run(
-            [sys.executable, f"{BASE_DIR}/processor_config.py"],
-            capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            return jsonify({"success": False, "message": f"Config generation failed: {result.stderr}"}), 500
-
-        # Kill any existing session first (ignore errors if not running)
-        subprocess.run(["tmux", "kill-session", "-t", PROCESSOR_TMUX], capture_output=True)
-        # sys.executable (flask's venv python), not bare "python": the tmux
-        # login shell resets PATH and drops the venv, so "python" may not resolve.
-        subprocess.Popen([
-            "tmux", "new-session", "-d", "-s", PROCESSOR_TMUX,
-            sys.executable, f"{BASE_DIR}/processor_watcher.py", PROCESSOR_CONFIG_PATH
-        ])
-        return jsonify({"success": True, "message": "Processor watcher started"})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
-
-
-@app.route("/stop_processor", methods=["POST"])
-def stop_processor():
-    try:
-        subprocess.run(["tmux", "kill-session", "-t", PROCESSOR_TMUX], capture_output=True)
-        return jsonify({"success": True, "message": "Processor watcher stopped"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -508,117 +450,6 @@ def stop_backup():
         return jsonify({"success": True, "message": "Backup watcher stopped"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
-
-
-@app.route("/start_ped_qa", methods=["POST"])
-def start_ped_qa():
-    try:
-        result = subprocess.run(
-            [sys.executable, f"{BASE_DIR}/pedestal_qa_config.py"],
-            capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            return jsonify({"success": False, "message": f"Config generation failed: {result.stderr}"}), 500
-        subprocess.run(["tmux", "kill-session", "-t", PED_QA_TMUX], capture_output=True)
-        # sys.executable (flask's venv python), not bare "python": the tmux
-        # server env doesn't always carry the venv PATH, so name resolution
-        # inside new sessions is unreliable.
-        subprocess.Popen([
-            "tmux", "new-session", "-d", "-s", PED_QA_TMUX,
-            sys.executable, f"{BASE_DIR}/pedestal_watcher.py", PED_QA_CONFIG_PATH
-        ])
-        return jsonify({"success": True, "message": "Pedestal QA watcher started"})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
-
-
-@app.route("/stop_ped_qa", methods=["POST"])
-def stop_ped_qa():
-    try:
-        subprocess.run(["tmux", "kill-session", "-t", PED_QA_TMUX], capture_output=True)
-        return jsonify({"success": True, "message": "Pedestal QA watcher stopped"})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
-
-
-def _ped_qa_cfg():
-    """(pedestals_dir, output_inner_dir) from the ped QA config, with the same
-    defaults pedestal_qa_config.py writes (config may not exist yet)."""
-    try:
-        with open(PED_QA_CONFIG_PATH) as f:
-            cfg = json.load(f)
-    except Exception:
-        cfg = {}
-    return (cfg.get("pedestals_dir", f"{BASE_DATA_DIR}pedestals/"),
-            cfg.get("output_inner_dir", "ped_qa"))
-
-
-@app.route("/list_ped_runs")
-def list_ped_runs():
-    """Pedestal run dirs (newest first) with whether QA output exists yet."""
-    ped_dir, inner_dir = _ped_qa_cfg()
-
-    if not os.path.isdir(ped_dir):
-        return jsonify(success=False, message=f"Pedestals dir not found: {ped_dir}")
-
-    def run_sort_key(name, full):
-        # Prefer the datetime in the dir name (pedestals_MM-DD-YY_HH-MM-SS);
-        # dir mtime is unreliable since QA output writes touch the dir.
-        # Both key kinds are epoch floats so they compare consistently.
-        m = re.search(r'(\d{2})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})', name)
-        if m:
-            try:
-                mo, d, y, h, mi, s = (int(g) for g in m.groups())
-                return datetime(2000 + y, mo, d, h, mi, s).timestamp()
-            except ValueError:
-                pass
-        return os.path.getmtime(full)
-
-    runs = []
-    for d in os.listdir(ped_dir):
-        full = os.path.join(ped_dir, d)
-        if not os.path.isdir(full):
-            continue
-        runs.append({
-            "name": d,
-            "sort_key": run_sort_key(d, full),
-            "has_qa": os.path.isfile(os.path.join(full, inner_dir, "summary.json")),
-        })
-    runs.sort(key=lambda r: r["sort_key"], reverse=True)
-    return jsonify(success=True, runs=runs, inner_dir=inner_dir, ped_dir=ped_dir)
-
-
-@app.route("/ped_qa_data")
-def ped_qa_data():
-    """Summary JSON + image/PDF URLs for one pedestal run's QA output."""
-    run_name = request.args.get("run", "")
-    ped_dir, inner_dir = _ped_qa_cfg()
-
-    # Plain directory names only — no separators, no '.'/'..' path tricks
-    if not re.fullmatch(r'(?!\.+$)[\w.\-]+', run_name):
-        return jsonify(success=False, message="Invalid run name"), 400
-    qa_dir = os.path.join(ped_dir, run_name, inner_dir)
-    if not os.path.isdir(qa_dir):
-        return jsonify(success=True, has_qa=False, summary=None, images=[], pdf=None)
-
-    summary = None
-    summary_path = os.path.join(qa_dir, "summary.json")
-    if os.path.isfile(summary_path):
-        try:
-            with open(summary_path) as f:
-                summary = json.load(f)
-        except Exception:
-            pass
-
-    dir_q  = quote(qa_dir, safe='')
-    images = [f"/serve_png?dir={dir_q}&file={quote(f, safe='')}"
-              for f in sorted(os.listdir(qa_dir)) if f.lower().endswith(".png")]
-    pdf = None
-    if os.path.isfile(os.path.join(qa_dir, "pedestal_strip_check.pdf")):
-        pdf = f"/serve_png?dir={dir_q}&file=pedestal_strip_check.pdf"
-
-    return jsonify(success=True, has_qa=summary is not None,
-                   summary=summary, images=images, pdf=pdf)
 
 
 @app.route("/rerun_qa", methods=["POST"])
@@ -799,6 +630,55 @@ def hv_data():
         return jsonify({"success": False, "message": str(e)})
 
 
+@app.route("/lv_data")
+def lv_data():
+    """Voltage/current traces from a subrun's lv_monitor.csv, shaped exactly like
+    /hv_data so the LV Plotly panel is a near-copy of the HV one. Columns are
+    '<unit>_ch<n> v' / '<unit>_ch<n> i' (see lv_control.monitor_lvs)."""
+    try:
+        run_name = request.args.get("run")
+        subrun_name = request.args.get("subrun")
+        lv_file_name = request.args.get("lv_file", "lv_monitor.csv")
+
+        config_path = os.path.join(CONFIG_RUN_DIR, run_name)
+        if not os.path.isfile(config_path):
+            return jsonify([])
+
+        with open(config_path) as f:
+            cfg = json.load(f)
+        # Same run-dir resolution (with previous-run fallback) as /hv_data.
+        output_dir = _hv_run_dir(cfg, lv_file_name)
+        if not output_dir:
+            return jsonify([])
+        lv_csv_path = os.path.join(output_dir, subrun_name, lv_file_name)
+
+        df = pd.read_csv(lv_csv_path)
+        df = df.tail(HV_TAIL)
+
+        time = df["timestamp"].astype(str).tolist()
+
+        voltage_data = {}
+        current_data = {}
+        for col in df.columns:
+            if col.endswith(" v"):
+                voltage_data[col[:-2]] = df[col].tolist()
+            elif col.endswith(" i"):
+                current_data[col[:-2]] = df[col].tolist()
+
+        voltage_data = dict(sorted(voltage_data.items()))
+        current_data = dict(sorted(current_data.items()))
+
+        return jsonify({
+            "success": True,
+            "time": time,
+            "voltage": voltage_data,
+            "current": current_data
+        })
+
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
 @app.route("/list_analysis_dirs")
 def list_analysis_dirs():
     subdir = request.args.get("subdir", "")
@@ -886,35 +766,24 @@ def get_config_py():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
-def _live_dream_events():
-    """Live per-FEU event count of the in-progress subrun (nb_of_events ≈ the per-FEU
-    physics count), captured fresh from the dream_daq pane. Only while RUNNING; 0
-    otherwise. The in-progress subrun has no RunCtrl log yet, so get_total_events_for_run()
-    excludes it; adding this keeps 'Events this run' live without double-counting —
-    once the subrun finishes, status leaves RUNNING and the count appears on disk."""
-    return _live_events_from(get_dream_daq_status())
-
-
 @app.route("/get_run_events", methods=['GET'])
 def get_run_events():
     try:
-        # Count events for the run daq_control is actually running (not the
+        # Count hits for the run daq_control is actually running (not the
         # possibly-edited run_config_beam.py). Falls back to the persisted value.
+        # Hits come from the QA's events.json files, so the total trails the DAQ
+        # by up to one capture rotation + QA time (no live in-file count exists).
         run_name = _current_run_cache
         if not run_name:
             return jsonify({"success": True, "total_events": 0,
-                            "live_events": 0, "subrun_details": {}})
+                            "subrun_details": {}})
         total_events, subrun_details = get_total_events_for_run(
-            run_dir=RUN_DIR,
+            run_dir=ANALYSIS_DIR,
             run_name=run_name
         )
-        # Add the in-progress subrun's live events (not yet on disk) so the total
-        # reflects the live count shown in the dream_daq card.
-        live_events = _live_dream_events()
         return jsonify({
             "success": True,
-            "total_events": total_events + live_events,
-            "live_events": live_events,
+            "total_events": total_events,
             "subrun_details": subrun_details
         })
     except Exception as e:
@@ -1004,18 +873,18 @@ def system_stats():
         return jsonify({"success": False, "message": str(e)})
 
 
-def is_dream_daq_running():
+def is_vmm_daq_running():
     """
-    Checks tmux session 'daq_control' and returns True if Dream DAQ is running.
+    Checks tmux session 'vmm_daq_control' and returns True if the VMM DAQ is running.
 
-    Running = "Received: Dream DAQ starting" appears in recent output
+    Running = "Received: VMM DAQ starting" appears in recent output
               AND
-              "Dream Subrun complete." has NOT appeared.
+              "VMM Subrun complete." has NOT appeared since.
     """
     try:
         # Increase the buffer slightly to ensure we don't miss the transition
         output = subprocess.check_output(
-            ["tmux", "capture-pane", "-pS", "-20", "-t", "daq_control:0.0"],
+            ["tmux", "capture-pane", "-pS", "-20", "-t", "vmm_daq_control:0.0"],
             text=True
         )
     except subprocess.CalledProcessError:
@@ -1025,32 +894,13 @@ def is_dream_daq_running():
 
     # We iterate backwards (from most recent to oldest)
     for line in reversed(lines):
-        if "Received: Dream DAQ starting" in line:
+        if "Received: VMM DAQ starting" in line:
             return True
-        if "Dream Subrun complete." in line:
+        if "VMM Subrun complete." in line:
             return False
 
     return False  # Neither found in recent history
-    # try:
-    #     # Grab last ~10 lines of the pane
-    #     output = subprocess.check_output(
-    #         ["tmux", "capture-pane", "-pS", "-10", "-t", "daq_control:0.0"],
-    #         text=True
-    #     )
-    # except subprocess.CalledProcessError:
-    #     # If tmux session doesn't exist or some error occurs
-    #     return False
-    #
-    # # Normalize
-    # lines = output.splitlines()
-    #
-    # # State checks
-    # saw_start = any("Received: Dream DAQ starting" in line for line in lines)
-    # saw_complete = any("Dream Subrun complete." in line for line in lines)
-    #
-    # # Running only if started AND not complete
-    # return saw_start and not saw_complete
 
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=5001)
+    socketio.run(app, host="0.0.0.0", port=5002)
