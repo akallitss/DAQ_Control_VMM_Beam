@@ -1,0 +1,1399 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- DAQ Overview Tab -->
+<div class="tab-pane fade show active" id="overview">
+
+  <!-- Top row: run control (left) + system monitor (right) -->
+  <div class="row g-3">
+    <div class="col-12 col-xl-6">
+      <div class="panel h-100">
+        <div class="panel-header">
+          <span class="panel-title">Run Control</span>
+        </div>
+        <div class="panel-body">
+          <div class="run-stats">
+            <div class="stat">
+              <div class="stat-label">Current run</div>
+              <div class="stat-value" id="run-display">None</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Events this run</div>
+              <div class="stat-value" id="events-display">0</div>
+            </div>
+          </div>
+
+          <select id="run-select" class="form-select d-none" style="width:auto;"></select>
+
+          <div class="btn-group-block">
+            <span class="group-label">Run</span>
+            <div class="d-flex flex-wrap gap-2">
+              <button id="run-toggle" class="btn btn-success">Start Run</button>
+              <button id="stop-sub-run" class="btn btn-warning">Stop Sub-Run</button>
+              <button id="pause-toggle" class="btn btn-outline-warning">Pause After Subrun</button>
+              <button id="restart-all" class="btn btn-outline-danger">Restart All</button>
+              <button id="take-pedestals" class="btn btn-secondary">Take Pedestals</button>
+              <button id="git-reset" class="btn btn-secondary">Git Reset</button>
+            </div>
+          </div>
+
+          <div class="btn-group-block">
+            <span class="group-label">Watchers</span>
+            <div class="d-flex flex-wrap gap-2">
+              <button id="processor-toggle" class="btn btn-info btn-sm">Start Processor</button>
+              <button id="qa-toggle" class="btn btn-info btn-sm">Start QA</button>
+              <button id="pedestal-toggle" class="btn btn-info btn-sm">Start Pedestal QA</button>
+              <button id="backup-toggle" class="btn btn-info btn-sm">Start Backup</button>
+              <button id="rerun-qa" class="btn btn-outline-warning btn-sm ms-auto">Rerun QA</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- System Resource Monitor + Monitoring strip stacked -->
+    <div class="col-12 col-xl-6 d-flex flex-column gap-3">
+      <div class="panel flex-grow-1" id="sys-monitor">
+        <div class="panel-header">
+          <span class="panel-title">System Resources</span>
+          <span id="sys-load-avg" class="ms-auto"></span>
+        </div>
+        <div class="panel-body">
+          <div id="sys-cpu-grid"></div>
+          <div class="sys-rows">
+            <div id="sys-mem-row"></div>
+            <div id="sys-swp-row"></div>
+            <div id="sys-ssd-row"></div>
+            <div id="sys-hdd-row"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Monitoring strip -->
+      <div class="panel monitor-strip" id="monitor-panel">
+        <div class="strip-row">
+      <span class="strip-label">Monitoring</span>
+      <button id="monitor-toggle" class="btn btn-sm btn-secondary">Off</button>
+      <span id="monitor-last-check" class="text-muted small"></span>
+      <span id="monitor-active-alerts" class="text-danger small fw-bold"></span>
+      <div class="ms-auto d-flex gap-2">
+        <button id="monitor-test" class="btn btn-sm btn-outline-info">Test Alert</button>
+        <button id="monitor-setup" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#monitor-setup-collapse">Setup</button>
+      </div>
+    </div>
+    <div class="collapse" id="monitor-setup-collapse">
+      <div class="collapse-body">
+        <div class="d-flex flex-wrap align-items-center gap-2 mt-1">
+          <span class="text-muted small">Chat ID:</span>
+          <span id="monitor-chat-id" class="small font-monospace"></span>
+          <button id="monitor-fetch-chat-id" class="btn btn-sm btn-outline-secondary">Auto-fetch</button>
+          <span class="text-muted small ms-2">or enter manually:</span>
+          <input id="monitor-chat-id-input" type="text" class="form-control form-control-sm"
+                 style="width:160px;" placeholder="chat ID">
+          <button id="monitor-set-chat-id" class="btn btn-sm btn-outline-secondary">Set</button>
+          <span id="monitor-bot-name" class="text-muted small ms-3"></span>
+        </div>
+        <p class="text-muted small mt-2 mb-0">
+          To auto-fetch: open Telegram, find the bot, send it any message, then click Auto-fetch.
+        </p>
+      </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status cards -->
+  <div class="row g-3 mt-3" id="status-cards">
+    <!-- Status cards populated dynamically -->
+  </div>
+
+  <!-- HV Monitor -->
+  <div class="panel mt-3">
+    <div class="panel-header">
+      <span class="panel-title">HV Monitor</span>
+      <span class="panel-header-note">latest voltage and current readings from HV control</span>
+      <span class="ms-auto d-flex align-items-center gap-2">
+        <label for="hv-subrun-select" class="text-muted small mb-0">Subrun</label>
+        <select id="hv-subrun-select" class="form-select form-select-sm" style="width:auto;">
+          <option value="">(none)</option>
+        </select>
+      </span>
+    </div>
+    <div class="panel-body">
+      <div class="row g-3">
+        <div class="col-12 col-xl-6">
+          <div id="hv-voltage-plot" style="width:100%;height:380px;"></div>
+        </div>
+        <div class="col-12 col-xl-6">
+          <div id="hv-current-plot" style="width:100%;height:380px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='plotly.min.js') }}"></script>
+</div>
+
+
+<!-- Online QA Viewer Tab -->
+<div class="tab-pane fade" id="png-viewer">
+  <div class="panel">
+    <div class="panel-header">
+      <span class="panel-title">Online QA</span>
+      <span id="qa-last-update" class="panel-header-note ms-auto"></span>
+    </div>
+    <div class="panel-body">
+      <div class="row g-3">
+        <div class="col-12 col-sm-6 col-lg-3">
+          <label for="run-select-qa" class="form-label">Run:</label>
+          <select id="run-select-qa" class="form-select">
+            <option value="">Select run...</option>
+          </select>
+        </div>
+        <div class="col-12 col-sm-6 col-lg-3">
+          <label for="subrun-select" class="form-label">Subrun:</label>
+          <select id="subrun-select" class="form-select" disabled>
+            <option value="">Select subrun...</option>
+          </select>
+        </div>
+        <div class="col-12 col-sm-6 col-lg-3">
+          <label for="detector-select" class="form-label">Detector:</label>
+          <select id="detector-select" class="form-select" disabled>
+            <option value="">Select detector...</option>
+          </select>
+        </div>
+        <div class="col-12 col-sm-6 col-lg-3" id="qa-subdir-col" style="display:none;">
+          <label for="subdir-select-qa" class="form-label">Subdirectory:</label>
+          <select id="subdir-select-qa" class="form-select">
+            <option value="">(top level)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="mt-3 d-flex flex-wrap gap-2">
+        <button id="load-pngs" class="btn btn-primary" disabled>Load Images</button>
+        <button id="refresh-qa-runs" class="btn btn-secondary">Refresh Runs</button>
+        <button id="reload-pngs" class="btn btn-outline-info" disabled>Reload Plots</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="png-gallery" class="row g-3 mt-0"></div>
+</div>
+
+
+<!-- Pedestal QA Tab -->
+<div class="tab-pane fade" id="ped-viewer">
+  <div class="panel">
+    <div class="panel-header">
+      <span class="panel-title">Pedestal QA</span>
+    </div>
+    <div class="panel-body">
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <label for="ped-run-select" class="form-label mb-0">Pedestal run:</label>
+        <select id="ped-run-select" class="form-select" style="width:auto;">
+          <option value="">Loading...</option>
+        </select>
+        <button id="ped-reload" class="btn btn-outline-info btn-sm">Reload</button>
+        <a id="ped-pdf-link" class="btn btn-outline-light btn-sm d-none" target="_blank" href="#">PDF</a>
+      </div>
+
+      <div id="ped-summary" class="mt-3"></div>
+      <p id="ped-no-qa" class="text-muted d-none mb-0">No QA output for this run yet — the watcher will analyze it once the run finishes.</p>
+    </div>
+  </div>
+
+  <div id="ped-gallery" class="row g-3 mt-0"></div>
+</div>
+
+
+<!-- Analysis Browser Tab -->
+<div class="tab-pane fade" id="analysis-browser">
+  <div class="panel">
+    <div class="panel-header">
+      <span class="panel-title">Analysis</span>
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb" id="ab-breadcrumb"></ol>
+      </nav>
+      <button id="ab-reload" class="btn btn-outline-info btn-sm ms-auto">Reload Plots</button>
+    </div>
+    <div class="panel-body">
+      <div id="ab-subdirs" class="d-flex flex-wrap gap-2"></div>
+      <p id="ab-no-images" class="text-muted d-none mb-0 mt-2">No images in this directory.</p>
+    </div>
+  </div>
+
+  <div id="ab-gallery" class="row g-3 mt-0"></div>
+</div>
+
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let run = null;
+let lastSubrun = null;
+
+// --- DAQ Overview JS ---
+function updateStatus() {
+    fetch("/status")
+        .then(r => r.json())
+        .then(data => {
+            // Check subrun change
+            const daq = data["daq_control"];
+            const fields = daq?.fields || [];
+
+            // Find the "Subrun" field (if it exists)
+            const subrunField = fields.find(f => f.label === "Subrun");
+            const subrun = subrunField ? subrunField.value : null;
+
+            // Check if Subrun exists and changed
+            if (subrun && subrun !== lastSubrun) {
+                const select = document.getElementById("hv-subrun-select");
+
+                // Update dropdown selection
+                // First, check if this subrun already exists as an option
+                let option = Array.from(select.options).find(opt => opt.value === subrun);
+                if (!option) {
+                    option = new Option(subrun, subrun);
+                    select.add(option);
+                }
+
+                // Select it
+                select.value = subrun;
+
+                // Update tracker variable
+                lastSubrun = subrun;
+            }
+
+            let container = document.getElementById("status-cards");
+            container.innerHTML = "";
+            data.forEach(info => {
+                // Compact card: watchers that only need a running/not indicator
+                if (info.small) {
+                    container.innerHTML += `
+                      <div class="col-6 col-md-3 col-xl-2">
+                        <div class="status-card s-${info.color}">
+                          <div class="status-name">${info.name}</div>
+                          <div class="status-state">${info.status}</div>
+                        </div>
+                      </div>`;
+                    return;
+                }
+
+                let details = info.fields.map(
+                    f => `<div class="status-field"><span>${f.label}</span><span>${f.value}</span></div>`
+                ).join("");
+
+                container.innerHTML += `
+                  <div class="col-12 col-md-6 col-xl-4">
+                    <div class="status-card s-${info.color}">
+                      <div class="status-top">
+                        <span class="status-name">${info.name}</span>
+                        <span class="status-state">${info.status}</span>
+                      </div>
+                      <div class="status-fields">${details}</div>
+                    </div>
+                  </div>`;
+            });
+
+            // "Events this run" is folded into the dream_daq card by /status, so it
+            // refreshes in lockstep with that card (1s) rather than a separate timer.
+            const dd = data.find(s => s.name === "dream_daq");
+            if (dd && dd.run_events != null) {
+                document.getElementById("events-display").textContent = dd.run_events;
+            }
+
+            updateWatcherToggles(data);
+            updateRunToggle(data);
+            updatePauseToggle(data);
+        });
+}
+
+function showPopup(message, color) {
+  const popup = document.createElement("div");
+  popup.textContent = message;
+  popup.style.position = "fixed";
+  popup.style.top = "80px";
+  popup.style.left = "50%";
+  popup.style.transform = "translateX(-50%)";
+  popup.style.background = color;
+  popup.style.color = "#fff";
+  popup.style.padding = "0.8em 1.6em";
+  popup.style.borderRadius = "10px";
+  popup.style.boxShadow = "0 4px 16px rgba(0,0,0,0.45)";
+  popup.style.zIndex = "9999";
+  popup.style.opacity = "1";
+  popup.style.transition = "opacity 1s";
+
+  document.body.appendChild(popup);
+
+  setTimeout(() => {
+    popup.style.opacity = "0";
+    setTimeout(() => popup.remove(), 1000);
+  }, 2500);
+}
+
+
+// STOP SUB-RUN button
+document.getElementById("stop-sub-run").addEventListener("click", async () => {
+  const ok = confirm("Are you sure you want to stop the *sub-run*?");
+  if (!ok) return;   // <-- Cancel → do nothing
+
+  const res = await fetch("/stop_sub_run", { method: "POST" });
+  const data = await res.json();
+
+  showPopup(data.message, "#dc7b35");
+
+  run = null;
+});
+
+
+// (Stop Run is now the run-toggle button; wiring lives with startRun/stopRun.)
+
+document.getElementById("restart-all").addEventListener("click", () => {
+  if (!confirm("Are you sure you want to restart all DAQ components?")) return;
+  fetch("/restart_all", { method: "POST" })
+    .then(res => res.json())
+    .then(data => alert(data.message))
+    .catch(err => alert("Error: " + err));
+});
+
+
+// --- HV Plots ---
+async function fetchHVData() {
+    const run = document.getElementById("run-select").value;
+    const subrun = document.getElementById("hv-subrun-select").value;
+    const res = await fetch(`/hv_data?run=${encodeURIComponent(run)}&subrun=${encodeURIComponent(subrun)}`);
+    const data = await res.json();
+    if (!data || Object.keys(data).length === 0) return null;
+    if (!data.success) throw data.message;
+    return data;
+}
+
+// One hue per detector (validated dark categorical palette, slots 1-4: blue/aqua/
+// yellow/green); within a detector the drift line is a lighter blend of the same hue
+// so identity = colour and electrode = shade.
+const HV_DET_COLOR = { A: "#3987e5", B: "#199e70", C: "#c98500", D: "#008300" };
+function _hvLighten(hex, amt) {
+    const n = parseInt(hex.slice(1), 16);
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    const mix = c => Math.round(c + (255 - c) * amt);
+    return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
+}
+function hvTraceColor(name) {
+    const [det, electrode] = name.split("_");
+    const base = HV_DET_COLOR[det] || "#8b96a5";
+    return (electrode || "").toLowerCase() === "drift" ? _hvLighten(base, 0.42) : base;
+}
+
+async function updateHVPlots() {
+    try {
+        const data = await fetchHVData();
+        if (!data) {
+            console.log("No HV data available");
+            return;
+        }
+        const time = data.time;
+        const run = document.getElementById("run-select").value;
+        const subrun = document.getElementById("hv-subrun-select").value;
+
+        const voltageTraces = Object.entries(data.voltage).map(([key, values]) => ({
+            x: time,
+            y: values,
+            mode: 'lines',
+            name: key,
+            line: { color: hvTraceColor(key), width: 2 }
+        }));
+
+        const currentTraces = Object.entries(data.current).map(([key, values]) => ({
+            x: time,
+            y: values,
+            mode: 'lines',
+            name: key,
+            line: { color: hvTraceColor(key), width: 2 }
+        }));
+
+        // uirevision keyed to run/subrun: Plotly preserves zoom/pan/legend state across
+        // auto-refreshes (key unchanged) but resets the view when the subrun changes (new key).
+        const uirev = `${run}/${subrun}`;
+
+        // Dark styling done explicitly — plotly.js does not resolve the
+        // 'plotly_dark' template name (that only works from Python).
+        // Transparent backgrounds so the plots blend into the panel.
+        const axisStyle = {
+            gridcolor: '#242e39',
+            zerolinecolor: '#38434f',
+            linecolor: '#38434f'
+        };
+        // Bigger, lighter y-axis title; the y label alone names each plot (no chart
+        // title, no "Time" x label — the time ticks are self-evident).
+        const yTitleFont = { size: 17, color: '#cbd5e1' };
+        const commonLayout = {
+            legend: { orientation: 'h' },
+            hovermode: 'x unified',
+            uirevision: uirev,
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#8b96a5' },
+            hoverlabel: { bgcolor: '#1b222b', bordercolor: '#38434f' },
+            margin: { t: 20, r: 20, b: 30, l: 60 }
+        };
+
+        const voltageLayout = {
+            ...commonLayout,
+            xaxis: { ...axisStyle },
+            yaxis: { title: { text: 'Voltage (V)', font: yTitleFont }, ...axisStyle }
+        };
+
+        const currentLayout = {
+            ...commonLayout,
+            xaxis: { ...axisStyle },
+            yaxis: { title: { text: 'Current (µA)', font: yTitleFont }, ...axisStyle }
+        };
+
+        const plotConfig = { responsive: true, displaylogo: false };
+
+        // Plotly.react updates the existing plot in place (instead of rebuilding like
+        // newPlot), so combined with a stable uirevision the current zoom/pan is kept.
+        Plotly.react('hv-voltage-plot', voltageTraces, voltageLayout, plotConfig);
+        Plotly.react('hv-current-plot', currentTraces, currentLayout, plotConfig);
+
+    } catch (err) {
+        console.error("HV update failed:", err);
+    }
+}
+
+async function loadRuns() {
+    // Hack to only allow run_config_beam.json
+  const runSelect = document.getElementById("run-select");
+  runSelect.innerHTML = "";
+  const opt = document.createElement("option");
+  opt.value = "run_config_beam.json";
+  opt.textContent = "run_config_beam.json";
+  runSelect.appendChild(opt);
+  runSelect.value = "run_config_beam.json";
+  loadSubruns();
+}
+
+let hvNewestSubrun = null;   // most-recent subrun last seen, to detect new ones
+
+async function loadSubruns() {
+  const runName = document.getElementById("run-select").value;
+  const res = await fetch(`/get_subruns?run=${encodeURIComponent(runName)}`);
+  const subruns = await res.json();   // newest first
+  const subrunSelect = document.getElementById("hv-subrun-select");
+  const prev = subrunSelect.value;
+  subrunSelect.innerHTML = "";
+  subruns.forEach(s => {
+    const opt = document.createElement("option");
+    opt.value = s;
+    opt.textContent = s;
+    subrunSelect.appendChild(opt);
+  });
+  if (subruns.length === 0) { hvNewestSubrun = null; return; }
+
+  const newest = subruns[0];
+  if (newest !== hvNewestSubrun) {
+    // First load, or a new subrun was just created -> jump to it and refresh now.
+    subrunSelect.value = newest;
+    hvNewestSubrun = newest;
+    updateHVPlots();
+  } else if (subruns.includes(prev)) {
+    subrunSelect.value = prev;   // no new subrun -> keep the user's selection
+  } else {
+    subrunSelect.value = newest;
+  }
+}
+
+// reload subruns periodically
+setInterval(loadSubruns, 5000);
+
+// reload subruns when run changes
+document.getElementById("run-select").addEventListener("change", loadSubruns);
+
+// redraw immediately when the user picks a subrun (don't wait for the 5s poll)
+document.getElementById("hv-subrun-select").addEventListener("change", updateHVPlots);
+
+// initial load
+loadRuns();
+
+// take pedestals button handler
+document.getElementById("take-pedestals").addEventListener("click", async () => {
+  const res = await fetch("/take_pedestals", { method: "POST" });
+  const data = await res.json();
+  showPopup(data.message, "#17a2b8");
+});
+
+
+// git reset button handler
+document.getElementById("git-reset").addEventListener("click", async () => {
+  const res = await fetch("/git_reset", { method: "POST" });
+  const data = await res.json();
+  showPopup(data.message, "#17a2b8");
+});
+
+document.getElementById("rerun-qa").addEventListener("click", async () => {
+  const input = prompt(
+    "Enter run names to rerun (comma-separated), or leave blank to rerun all runs:"
+  );
+  if (input === null) return;  // cancelled
+  const runs = input.trim()
+    ? input.split(",").map(s => s.trim()).filter(Boolean)
+    : null;
+
+  const rerunRes = await fetch("/rerun_qa", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ runs })
+  });
+  const rerunData = await rerunRes.json();
+  showPopup(rerunData.message, rerunData.success ? "#fd7e14" : "#dc3545");
+});
+
+// Processor / QA / Backup watchers use single toggle buttons (Start when stopped,
+// Stop when running); wiring + state tracking lives with WATCHER_TOGGLES below.
+
+async function startRun() {
+
+  // ----- STEP 1: Update run config -----
+  const updateRes = await fetch("/update_run_config_py", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    {#body: JSON.stringify({ banco_position: bancoInput }),#}
+  });
+
+  const updateData = await updateRes.json();
+  if (!updateData.success) {
+    alert("Error updating run number: " + updateData.message);
+    return;
+  }
+
+  console.log(updateData.message);
+
+  // ----- STEP 2: Fetch updated config -----
+  const configRes = await fetch("/get_config_py", { method: "GET" });
+  const configData = await configRes.json();
+
+  if (!configData.success) {
+    alert("Could not load config: " + configData.message);
+    return;
+  }
+
+  const runName = configData.run_name;
+
+  // ----- STEP 3: Ask user for confirmation -----
+  const confirmMsg =
+    `Start run?\n\n` +
+    `Run name: ${runName}\n` +
+    `Are you sure you want to continue?`;
+
+  const confirmRun = confirm(confirmMsg);
+  if (!confirmRun) return;
+
+  // ----- STEP 4: Start the run -----
+  const res = await fetch("/run_config_py", { method: "POST" });
+  const data = await res.json();
+
+  // ----- STEP 5: Popup status -----
+  showPopup(data.message, data.success ? "#28a745" : "#dc3545");
+
+  // ----- STEP 6: Update displayed info -----
+  if (data.success) {
+    document.getElementById("run-display").textContent = data.run_name;
+
+    await loadRuns();
+
+    const runSelect = document.getElementById("run-select");
+    runSelect.value = "run_config_beam.json";
+
+    await loadSubruns();
+    updateHVPlots();
+  }
+}
+
+// Run toggle: one button that is "Start Run" (green) when idle and "Stop Run"
+// (red) while a run is in progress — including HV-ramp / copy / between-subrun
+// gaps, so it never flips back to "Start Run" mid-run. "Stop Sub-Run" stays
+// separate. runActive is refreshed from daq_control's state each /status poll.
+let runActive = false;
+const RUN_IDLE_STATES = ["WAITING", "Run Complete", "ERROR"];
+
+async function stopRun() {
+  if (!confirm("Are you sure you want to STOP the run?")) return;
+  const res = await fetch("/stop_run", { method: "POST" });
+  const data = await res.json();
+  showPopup(data.message, "#dc3545");
+  run = null;
+}
+
+function updateRunToggle(statuses) {
+  const daq = statuses.find(s => s.name === "daq_control");
+  if (!daq) return;
+  runActive = !RUN_IDLE_STATES.includes(daq.status);
+  const btn = document.getElementById("run-toggle");
+  btn.textContent = runActive ? "Stop Run" : "Start Run";
+  btn.className = runActive ? "btn btn-danger" : "btn btn-success";
+  // Colour the top stats: green while a run is live, blue when complete/idle.
+  ["run-display", "events-display"].forEach(id => {
+    const el = document.getElementById(id);
+    el.classList.toggle("run-live", runActive);
+    el.classList.toggle("run-done", !runActive);
+  });
+}
+
+document.getElementById("run-toggle").addEventListener("click", () => {
+  if (runActive) stopRun(); else startRun();
+});
+
+// Post-sub-run pause (one-shot). daq.pause_armed = flag set; status "Paused" = the
+// DAQ is actually waiting at a boundary. One click toggles the flag (arm / cancel /
+// resume). Only meaningful during a run, so disable it when idle.
+function updatePauseToggle(statuses) {
+  const daq = statuses.find(s => s.name === "daq_control");
+  if (!daq) return;
+  const btn = document.getElementById("pause-toggle");
+  const armed  = !!daq.pause_armed;         // manual pause flag set
+  const paused = daq.status === "Paused";   // DAQ actually waiting (manual OR timed)
+  btn.disabled = !runActive && !armed;
+  if (armed && paused) {
+    btn.textContent = "Resume";             // manual pause is holding the run
+    btn.className = "btn btn-success";
+  } else if (armed) {
+    btn.textContent = "Cancel Pause";       // manual pause armed, not yet at a boundary
+    btn.className = "btn btn-warning";
+  } else {
+    // Not manually armed. During a config timed pause you can still arm a manual
+    // hold here to extend it past the timer.
+    btn.textContent = "Pause After Subrun";
+    btn.className = "btn btn-outline-warning";
+  }
+}
+
+document.getElementById("pause-toggle").addEventListener("click", async () => {
+  const res = await fetch("/toggle_pause_run", { method: "POST" });
+  const d = await res.json();
+  showPopup(d.message, d.success ? "#f0c040" : "#dc3545");
+});
+
+
+
+async function updateRunDisplay() {
+  try {
+    // Current run reflects what daq_control is actually running (from its log),
+    // persisted server-side so it keeps the last value between runs.
+    const res = await fetch("/get_current_run", { method: "GET" });
+    const data = await res.json();
+
+    if (!data.success) return;
+
+    document.getElementById("run-display").textContent = data.run_name;
+
+  } catch (err) {
+    console.error("Error updating run display:", err);
+  }
+}
+
+// Update every 5 seconds
+setInterval(updateRunDisplay, 5000);
+
+// Also load immediately on page load
+updateRunDisplay();
+
+
+// "Events this run" (#events-display) is now updated from the dream_daq card in
+// updateStatus() so it stays in sync with that card. (/get_run_events still exists
+// for other callers.)
+
+// --- PNG Viewer JS ---
+async function fetchDirs(subdir = "") {
+    const res = await fetch(`/list_analysis_dirs?subdir=${encodeURIComponent(subdir)}`);
+    return await res.json();
+}
+
+// Populate first-level runs (preserves current selection, no cascade)
+async function loadQARuns() {
+    const runSelect = document.getElementById("run-select-qa");
+    const prev = runSelect.value;
+    const res = await fetchDirs();
+    if (!res.success) return;
+    runSelect.innerHTML = '<option value="">Select run...</option>';
+    res.subdirs.forEach(d => {
+        const opt = document.createElement("option");
+        opt.value = d;
+        opt.textContent = d;
+        runSelect.appendChild(opt);
+    });
+    if (prev && Array.from(runSelect.options).some(o => o.value === prev)) {
+        runSelect.value = prev;
+    }
+}
+
+// Refresh subrun list without touching detector/subdir selections
+async function refreshSubrunOptions(run) {
+    if (!run) return;
+    const subrunSelect = document.getElementById("subrun-select");
+    const prev = subrunSelect.value;
+    const res = await fetchDirs(run);
+    if (!res.success) return;
+    subrunSelect.innerHTML = '<option value="">Select subrun...</option>';
+    res.subdirs.forEach(d => {
+        const opt = document.createElement("option");
+        opt.value = `${run}/${d}`;
+        opt.textContent = d;
+        subrunSelect.appendChild(opt);
+    });
+    subrunSelect.disabled = false;
+    if (prev && Array.from(subrunSelect.options).some(o => o.value === prev)) {
+        subrunSelect.value = prev;
+    }
+}
+
+// Populate subruns for a given run, resetting the detector cascade (called on run change)
+async function loadQASubruns(run) {
+    const subrunSelect = document.getElementById("subrun-select");
+    subrunSelect.innerHTML = '<option value="">Select subrun...</option>';
+    subrunSelect.disabled = true;
+    document.getElementById("detector-select").innerHTML = '<option value="">Select detector...</option>';
+    document.getElementById("detector-select").disabled = true;
+    document.getElementById("subdir-select-qa").innerHTML = '<option value="">(top level)</option>';
+    document.getElementById("qa-subdir-col").style.display = "none";
+    document.getElementById("load-pngs").disabled = true;
+    document.getElementById("reload-pngs").disabled = true;
+
+    if (!run) return;
+
+    const res = await fetchDirs(run);
+    if (res.success) {
+        res.subdirs.forEach(d => {
+            const opt = document.createElement("option");
+            opt.value = `${run}/${d}`;
+            opt.textContent = d;
+            subrunSelect.appendChild(opt);
+        });
+        subrunSelect.disabled = false;
+    }
+}
+
+document.addEventListener("DOMContentLoaded", loadQARuns);
+document.getElementById("refresh-qa-runs").addEventListener("click", loadQARuns);
+
+// Refresh lists lazily when user opens the dropdowns
+document.getElementById("run-select-qa").addEventListener("focus", loadQARuns);
+document.getElementById("subrun-select").addEventListener("focus", () => {
+    refreshSubrunOptions(document.getElementById("run-select-qa").value);
+});
+
+// Handle Run selection → populate Subruns (full cascade reset)
+document.getElementById("run-select-qa").addEventListener("change", async (e) => {
+    await loadQASubruns(e.target.value);
+});
+
+// Handle Subrun selection → populate Detectors
+document.getElementById("subrun-select").addEventListener("change", async (e) => {
+    const subrun = e.target.value;
+    const detectorSelect = document.getElementById("detector-select");
+    const loadBtn = document.getElementById("load-pngs");
+
+    detectorSelect.innerHTML = '<option value="">Select detector...</option>';
+    document.getElementById("subdir-select-qa").innerHTML = '<option value="">(top level)</option>';
+    document.getElementById("qa-subdir-col").style.display = "none";
+    detectorSelect.disabled = true;
+    loadBtn.disabled = true;
+
+    if (!subrun) return;
+
+    const res = await fetchDirs(subrun);
+    if (res.success) {
+        res.subdirs.forEach(d => {
+            const opt = document.createElement("option");
+            opt.value = `${subrun}/${d}`;
+            opt.textContent = d;
+            detectorSelect.appendChild(opt);
+        });
+        detectorSelect.disabled = false;
+    }
+});
+
+// Handle Detector selection → populate subdirectory dropdown and enable buttons
+document.getElementById("detector-select").addEventListener("change", async (e) => {
+    const det = e.target.value;
+    const subdirCol = document.getElementById("qa-subdir-col");
+    const subdirSelect = document.getElementById("subdir-select-qa");
+
+    subdirCol.style.display = "none";
+    subdirSelect.innerHTML = '<option value="">(top level)</option>';
+
+    const enabled = !!det;
+    document.getElementById("load-pngs").disabled = !enabled;
+    document.getElementById("reload-pngs").disabled = !enabled;
+
+    if (!det) return;
+
+    const res = await fetchDirs(det);
+    if (res.success && res.subdirs.length > 0) {
+        res.subdirs.forEach(d => {
+            const opt = document.createElement("option");
+            opt.value = d;
+            opt.textContent = d;
+            subdirSelect.appendChild(opt);
+        });
+        subdirCol.style.display = "";
+    }
+});
+
+// Load PNGs
+// Common function to load PNGs
+async function loadPNGs() {
+    const run_dir = document.getElementById("run-select-qa").value;
+    if (!run_dir) return; // no alert, just wait until selected
+
+    const subrun_dir = document.getElementById("subrun-select").value;
+    if (!subrun_dir) return;
+
+    const det_dir = document.getElementById("detector-select").value;
+    if (!det_dir) return;
+
+    const subdir = document.getElementById("subdir-select-qa").value;
+    const detLeaf = det_dir.split('/').pop();
+    const dir = subdir
+        ? osJoin(run_dir, subrun_dir.split('/').pop(), detLeaf, subdir)
+        : osJoin(run_dir, subrun_dir.split('/').pop(), detLeaf);
+
+    const res = await fetch(`/list_pngs?dir=${encodeURIComponent(dir)}`);
+    const data = await res.json();
+    const gallery = document.getElementById("png-gallery");
+    gallery.innerHTML = "";
+
+    document.getElementById("qa-last-update").textContent =
+        `Last loaded: ${new Date().toLocaleTimeString()}`;
+
+    if (!data.success) {
+        gallery.innerHTML = `<p class="text-danger">Error: ${data.message}</p>`;
+        return;
+    }
+    if (data.images.length === 0) {
+        gallery.innerHTML = "<p>No PNGs found in this directory.</p>";
+        return;
+    }
+
+    data.images.forEach(imgUrl => {
+        const col = document.createElement("div");
+        col.className = "col-6 col-md-4 col-xl-3";
+        col.innerHTML = `
+            <div class="plot-card">
+                <img src="${imgUrl}" style="max-height:200px;" alt="PNG image">
+            </div>
+        `;
+        gallery.appendChild(col);
+
+        // Add click-to-enlarge behavior
+        const img = col.querySelector("img");
+        img.addEventListener("click", () => openFullscreenImage(imgUrl));
+    });
+}
+
+// Helper: fullscreen modal for image
+function openFullscreenImage(imgUrl) {
+    const overlay = document.createElement("div");
+    overlay.style.position = "fixed";
+    overlay.style.top = 0;
+    overlay.style.left = 0;
+    overlay.style.width = "100vw";
+    overlay.style.height = "100vh";
+    overlay.style.background = "rgba(0, 0, 0, 0.9)";
+    overlay.style.display = "flex";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+    overlay.style.zIndex = 9999;
+    overlay.style.cursor = "zoom-out";
+
+    const img = document.createElement("img");
+    img.src = imgUrl;
+    img.style.maxWidth = "95%";
+    img.style.maxHeight = "95%";
+    img.style.borderRadius = "8px";
+    img.style.boxShadow = "0 0 20px rgba(255,255,255,0.3)";
+    img.alt = "Enlarged image";
+
+    overlay.appendChild(img);
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", () => overlay.remove());
+}
+
+document.getElementById("load-pngs").addEventListener("click", loadPNGs);
+document.getElementById("reload-pngs").addEventListener("click", loadPNGs);
+document.getElementById("detector-select").addEventListener("change", loadPNGs);
+document.getElementById("subdir-select-qa").addEventListener("change", loadPNGs);
+
+
+// Helper for joining paths safely
+function osJoin(...parts) {
+    return parts.map(p => p.replace(/^\/+|\/+$/g, "")).join("/");
+}
+
+
+// ---------------------------------------------------------------------------
+// Pedestal QA tab
+// ---------------------------------------------------------------------------
+
+let pedLastGenerated = null;   // summary.json "generated" stamp currently shown
+
+// Processor / QA / Pedestal QA / Backup single toggle buttons (moved to Run Control).
+// A watcher's status is "STOPPED" when its tmux session isn't running; the button
+// text/action follow that state, refreshed each /status poll via updateWatcherToggles().
+const WATCHER_TOGGLES = [
+    { name: "processor_watcher", btn: "processor-toggle", label: "Processor",
+      start: "/start_processor", stop: "/stop_processor", confirm: "Stop the processor watcher?" },
+    { name: "qa_watcher", btn: "qa-toggle", label: "QA",
+      start: "/start_qa", stop: "/stop_qa", confirm: "Stop the QA watcher?" },
+    { name: "pedestal_watcher", btn: "pedestal-toggle", label: "Pedestal QA",
+      start: "/start_ped_qa", stop: "/stop_ped_qa", confirm: "Stop the pedestal QA watcher?" },
+    { name: "backup_watcher", btn: "backup-toggle", label: "Backup",
+      start: "/start_backup", stop: "/stop_backup", confirm: "Stop the backup watcher?" },
+];
+const watcherStopped = {};  // name -> bool, tracked from /status
+
+function updateWatcherToggles(statuses) {
+    WATCHER_TOGGLES.forEach(cfg => {
+        const info = statuses.find(s => s.name === cfg.name);
+        if (!info) return;
+        const stopped = info.status === "STOPPED";
+        watcherStopped[cfg.name] = stopped;
+        const btn = document.getElementById(cfg.btn);
+        if (!btn) return;
+        btn.textContent = (stopped ? "Start " : "Stop ") + cfg.label;
+        btn.className = stopped ? "btn btn-info btn-sm" : "btn btn-outline-secondary btn-sm";
+    });
+}
+
+WATCHER_TOGGLES.forEach(cfg => {
+    document.getElementById(cfg.btn).addEventListener("click", async () => {
+        if (watcherStopped[cfg.name] !== false) {   // stopped (or unknown) → start
+            const res = await fetch(cfg.start, { method: "POST" });
+            const d = await res.json();
+            showPopup(d.message, d.success ? "#17a2b8" : "#dc3545");
+        } else {
+            if (!confirm(cfg.confirm)) return;
+            const res = await fetch(cfg.stop, { method: "POST" });
+            const d = await res.json();
+            showPopup(d.message, "#6c757d");
+        }
+    });
+});
+
+async function loadPedRuns() {
+    const select = document.getElementById("ped-run-select");
+    const res = await fetch("/list_ped_runs");
+    const data = await res.json();
+    if (!data.success) {
+        select.innerHTML = `<option value="">${data.message}</option>`;
+        return;
+    }
+    // Rebuild only when the list actually changed — replacing the options
+    // closes an open dropdown and can revert a selection made mid-fetch.
+    const labels = data.runs.map(r => r.has_qa ? r.name : `${r.name}  (no QA yet)`);
+    const current = Array.from(select.options).map(o => o.textContent);
+    if (labels.length === current.length && labels.every((l, i) => l === current[i])) return;
+
+    const prev = select.value;   // read at rebuild time, after the await
+    select.innerHTML = "";
+    data.runs.forEach(r => {
+        const opt = document.createElement("option");
+        opt.value = r.name;
+        opt.textContent = r.has_qa ? r.name : `${r.name}  (no QA yet)`;
+        select.appendChild(opt);
+    });
+    if (prev && data.runs.some(r => r.name === prev)) {
+        select.value = prev;           // keep user's selection on refresh
+    }                                  // else newest run (first option) is selected
+}
+
+const PED_LEVEL_BADGE = { good: "success", warn: "warning", bad: "danger" };
+
+function renderPedSummary(s) {
+    const div = document.getElementById("ped-summary");
+    if (!s) { div.innerHTML = ""; return; }
+
+    const overall = PED_LEVEL_BADGE[s.overall] || "secondary";
+    let html = `
+      <div class="d-flex flex-wrap align-items-center gap-3 mb-2">
+        <span class="badge bg-${overall}" style="font-size:1em;">${s.overall.toUpperCase()}</span>
+        <span>${s.total_bad} bad / ${s.total_ch} channels</span>
+        <span class="text-muted">Ref CNS RMS: ${s.ref_cns_rms} ADC</span>
+        <span class="text-muted">Pedestals: ${s.pedestal_ts || "?"}</span>
+        <span class="text-muted small">analyzed ${s.generated}</span>
+      </div>
+      <div style="overflow-x:auto;">
+      <table class="table table-dark table-sm table-bordered" style="width:auto;font-size:0.9em;">
+        <thead><tr>
+          <th>FEU</th><th>Events</th><th>OK</th><th>Noisy/Float</th>
+          <th>Dead/Stuck</th><th>Other</th><th>Med CNS RMS</th><th>Problem DREAMs</th>
+        </tr></thead><tbody>`;
+
+    Object.keys(s.feus).sort((a, b) => a - b).forEach(feu => {
+        const f = s.feus[feu];
+        const lvl = PED_LEVEL_BADGE[f.level] || "secondary";
+        const badDreams = Object.entries(f.bad_dreams)
+            .map(([d, cls]) => `D${d} (${cls.replace("_cable", "")})`)
+            .join(", ") || "—";
+        html += `<tr>
+          <td><span class="badge bg-${lvl}">FEU ${String(feu).padStart(2, "0")}</span></td>
+          <td>${f.n_events}</td><td>${f.n_ok}</td><td>${f.n_noisy}</td>
+          <td>${f.n_dead}</td><td>${f.n_other}</td>
+          <td>${f.med_cns_rms ?? "N/A"}</td><td>${badDreams}</td>
+        </tr>`;
+    });
+    div.innerHTML = html + "</tbody></table></div>";
+}
+
+async function loadPedQA(bustCache = false, data = null) {
+    const run = document.getElementById("ped-run-select").value;
+    if (!run) return;
+
+    if (!data) {
+        const res = await fetch(`/ped_qa_data?run=${encodeURIComponent(run)}`);
+        data = await res.json();
+    }
+    const gallery = document.getElementById("ped-gallery");
+    const noQa = document.getElementById("ped-no-qa");
+    const pdfLink = document.getElementById("ped-pdf-link");
+
+    if (!data.success) {
+        gallery.innerHTML = `<p class="text-danger">Error: ${data.message}</p>`;
+        return;
+    }
+    if (!data.has_qa) {
+        pedLastGenerated = null;
+        renderPedSummary(null);
+        gallery.innerHTML = "";
+        noQa.classList.remove("d-none");
+        pdfLink.classList.add("d-none");
+        return;
+    }
+    noQa.classList.add("d-none");
+    pedLastGenerated = data.summary.generated;
+    renderPedSummary(data.summary);
+
+    if (data.pdf) {
+        pdfLink.href = data.pdf;
+        pdfLink.classList.remove("d-none");
+    } else {
+        pdfLink.classList.add("d-none");
+    }
+
+    gallery.innerHTML = "";
+    const suffix = bustCache ? `&t=${Date.now()}` : "";
+    data.images.forEach(imgUrl => {
+        const src = imgUrl + suffix;
+        // Overview plots (channel map, summary table) get double width
+        const wide = /00_channel_map|01_summary_table/.test(decodeURIComponent(imgUrl));
+        const col = document.createElement("div");
+        col.className = wide ? "col-12 col-md-8 col-xl-6" : "col-6 col-md-4 col-xl-3";
+        col.innerHTML = `
+            <div class="plot-card">
+                <img src="${src}" style="max-height:${wide ? 320 : 200}px;" alt="pedestal QA plot">
+            </div>`;
+        gallery.appendChild(col);
+        col.querySelector("img").addEventListener("click", () => openFullscreenImage(src));
+    });
+}
+
+document.querySelector('a[href="#ped-viewer"]').addEventListener("click", async () => {
+    await loadPedRuns();
+    await loadPedQA();
+});
+document.getElementById("ped-run-select").addEventListener("change", () => loadPedQA());
+document.getElementById("ped-reload").addEventListener("click", async () => {
+    await loadPedRuns();
+    await loadPedQA(true);
+});
+
+// While the tab is visible, pick up new runs / newly analyzed runs automatically
+setInterval(async () => {
+    const pane = document.getElementById("ped-viewer");
+    if (!pane.classList.contains("active")) return;
+    await loadPedRuns();  // no-op unless the run list changed
+    const run = document.getElementById("ped-run-select").value;
+    if (!run) return;
+    const res = await fetch(`/ped_qa_data?run=${encodeURIComponent(run)}`);
+    const data = await res.json();
+    if (data.success && data.has_qa && data.summary.generated !== pedLastGenerated) {
+        await loadPedQA(true, data);
+    }
+}, 10000);
+
+
+setInterval(updateStatus, 1000);  // update every 1s
+updateStatus();
+
+// ---------------------------------------------------------------------------
+// Monitor panel
+// ---------------------------------------------------------------------------
+
+async function updateMonitorStatus() {
+  const res = await fetch("/monitor/status");
+  const d = await res.json();
+
+  const btn = document.getElementById("monitor-toggle");
+  if (d.running) {
+    btn.textContent = "On";
+    btn.className = "btn btn-sm btn-success";
+  } else {
+    btn.textContent = "Off";
+    btn.className = "btn btn-sm btn-secondary";
+  }
+
+  const lastCheck = document.getElementById("monitor-last-check");
+  lastCheck.textContent = d.last_check ? `Last check: ${d.last_check}` : "";
+
+  const alertsEl = document.getElementById("monitor-active-alerts");
+  if (d.active_alerts && d.active_alerts.length > 0) {
+    alertsEl.textContent = "⚠ Active alerts: " + d.active_alerts.join(", ");
+  } else {
+    alertsEl.textContent = "";
+  }
+
+  const chatIdEl = document.getElementById("monitor-chat-id");
+  chatIdEl.textContent = d.chat_id ? `${d.chat_id}` : "(not set)";
+}
+
+document.getElementById("monitor-toggle").addEventListener("click", async () => {
+  await fetch("/monitor/toggle", { method: "POST" });
+  await updateMonitorStatus();
+});
+
+document.getElementById("monitor-test").addEventListener("click", async () => {
+  const res = await fetch("/monitor/test", { method: "POST" });
+  const d = await res.json();
+  showPopup(d.message, d.success ? "#17a2b8" : "#dc3545");
+});
+
+document.getElementById("monitor-fetch-chat-id").addEventListener("click", async () => {
+  const res = await fetch("/monitor/fetch_chat_id", { method: "POST" });
+  const d = await res.json();
+  if (d.success) {
+    showPopup(`Chat ID set: ${d.chat_id}`, "#28a745");
+  } else {
+    showPopup(d.message, "#dc3545");
+  }
+  await updateMonitorStatus();
+});
+
+document.getElementById("monitor-set-chat-id").addEventListener("click", async () => {
+  const val = document.getElementById("monitor-chat-id-input").value.trim();
+  if (!val) return;
+  const res = await fetch("/monitor/set_chat_id", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: parseInt(val) }),
+  });
+  const d = await res.json();
+  if (d.success) {
+    showPopup(`Chat ID set: ${d.chat_id}`, "#28a745");
+    document.getElementById("monitor-chat-id-input").value = "";
+  } else {
+    showPopup(d.message, "#dc3545");
+  }
+  await updateMonitorStatus();
+});
+
+// Fetch bot username for display
+(async () => {
+  const res = await fetch("/monitor/bot_info");
+  const d = await res.json();
+  if (d.success) {
+    document.getElementById("monitor-bot-name").textContent = `Bot: @${d.username}`;
+  }
+})();
+
+updateMonitorStatus();
+setInterval(updateMonitorStatus, 10000);
+
+updateHVPlots();
+setInterval(updateHVPlots, 5000);  // update every 5s
+
+
+// ---------------------------------------------------------------------------
+// Analysis Browser
+// ---------------------------------------------------------------------------
+
+let abCurrentPath = "";
+
+async function abBrowse(relPath, bustCache = false) {
+    const res = await fetch(`/browse_analysis?path=${encodeURIComponent(relPath)}`);
+    const data = await res.json();
+    if (!data.success) {
+        document.getElementById("ab-subdirs").innerHTML =
+            `<p class="text-danger">Error: ${data.message}</p>`;
+        return;
+    }
+
+    abCurrentPath = data.path;
+    abRenderBreadcrumb(abCurrentPath);
+    abRenderSubdirs(data.subdirs, abCurrentPath);
+    abRenderGallery(data.images, bustCache);
+}
+
+function abRenderBreadcrumb(path) {
+    const ol = document.getElementById("ab-breadcrumb");
+    ol.innerHTML = "";
+
+    const rootLi = document.createElement("li");
+    rootLi.className = "breadcrumb-item";
+    const rootA = document.createElement("a");
+    rootA.href = "#";
+    rootA.textContent = "Analysis";
+    rootA.addEventListener("click", e => { e.preventDefault(); abBrowse(""); });
+    rootLi.appendChild(rootA);
+    ol.appendChild(rootLi);
+
+    if (path) {
+        const parts = path.split("/");
+        parts.forEach((part, i) => {
+            const li = document.createElement("li");
+            const partPath = parts.slice(0, i + 1).join("/");
+            if (i === parts.length - 1) {
+                li.className = "breadcrumb-item active";
+                li.textContent = part;
+            } else {
+                li.className = "breadcrumb-item";
+                const a = document.createElement("a");
+                a.href = "#";
+                a.textContent = part;
+                a.addEventListener("click", e => { e.preventDefault(); abBrowse(partPath); });
+                li.appendChild(a);
+            }
+            ol.appendChild(li);
+        });
+    }
+}
+
+function abRenderSubdirs(subdirs, currentPath) {
+    const div = document.getElementById("ab-subdirs");
+    div.innerHTML = "";
+
+    if (currentPath) {
+        const upBtn = document.createElement("button");
+        upBtn.className = "btn btn-outline-secondary btn-sm";
+        upBtn.textContent = "⬆ ..";
+        const parentPath = currentPath.includes("/")
+            ? currentPath.substring(0, currentPath.lastIndexOf("/"))
+            : "";
+        upBtn.addEventListener("click", () => abBrowse(parentPath));
+        div.appendChild(upBtn);
+    }
+
+    subdirs.forEach(d => {
+        const btn = document.createElement("button");
+        btn.className = "btn btn-outline-light btn-sm";
+        btn.textContent = "📁 " + d;
+        const childPath = currentPath ? `${currentPath}/${d}` : d;
+        btn.addEventListener("click", () => abBrowse(childPath));
+        div.appendChild(btn);
+    });
+}
+
+function abRenderGallery(images, bustCache = false) {
+    const gallery = document.getElementById("ab-gallery");
+    const noImages = document.getElementById("ab-no-images");
+    gallery.innerHTML = "";
+
+    if (images.length === 0) {
+        noImages.classList.remove("d-none");
+        return;
+    }
+    noImages.classList.add("d-none");
+
+    const suffix = bustCache ? `&t=${Date.now()}` : "";
+    images.forEach(imgUrl => {
+        const src = imgUrl + suffix;
+        const col = document.createElement("div");
+        col.className = "col-6 col-md-4 col-xl-3";
+        col.innerHTML = `
+            <div class="plot-card">
+                <img src="${src}" style="max-height:200px;" alt="plot">
+            </div>`;
+        gallery.appendChild(col);
+        col.querySelector("img").addEventListener("click", () => openFullscreenImage(src));
+    });
+}
+
+// Load when tab is activated
+document.querySelector('a[href="#analysis-browser"]').addEventListener("click", () => {
+    if (abCurrentPath === "" && document.getElementById("ab-breadcrumb").children.length === 0) {
+        abBrowse("");
+    }
+});
+
+document.getElementById("ab-reload").addEventListener("click", () => abBrowse(abCurrentPath, true));
+
+
+// ---------------------------------------------------------------------------
+// System Resource Monitor
+// ---------------------------------------------------------------------------
+
+function sysBarColor(pct) {
+    if (pct < 60) return '#3ddc84';
+    if (pct < 80) return '#f0c040';
+    return '#e05050';
+}
+
+function sysFormatBytes(b) {
+    if (b >= 1e12) return (b / 1e12).toFixed(2) + 'T';
+    if (b >= 1e9)  return (b / 1e9).toFixed(2)  + 'G';
+    if (b >= 1e6)  return (b / 1e6).toFixed(0)   + 'M';
+    return (b / 1e3).toFixed(0) + 'K';
+}
+
+function sysMakeBar(label, pct, rightLabel) {
+    const color = sysBarColor(pct);
+    const w = Math.max(0, Math.min(100, pct));
+    const extra = rightLabel ? `<span class="sys-bar-extra">${rightLabel}</span>` : '';
+    return `<div class="sys-bar-row">
+      <span class="sys-bar-label">${label}</span>
+      <div class="sys-bar-track">
+        <div class="sys-bar-fill" style="width:${w}%;background:${color};"></div>
+      </div>
+      <span class="sys-bar-pct">${pct.toFixed(1)}%</span>
+      ${extra}
+    </div>`;
+}
+
+async function updateSysStats() {
+    try {
+        const res = await fetch('/system_stats');
+        const d = await res.json();
+        if (!d.success) return;
+
+        const loadEl = document.getElementById('sys-load-avg');
+        loadEl.textContent = 'load avg: ' + d.load_avg.map(x => x.toFixed(2)).join('  ');
+
+        const grid = document.getElementById('sys-cpu-grid');
+        grid.innerHTML = d.cpu_cores.map((pct, i) =>
+            sysMakeBar('CPU' + (i + 1), pct, null)
+        ).join('');
+
+        const m = d.memory, s = d.swap;
+        document.getElementById('sys-mem-row').innerHTML = sysMakeBar(
+            'Mem', m.percent,
+            sysFormatBytes(m.used) + '/' + sysFormatBytes(m.total));
+        document.getElementById('sys-swp-row').innerHTML = sysMakeBar(
+            'Swp', s.percent,
+            sysFormatBytes(s.used) + '/' + sysFormatBytes(s.total));
+
+        const sysDiskRow = (elId, label, disk) => {
+            document.getElementById(elId).innerHTML = disk
+                ? sysMakeBar(label, disk.percent,
+                    sysFormatBytes(disk.used) + '/' + sysFormatBytes(disk.total))
+                : sysMakeBar(label, 0, 'n/a');
+        };
+        sysDiskRow('sys-ssd-row', 'SSD', d.ssd);
+        sysDiskRow('sys-hdd-row', 'HDD', d.hdd);
+    } catch (e) { /* silent */ }
+}
+
+updateSysStats();
+setInterval(updateSysStats, 2000);
+</script>
+{% endblock %}

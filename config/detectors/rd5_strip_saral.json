@@ -1,0 +1,10 @@
+{
+    "det_type": "rd5_strip_saral",
+    "strip_map_type": "rd5",
+    "resist_map_type": "strip_saral",
+    "det_size": {
+        "x": 128.5,
+        "y": 154.2,
+        "z": 4
+    }
+}
