@@ -1,21 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on November 20 15:16 2025
-Created in PyCharm
-Created as Cosmic_Bench_DAQ_Control/get_run_events
+Sum VMM hit counts for a run from the per-pcapng events.json summaries that
+vmm_qa/vmm_pcapng_qa.py writes under the analysis tree:
 
-@author: Dylan Neff, dn277127
+    <analysis_dir>/<run>/<subrun>/<pcap_base>/events.json
+
+The GUI's event counter shows hits (there is no trigger-built 'event' in the
+self-triggered SRS stream); n_hits is summed across all analyzed capture files.
+Counts trail the DAQ by up to one capture rotation + QA time, since a pcapng is
+only analyzed once it is finalized.
+
+Adapted from Dylan Neff's get_run_events (Dream RunCtrl log scraping).
+
+@author: Alexandra Kallitsopoulou (based on Dylan Neff's original)
 """
 
 import os
 import sys
-import re
+import json
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_config_beam import BASE_DATA_DIR
 
-RUN_DIR = f'{BASE_DATA_DIR}runs'
+ANALYSIS_DIR = f'{BASE_DATA_DIR}analysis'
 
 
 def main():
@@ -23,70 +31,58 @@ def main():
         print('Usage: python get_run_events.py <run_name>')
         sys.exit(1)
     run_name = sys.argv[1]
-    total_events, subrun_details = get_total_events_for_run(RUN_DIR, run_name)
-    print(f'Total Dream events for run {run_name}: {total_events}')
+    total_hits, subrun_details = get_total_events_for_run(ANALYSIS_DIR, run_name)
+    print(f'Total VMM hits for run {run_name}: {total_hits:,}')
     for subrun, n in subrun_details.items():
-        print(f'  {subrun}: {n}')
+        print(f'  {subrun}: {n:,}')
     print('donzo')
 
 
-def get_total_events_for_run(run_dir, run_name, raw_inner_dir='raw_daq_data'):
+def get_total_events_for_run(run_dir=None, run_name=None):
     """
-    Return total DREAM event count for run_name across all subruns.
+    Return total analyzed VMM hits for run_name across all subruns.
 
-    Reads the per-FEU event count from the DREAM RunCtrl log files that
-    dream_daq_control.py copies into each subrun's raw_daq_data/ directory at the
-    end of the subrun. Each event is read out by every FEU, so the per-FEU count
-    (not the FEU-summed total) is the number of physics events.
-    Returns (total_events, {subrun_name: event_count}). Note: an in-progress
-    subrun has no RunCtrl log yet, so it contributes 0 until it completes.
+    run_dir is the ANALYSIS tree (default: BASE_DATA_DIR/analysis), not the raw
+    runs tree — hit counts come from the events.json files the QA writes per
+    capture file. Keeps the Dream-era name/signature so flask_app imports work
+    unchanged. Returns (total_hits, {subrun_name: hit_count}).
+    A run with no QA output yet returns (0, {}).
     """
+    if run_dir is None:
+        run_dir = ANALYSIS_DIR
     run_path = os.path.join(run_dir, run_name)
     if not os.path.isdir(run_path):
-        raise FileNotFoundError(f"Run directory does not exist: {run_path}")
+        return 0, {}
 
-    total_events = 0
-    subrun_event_counts = {}
+    total_hits = 0
+    subrun_hit_counts = {}
 
     for subrun in sorted(os.listdir(run_path)):
         subrun_path = os.path.join(run_path, subrun)
         if not os.path.isdir(subrun_path):
             continue
 
-        raw_dir = os.path.join(subrun_path, raw_inner_dir)
-        if not os.path.isdir(raw_dir):
-            continue
+        hits = _sum_events_jsons(subrun_path)
+        total_hits += hits
+        subrun_hit_counts[subrun] = hits
 
-        events = _read_events_from_logs(raw_dir)
-        if events is not None:
-            total_events += events
-            subrun_event_counts[subrun] = events
-
-    return total_events, subrun_event_counts
+    return total_hits, subrun_hit_counts
 
 
-def _read_events_from_logs(raw_dir):
-    """
-    Search *.log files in raw_dir for the DREAM RunCtrl data-taking summary, e.g.
-        FeuCtrl_StopDataTaking OK after total 2216 events in 8 FEUs (277/FEU) ...
-    and return the per-FEU count (277 here) as the physics event count.
-    Returns the highest value found, or None if not found.
-    """
-    best = None
-    for fname in os.listdir(raw_dir):
-        if not fname.endswith('.log') or fname == 'dream_daq.log':
+def _sum_events_jsons(subrun_analysis_dir):
+    """Sum n_hits over <pcap_base>/events.json below one subrun's analysis dir."""
+    total = 0
+    for entry in os.listdir(subrun_analysis_dir):
+        events_path = os.path.join(subrun_analysis_dir, entry, 'events.json')
+        if not os.path.isfile(events_path):
             continue
         try:
-            with open(os.path.join(raw_dir, fname), 'r', errors='replace') as f:
-                for line in f:
-                    m = re.search(r'\((\d+)\s*/\s*FEU\)', line)
-                    if m:
-                        val = int(m.group(1))
-                        if best is None or val > best:
-                            best = val
-        except OSError:
+            with open(events_path) as f:
+                summary = json.load(f)
+            total += int(summary.get('n_hits', 0))
+        except (OSError, ValueError):
             continue
-    return best
+    return total
 
 
 if __name__ == '__main__':
