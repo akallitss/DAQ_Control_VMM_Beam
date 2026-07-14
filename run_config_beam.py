@@ -134,7 +134,6 @@ class Config(RunConfigBase):
         self.data_out_dir = f'{self.base_out_dir}runs/'
         self.run_out_dir = f'{self.data_out_dir}{self.run_name}/'
         self.raw_daq_inner_dir = 'raw_daq_data'
-        self.detector_info_dir = f'{self.base_out_dir}config/detectors/'
         self.start_time = None
         self.power_off_hv_at_end = False  # True to power off all CAEN HV at the end of the run.
         self.resume = False  # True to resume an existing run: skip sub-runs already marked .subrun_complete.

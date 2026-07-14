@@ -17,8 +17,7 @@ site (no code edit needed) and run:
             lsblk -f                   # partition layout
         Create the tree and make sure your user can write:
             mkdir -p /local/p2/p2data/sps_vmm_2026 && touch /local/p2/p2data/sps_vmm_2026/.w
-        Also copy config/detectors/ contents there (define_detectors etc. are
-        read from <base_data_dir>/config/detectors/).
+        (runs/ and analysis/ are created under it automatically.)
 
 --------------------------------------------------------------------------------
  2. daq_host                                         run_config_beam.py (SITES)

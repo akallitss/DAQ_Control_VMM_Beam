@@ -203,7 +203,7 @@ empty (except comments) before the first real run.
 
 | field | what to put there |
 |-------|-------------------|
-| `base_data_dir` | data disk on the DAQ machine, e.g. `/local/p2/p2data/sps_vmm_2026/` (trailing `/`). The `runs/ analysis/ config/detectors/` tree is created under it. |
+| `base_data_dir` | data disk on the DAQ machine, e.g. `/local/p2/p2data/sps_vmm_2026/` (trailing `/`). The `runs/ analysis/` tree is created under it. |
 | `daq_host` | IP the hv/lv/daq servers are reached on **by daq_control and flask**. Everything runs on the same machine → keep `127.0.0.1`. Only set the LAN IP if you ever split services across machines. |
 | `hv_ip` | CAEN mainframe IP on the crate network. |
 | `hv_n_cards` | number of HV cards in the SPS crate. |
