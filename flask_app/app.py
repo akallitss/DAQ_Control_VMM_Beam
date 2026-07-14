@@ -350,7 +350,7 @@ def restart_all():
 @app.route("/update_run_config_py", methods=['POST'])
 def update_run_config_py():
     try:
-        subprocess.Popen(["python", f"{BASE_DIR}/iterate_run_num.py"])
+        subprocess.Popen([sys.executable, f"{BASE_DIR}/iterate_run_num.py"])
         time.sleep(0.2)  # Give it a moment to complete
 
         return jsonify({"success": True, "message": f"Run number iterated"})
@@ -361,7 +361,7 @@ def update_run_config_py():
 @app.route("/run_config_py", methods=['POST'])
 def run_config_py():
     try:
-        subprocess.Popen(["python", f"{BASE_DIR}/run_config_beam.py"])
+        subprocess.Popen([sys.executable, f"{BASE_DIR}/run_config_beam.py"])
         time.sleep(1)
         config_path = os.path.join(CONFIG_RUN_DIR, 'run_config_beam.json')
         if not os.path.exists(config_path):
@@ -756,7 +756,7 @@ def get_config_py():
     try:
         # Call get_config function from run_config_beam.py
         result = subprocess.run(
-            ["python", f"{BASE_DIR}/get_config_py.py"],
+            [sys.executable, f"{BASE_DIR}/get_config_py.py"],
             capture_output=True,
             text=True
         )

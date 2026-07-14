@@ -10,7 +10,10 @@ fi
 # Check if run output directory exists, iterate run name if so
 #python iterate_run_num.py "$CONFIG_PATH"  # Not working, skip for now!
 
-COMMAND="python daq_control.py \"$CONFIG_PATH\""
+# Absolute venv python — the interactive pane's shell may have a different
+# python (pyenv/conda) on PATH; see start_servers.sh.
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COMMAND="$BASE_DIR/.venv/bin/python $BASE_DIR/daq_control.py \"$CONFIG_PATH\""
 
 # Send command to the tmux session
 tmux send-keys -t "$SESSION" "$COMMAND" C-m
