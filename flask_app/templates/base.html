@@ -253,6 +253,20 @@
             border-radius: 4px;
         }
 
+        /* ---------- Beam state chip ---------- */
+        .beam-chip {
+            font-family: var(--mono);
+            font-weight: 700;
+            font-size: 0.85rem;
+            letter-spacing: 0.04em;
+            padding: 0.12rem 0.6rem;
+            border-radius: 6px;
+            white-space: nowrap;
+        }
+        .beam-on      { color: var(--ok);   border: 1px solid var(--ok);   background: rgba(61, 220, 132, 0.12); }
+        .beam-off     { color: var(--bad);  border: 1px solid var(--bad);  background: rgba(239, 91, 91, 0.14); }
+        .beam-unknown { color: var(--sec);  border: 1px solid var(--sec);  background: rgba(125, 136, 150, 0.12); }
+
         /* ---------- Breadcrumb / tables ---------- */
         .breadcrumb { background: transparent; padding: 0; margin: 0; }
         .breadcrumb-item a { color: var(--muted); text-decoration: none; }

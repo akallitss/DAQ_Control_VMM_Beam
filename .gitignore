@@ -222,3 +222,6 @@ config/json_run_configs/
 config/current_run_state.json
 config/qa_state.json
 config/qa_reset.json
+config/beam_config.json
+config/beam_state.json
+logs/beam_history.csv

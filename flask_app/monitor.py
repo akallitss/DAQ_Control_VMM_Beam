@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """
-DAQ monitor: periodically checks session statuses and sends Telegram alerts.
+DAQ monitor: periodically checks session statuses and sends alerts over
+Telegram and/or WhatsApp — every configured channel gets every alert.
+
+Channels (monitor_config.json):
+  Telegram : "telegram_token" (from @BotFather) + "telegram_chat_id"
+             (Auto-fetch in the GUI after messaging the bot).
+  WhatsApp : "whatsapp_phone" (your number, +33...) + "whatsapp_apikey" —
+             via the free CallMeBot gateway (callmebot.com): add their number
+             as a contact, WhatsApp it "I allow callmebot to send me messages",
+             and it replies with your apikey. Third-party relay — fine for
+             beam/DAQ status pings, don't put anything sensitive in alerts.
 
 Rules are defined as methods named rule_<name>(self) -> (bool, str).
   bool : True = currently in alert state
@@ -78,6 +88,35 @@ def get_bot_username(token):
 
 
 # ---------------------------------------------------------------------------
+# WhatsApp helper (CallMeBot gateway)
+# ---------------------------------------------------------------------------
+
+WHATSAPP_URL = "https://api.callmebot.com/whatsapp.php"
+
+
+def send_whatsapp(phone, apikey, text):
+    """Send a WhatsApp message via CallMeBot. Returns (success, error: str|None).
+
+    CallMeBot answers HTTP 200 even for some failures, with the problem in the
+    HTML body — so scan the body for its known error phrases."""
+    try:
+        r = requests.get(
+            WHATSAPP_URL,
+            params={"phone": phone, "text": text, "apikey": apikey},
+            timeout=30,
+        )
+        r.raise_for_status()
+        body = r.text.lower()
+        for phrase in ("apikey is invalid", "phone number is not registered",
+                       "missing parameter", "error"):
+            if phrase in body:
+                return False, f"CallMeBot: {phrase}"
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+# ---------------------------------------------------------------------------
 # Monitor
 # ---------------------------------------------------------------------------
 
@@ -125,6 +164,36 @@ class DaqMonitor:
     @property
     def chat_id(self):
         return self.config.get("telegram_chat_id")
+
+    @property
+    def whatsapp_phone(self):
+        return self.config.get("whatsapp_phone")
+
+    @property
+    def whatsapp_apikey(self):
+        return self.config.get("whatsapp_apikey")
+
+    def _telegram_ready(self):
+        # A placeholder token (from the config template) is not configured.
+        return bool(self.token and self.chat_id
+                    and "PASTE" not in str(self.token).upper())
+
+    def _whatsapp_ready(self):
+        return bool(self.whatsapp_phone and self.whatsapp_apikey)
+
+    def channels(self):
+        """Names of the configured alert channels."""
+        out = []
+        if self._telegram_ready():
+            out.append("telegram")
+        if self._whatsapp_ready():
+            out.append("whatsapp")
+        return out
+
+    def set_whatsapp(self, phone, apikey):
+        self.config["whatsapp_phone"] = phone
+        self.config["whatsapp_apikey"] = apikey
+        self.save_config()
 
     def set_chat_id(self, chat_id):
         self.config["telegram_chat_id"] = chat_id
@@ -245,38 +314,51 @@ class DaqMonitor:
     # Sending
     # ---------------------------------------------------------------
 
+    def _broadcast(self, html, plain):
+        """Send to every configured channel: html to Telegram (parse_mode HTML),
+        plain (WhatsApp *bold* markup ok) to CallMeBot.
+        Returns (any_success, error: str|None)."""
+        results = []
+        if self._telegram_ready():
+            ok, err = send_telegram(self.token, self.chat_id, html)
+            results.append(("telegram", ok, err))
+        if self._whatsapp_ready():
+            ok, err = send_whatsapp(self.whatsapp_phone, self.whatsapp_apikey, plain)
+            results.append(("whatsapp", ok, err))
+        if not results:
+            return False, "No alert channel configured (Telegram or WhatsApp)."
+        errors = "; ".join(f"{name}: {err}" for name, ok, err in results if not ok)
+        return any(ok for _, ok, _ in results), errors or None
+
     def _send_alert(self, rule_name, detail):
-        if not self.token or not self.chat_id:
-            print(f"[monitor] Alert triggered ({rule_name}) but Telegram not configured.")
-            return
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        msg = f"⚠️ <b>DAQ ALERT</b>\n<code>{rule_name}</code>\n{detail}\n<i>{ts}</i>"
-        ok, err = send_telegram(self.token, self.chat_id, msg)
+        ok, err = self._broadcast(
+            f"⚠️ <b>DAQ ALERT</b>\n<code>{rule_name}</code>\n{detail}\n<i>{ts}</i>",
+            f"⚠️ *DAQ ALERT*\n{rule_name}\n{detail}\n{ts}")
         if ok:
             self._alert_sent_at[rule_name] = datetime.now()
             self.last_alert_time = datetime.now()
-            print(f"[monitor] Alert sent: {rule_name} — {detail}")
+            print(f"[monitor] Alert sent: {rule_name} — {detail}"
+                  + (f" (partial failure: {err})" if err else ""))
         else:
             print(f"[monitor] Failed to send alert for {rule_name}: {err}")
 
     def _send_recovery(self, rule_name):
-        if not self.token or not self.chat_id:
-            return
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        msg = f"✅ <b>DAQ RECOVERED</b>\n<code>{rule_name}</code>\n<i>{ts}</i>"
-        ok, err = send_telegram(self.token, self.chat_id, msg)
+        ok, err = self._broadcast(
+            f"✅ <b>DAQ RECOVERED</b>\n<code>{rule_name}</code>\n<i>{ts}</i>",
+            f"✅ *DAQ RECOVERED*\n{rule_name}\n{ts}")
         if ok:
-            print(f"[monitor] Recovery sent: {rule_name}")
+            print(f"[monitor] Recovery sent: {rule_name}"
+                  + (f" (partial failure: {err})" if err else ""))
         else:
             print(f"[monitor] Failed to send recovery for {rule_name}: {err}")
 
     def send_test_alert(self):
-        if not self.token or not self.chat_id:
-            return False, "Telegram token or chat_id not configured."
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        msg = f"🔔 <b>DAQ monitor test</b>\nMonitoring is active.\n<i>{ts}</i>"
-        ok, err = send_telegram(self.token, self.chat_id, msg)
-        return ok, err
+        return self._broadcast(
+            f"🔔 <b>DAQ monitor test</b>\nMonitoring is active.\n<i>{ts}</i>",
+            f"🔔 *DAQ monitor test*\nMonitoring is active.\n{ts}")
 
     # ---------------------------------------------------------------
     # Status summary (for the UI)
@@ -287,8 +369,10 @@ class DaqMonitor:
         return {
             "running": self.is_running,
             "enabled": self.enabled,
+            "channels": self.channels(),
             "chat_id_set": self.chat_id is not None,
             "chat_id": self.chat_id,
+            "whatsapp_phone": self.whatsapp_phone,
             "check_interval": self.check_interval,
             "last_check": self.last_check_time.strftime("%H:%M:%S") if self.last_check_time else None,
             "last_alert": self.last_alert_time.strftime("%Y-%m-%d %H:%M:%S") if self.last_alert_time else None,
@@ -350,3 +434,26 @@ class DaqMonitor:
         if info["status"] == "UNKNOWN STATE":
             return True, "vmm_daq_control is in UNKNOWN STATE — check the terminal."
         return False, f"vmm_daq_control: {info['status']}"
+
+    def rule_beam_off(self):
+        """Alert if the SPS beam is OFF for the tracked target (from the Vistar
+        SPS Page 1 parser in beam_state.py). UNKNOWN (Vistar unreachable /
+        unparsable) does not alert — rule_beam_state_unknown covers that.
+        Use rule_options.rule_beam_off.min_duration_seconds to ignore short gaps."""
+        from beam_state import tracker
+        s = tracker.status()
+        if s["state"] == "OFF":
+            mins = s["duration_s"] / 60
+            return True, (f"SPS beam OFF on {s['target']} for {mins:.0f} min "
+                          f"(I/E11 = {s['intensity_e11']}, threshold {s['threshold_e11']})")
+        return False, f"beam: {s['state']} on {s['target']} (I/E11 = {s['intensity_e11']})"
+
+    def rule_beam_state_unknown(self):
+        """Alert if the beam state has been UNKNOWN (Vistar unreachable or page
+        layout not parsed) for a while — the beam-off alert is blind then."""
+        from beam_state import tracker
+        s = tracker.status()
+        if s["state"] == "UNKNOWN" and s["duration_s"] > 300:
+            return True, (f"Beam state UNKNOWN for {s['duration_s'] // 60} min — "
+                          f"last error: {s['error']}")
+        return False, f"beam state: {s['state']}"

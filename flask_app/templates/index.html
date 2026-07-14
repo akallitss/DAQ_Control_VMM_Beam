@@ -81,6 +81,7 @@
     <div class="collapse" id="monitor-setup-collapse">
       <div class="collapse-body">
         <div class="d-flex flex-wrap align-items-center gap-2 mt-1">
+          <span class="text-muted small fw-bold">Telegram</span>
           <span class="text-muted small">Chat ID:</span>
           <span id="monitor-chat-id" class="small font-monospace"></span>
           <button id="monitor-fetch-chat-id" class="btn btn-sm btn-outline-secondary">Auto-fetch</button>
@@ -90,8 +91,23 @@
           <button id="monitor-set-chat-id" class="btn btn-sm btn-outline-secondary">Set</button>
           <span id="monitor-bot-name" class="text-muted small ms-3"></span>
         </div>
-        <p class="text-muted small mt-2 mb-0">
-          To auto-fetch: open Telegram, find the bot, send it any message, then click Auto-fetch.
+        <p class="text-muted small mt-1 mb-0">
+          Put the bot token from @BotFather in <code>config/monitor_config.json</code>, message the
+          bot once, then Auto-fetch.
+        </p>
+        <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+          <span class="text-muted small fw-bold">WhatsApp</span>
+          <span id="monitor-whatsapp" class="small font-monospace"></span>
+          <input id="monitor-wa-phone" type="text" class="form-control form-control-sm"
+                 style="width:160px;" placeholder="+336...">
+          <input id="monitor-wa-apikey" type="text" class="form-control form-control-sm"
+                 style="width:130px;" placeholder="API key">
+          <button id="monitor-set-whatsapp" class="btn btn-sm btn-outline-secondary">Set</button>
+        </div>
+        <p class="text-muted small mt-1 mb-0">
+          Free CallMeBot gateway: save <span class="font-monospace">+34 644 51 95 23</span> as a
+          contact, WhatsApp it <i>“I allow callmebot to send me messages”</i>, and it replies with
+          your API key. Enter your own number (with country code) + that key here.
         </p>
       </div>
         </div>
@@ -102,6 +118,35 @@
   <!-- Status cards -->
   <div class="row g-3 mt-3" id="status-cards">
     <!-- Status cards populated dynamically -->
+  </div>
+
+  <!-- Beam Monitor: ON/OFF state strip (parsed server-side from CERN Vistar
+       SPS Page 1, see beam_state.py). The Vistar image itself is tucked behind
+       the "Show page" toggle and only polled while visible. -->
+  <div class="panel mt-3">
+    <div class="panel-header">
+      <span class="panel-title">Beam Monitor</span>
+      <span id="beam-chip" class="beam-chip beam-unknown">BEAM ?</span>
+      <span id="beam-intensity" class="text-muted small font-monospace"></span>
+      <span class="panel-header-note"><a href="/beam_history" target="_blank" class="text-muted">on/off history</a></span>
+      <span class="ms-auto d-flex align-items-center gap-2">
+        <label for="beam-target-select" class="text-muted small mb-0">Target</label>
+        <select id="beam-target-select" class="form-select form-select-sm" style="width:auto;">
+          <option>T2</option><option>T4</option><option>T6</option><option>T10</option>
+        </select>
+        <button id="beam-show-page" class="btn btn-sm btn-outline-secondary">Show page</button>
+      </span>
+    </div>
+    <div id="beam-page-body" class="panel-body text-center d-none">
+      <div class="d-flex align-items-center justify-content-center gap-2 mb-2">
+        <label for="beam-vistar-select" class="text-muted small mb-0">Page</label>
+        <select id="beam-vistar-select" class="form-select form-select-sm" style="width:auto;"></select>
+        <span id="beam-updated" class="text-muted small font-monospace"></span>
+      </div>
+      <img id="beam-img" alt="CERN Vistar beam display" class="d-none"
+           style="max-width:100%; max-height:600px; border-radius:4px; cursor:pointer;">
+      <div id="beam-placeholder" class="text-muted small py-4">Waiting for first beam image…</div>
+    </div>
   </div>
 
   <!-- HV Monitor -->
@@ -968,6 +1013,142 @@ document.getElementById("detector-select").addEventListener("change", loadPNGs);
 document.getElementById("subdir-select-qa").addEventListener("change", loadPNGs);
 
 
+// --- Beam Monitor: optional Vistar page view (via /beam_image proxy) ---
+// Hidden by default; only polled while "Show page" is expanded. Each cycle
+// preloads the next frame in a detached Image and swaps the visible src only
+// on load, so the panel never flickers or shows a broken image. The proxy
+// serves the last good frame with X-Beam-Stale=1 when CERN is unreachable;
+// fetch() + blob is used (rather than a plain img src) to read that header.
+const BEAM_REFRESH_MS = 7000;  // CERN-requested external poll rate for SPS1
+let beamPageVisible = false;
+let beamBlobUrl = null;
+
+async function loadBeamVistars() {
+    const sel = document.getElementById("beam-vistar-select");
+    try {
+        const pages = await (await fetch("/beam_vistars")).json();
+        sel.innerHTML = "";
+        pages.forEach(p => {
+            const opt = document.createElement("option");
+            opt.value = p.usr;
+            opt.textContent = p.name;
+            sel.appendChild(opt);
+        });
+    } catch (e) {
+        console.error("Failed to load vistar list:", e);
+    }
+}
+
+async function refreshBeamImage() {
+    if (!beamPageVisible) return;
+    const usr = document.getElementById("beam-vistar-select").value || "SPS1";
+    const updated = document.getElementById("beam-updated");
+    try {
+        const resp = await fetch(`/beam_image?usr=${usr}&_=${Date.now()}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const stale = resp.headers.get("X-Beam-Stale") === "1";
+        const blob = await resp.blob();
+        const img = document.getElementById("beam-img");
+        const newUrl = URL.createObjectURL(blob);
+        img.onload = () => {
+            if (beamBlobUrl) URL.revokeObjectURL(beamBlobUrl);
+            beamBlobUrl = newUrl;
+            img.classList.remove("d-none");
+            document.getElementById("beam-placeholder").classList.add("d-none");
+        };
+        img.src = newUrl;
+        const ts = new Date().toLocaleTimeString();
+        updated.textContent = stale ? `${ts} (stale — CERN unreachable)` : ts;
+        updated.classList.toggle("text-warning", stale);
+        updated.classList.toggle("text-muted", !stale);
+    } catch (e) {
+        updated.textContent = `no image (${e.message})`;
+        updated.classList.add("text-warning");
+        updated.classList.remove("text-muted");
+    }
+}
+
+document.getElementById("beam-vistar-select").addEventListener("change", refreshBeamImage);
+document.getElementById("beam-img").addEventListener("click", () =>
+    openFullscreenImage(document.getElementById("beam-img").src));
+document.getElementById("beam-show-page").addEventListener("click", (e) => {
+    beamPageVisible = !beamPageVisible;
+    document.getElementById("beam-page-body").classList.toggle("d-none", !beamPageVisible);
+    e.target.textContent = beamPageVisible ? "Hide page" : "Show page";
+    if (beamPageVisible) refreshBeamImage();
+});
+
+loadBeamVistars();
+setInterval(refreshBeamImage, BEAM_REFRESH_MS);
+
+
+// --- Beam ON/OFF state (server-side parse of SPS Page 1, /beam_state) ---
+// The chip shows ON / OFF+duration / UNKNOWN. State comes every 5 s; the
+// duration ticks locally every second from the last reported transition time.
+let beamStateSince = null;   // Date of last state transition
+let beamStateName = "UNKNOWN";
+
+function fmtDuration(s) {
+    s = Math.max(0, Math.round(s));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+    return h ? `${h}h${String(m).padStart(2, "0")}m` : (m ? `${m}m${String(ss).padStart(2, "0")}s` : `${ss}s`);
+}
+
+function renderBeamChip() {
+    const chip = document.getElementById("beam-chip");
+    const dur = beamStateSince ? (Date.now() - beamStateSince) / 1000 : 0;
+    if (beamStateName === "ON") {
+        chip.textContent = "BEAM ON";
+        chip.className = "beam-chip beam-on";
+    } else if (beamStateName === "OFF") {
+        chip.textContent = `BEAM OFF ${fmtDuration(dur)}`;
+        chip.className = "beam-chip beam-off";
+    } else {
+        chip.textContent = "BEAM ?";
+        chip.className = "beam-chip beam-unknown";
+    }
+}
+
+async function updateBeamState() {
+    try {
+        const s = await (await fetch("/beam_state")).json();
+        if (!s.success) return;
+        beamStateName = s.state;
+        // anchor the local ticker to the server's transition time via duration_s
+        beamStateSince = Date.now() - s.duration_s * 1000;
+        const sel = document.getElementById("beam-target-select");
+        if (document.activeElement !== sel) sel.value = s.target;
+        const info = document.getElementById("beam-intensity");
+        // While ON/OFF, show the last good intensity — a transient bad frame
+        // (error set, state kept) self-heals on the next poll and shouldn't
+        // flash "no data". Only surface the error once the state is UNKNOWN.
+        if (s.state !== "UNKNOWN" && s.intensity_e11 !== null && s.intensity_e11 !== undefined) {
+            info.textContent = `${s.target}: ${s.intensity_e11} E11 (thr ${s.threshold_e11})`;
+        } else if (s.state === "UNKNOWN") {
+            info.textContent = s.error ? `no data: ${s.error}` : "waiting for first parse…";
+        } else {
+            info.textContent = "";
+        }
+        renderBeamChip();
+    } catch (e) {
+        console.error("beam_state failed:", e);
+    }
+}
+
+document.getElementById("beam-target-select").addEventListener("change", async (e) => {
+    await fetch("/beam_state/set_target", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({target: e.target.value}),
+    });
+    updateBeamState();
+});
+
+updateBeamState();
+setInterval(updateBeamState, 5000);
+setInterval(renderBeamChip, 1000);
+
+
 // Helper for joining paths safely
 function osJoin(...parts) {
     return parts.map(p => p.replace(/^\/+|\/+$/g, "")).join("/");
@@ -1045,6 +1226,10 @@ async function updateMonitorStatus() {
 
   const chatIdEl = document.getElementById("monitor-chat-id");
   chatIdEl.textContent = d.chat_id ? `${d.chat_id}` : "(not set)";
+
+  const waEl = document.getElementById("monitor-whatsapp");
+  waEl.textContent = (d.channels || []).includes("whatsapp")
+      ? `✓ ${d.whatsapp_phone}` : "(not set)";
 }
 
 document.getElementById("monitor-toggle").addEventListener("click", async () => {
@@ -1056,6 +1241,20 @@ document.getElementById("monitor-test").addEventListener("click", async () => {
   const res = await fetch("/monitor/test", { method: "POST" });
   const d = await res.json();
   showPopup(d.message, d.success ? "#17a2b8" : "#dc3545");
+});
+
+document.getElementById("monitor-set-whatsapp").addEventListener("click", async () => {
+  const phone = document.getElementById("monitor-wa-phone").value.trim();
+  const apikey = document.getElementById("monitor-wa-apikey").value.trim();
+  const res = await fetch("/monitor/set_whatsapp", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({phone: phone, apikey: apikey}),
+  });
+  const d = await res.json();
+  showPopup(d.success ? "WhatsApp channel configured" : d.message,
+            d.success ? "#17a2b8" : "#dc3545");
+  updateMonitorStatus();
 });
 
 document.getElementById("monitor-fetch-chat-id").addEventListener("click", async () => {

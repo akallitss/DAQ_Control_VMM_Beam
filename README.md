@@ -20,7 +20,7 @@ tmux services (all prefixed `vmm_` — start with `./start_servers.sh`):
 | `vmm_lv_control`  | `lv_control.py`        | 2102 | Aim-TTi PSUs (SCPI TCP 9221) → `lv_monitor.csv` per subrun |
 | `vmm_daq`         | `vmm_daq_control.py`   | 2101 | dumpcap/tcpdump capture per interface, ALINX slow control, status lines |
 | `vmm_daq_control` | interactive shell      |  —   | `daq_control.py <run_config.json>` orchestrates sub-runs |
-| `vmm_flask`       | `flask_app/`           | 5002 | GUI: run control, status cards, HV/LV plots, online QA gallery |
+| `vmm_flask`       | `flask_app/`           | 5002 | GUI: run control, status cards, SPS beam monitor (CERN Vistar), HV/LV plots, online QA gallery |
 | `vmm_qa_watcher`  | `qa_watcher.py`        |  —   | runs `vmm_qa/vmm_pcapng_qa.py` on each finalized pcapng |
 | `vmm_backup_watcher` | `backup_watcher.py` |  —   | rsync to EOS (configure `backup_config.py` first) |
 
@@ -36,6 +36,34 @@ A pcapng is analyzed once it is *finalized*: a higher-sequence file for the
 same interface exists, the sub-run ended (`.capture_done` marker), or its mtime
 is older than 2× the rotation interval. `events.json` per file carries
 `n_hits`/`hits_per_vmm`; `get_run_events.py` sums them for the GUI counter.
+
+The GUI's **Beam Monitor** strip shows the SPS beam state (below). The live
+Vistar page images themselves (SPS Page 1 / Fast BCT / BSRT / BT — whitelist
+`BEAM_VISTARS` in `flask_app/beam_state.py`) are hidden behind the strip's
+*Show page* toggle and only polled while visible. Flask proxies the public
+`vistar-capture.s3.cern.ch/<page>.png` with a 5 s cache so any number of open
+GUIs cause one upstream fetch; only the DAQ machine needs outbound HTTPS.
+If CERN is unreachable the last good frame is kept and marked *stale*.
+
+**Beam ON/OFF tracking** (`flask_app/beam_state.py`): Vistar publishes SPS
+Page 1 only as an image, so the target intensity table (T2/T4/T6/T10, I/E11)
+is read out of the PNG by exact bitmap-glyph matching (`beam_glyphs.json`;
+the Vistar font is un-antialiased, so a glyph either matches exactly or the
+parse fails loudly — no misreads). Beam is ON when the tracked target's
+intensity ≥ threshold (default: T2, 1.0 E11 — panel header / `POST
+/beam_state/set_target`, `set_threshold`; persisted in
+`config/beam_config.json`), debounced over 2 samples at the CERN-requested
+7 s poll. The panel chip shows ON / OFF + how long it's been off / UNKNOWN
+(page unreachable or unparsable > 90 s). Every transition is appended to
+`logs/beam_history.csv` (timestamp, event, target, intensity, off-duration);
+`GET /beam_history` serves it. State persists across restarts
+(`config/beam_state.json`), so an off-period spanning a Flask restart keeps
+its start time. Monitor rules `rule_beam_off` / `rule_beam_state_unknown`
+alert when the beam is down (use `rule_options.rule_beam_off.
+min_duration_seconds` in `monitor_config.json` to ignore short gaps).
+Alerts go to **Telegram** (bot token + chat ID) and/or **WhatsApp** (free
+CallMeBot gateway — a third-party relay, fine for status pings) — both are
+configured from the GUI's Monitoring → Setup panel.
 
 ## Site switch
 

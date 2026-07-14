@@ -22,7 +22,7 @@ import json
 from datetime import datetime
 import pandas as pd
 from urllib.parse import quote
-from flask import Flask, render_template, jsonify, request, send_from_directory, abort
+from flask import Flask, render_template, jsonify, request, send_from_directory, abort, Response
 from flask_socketio import SocketIO, emit
 
 from daq_status import (get_vmm_daq_status, get_hv_control_status,
@@ -822,6 +822,18 @@ def monitor_set_chat_id():
     return jsonify({"success": True, "chat_id": monitor.chat_id})
 
 
+@app.route("/monitor/set_whatsapp", methods=["POST"])
+def monitor_set_whatsapp():
+    """Configure the WhatsApp (CallMeBot) channel: phone + apikey."""
+    data = request.get_json(silent=True) or {}
+    phone = (data.get("phone") or "").strip()
+    apikey = (data.get("apikey") or "").strip()
+    if not phone or not apikey:
+        return jsonify({"success": False, "message": "Need both phone and API key."})
+    monitor.set_whatsapp(phone, apikey)
+    return jsonify({"success": True, "channels": monitor.channels()})
+
+
 @app.route("/monitor/test", methods=["POST"])
 def monitor_test():
     ok, err = monitor.send_test_alert()
@@ -871,6 +883,75 @@ def system_stats():
         return jsonify({"success": False, "message": "psutil not installed"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
+
+
+# --- Beam monitoring (CERN Vistar) ---
+# The op-webtools Vistar page (op-webtools.web.cern.ch/vistar/?usr=SPS1) is a
+# JS shell that polls a public PNG on vistar-capture.s3.cern.ch. beam_state
+# proxies that PNG (short cache: all open GUIs + the state poller share one
+# upstream fetch) and OCRs the target intensity table out of SPS Page 1 to
+# track BEAM ON/OFF and record off-periods to logs/beam_history.csv.
+from beam_state import BEAM_VISTARS, fetch_beam_png, tracker as beam_tracker
+
+
+@app.route("/beam_vistars")
+def beam_vistars():
+    """Available Vistar pages for the beam monitor selector."""
+    return jsonify([{"usr": k, "name": v["name"]} for k, v in BEAM_VISTARS.items()])
+
+
+@app.route("/beam_image")
+def beam_image():
+    usr = request.args.get("usr", "SPS1")
+    if usr not in BEAM_VISTARS:
+        return jsonify({"success": False, "message": f"Unknown vistar: {usr}"}), 404
+    entry = fetch_beam_png(usr)
+    if entry["png"] is None:
+        return jsonify({"success": False, "message": entry["error"] or "No image yet"}), 502
+    resp = Response(entry["png"], mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-store"
+    # Let the GUI flag a frame that is only served because upstream failed.
+    resp.headers["X-Beam-Stale"] = "1" if entry["error"] else "0"
+    return resp
+
+
+@app.route("/beam_state")
+def beam_state_route():
+    return jsonify({"success": True, **beam_tracker.status()})
+
+
+@app.route("/beam_state/set_target", methods=["POST"])
+def beam_set_target():
+    data = request.get_json(silent=True) or {}
+    target = data.get("target")
+    if not target:
+        return jsonify({"success": False, "message": "No target provided"}), 400
+    beam_tracker.set_target(target)
+    log_event('BEAM_TARGET', 'flask_button', target=target,
+              remote_addr=request.remote_addr)
+    return jsonify({"success": True, **beam_tracker.status()})
+
+
+@app.route("/beam_state/set_threshold", methods=["POST"])
+def beam_set_threshold():
+    data = request.get_json(silent=True) or {}
+    try:
+        threshold = float(data.get("threshold_e11"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "message": "Bad threshold"}), 400
+    beam_tracker.set_threshold(threshold)
+    return jsonify({"success": True, **beam_tracker.status()})
+
+
+@app.route("/beam_history")
+def beam_history():
+    """The beam on/off transition log as CSV (download/inspect)."""
+    from beam_state import BEAM_HISTORY_CSV
+    if not os.path.isfile(BEAM_HISTORY_CSV):
+        return Response("timestamp,event,target,intensity_e11,threshold_e11,off_duration_s\n",
+                        mimetype="text/csv")
+    return send_from_directory(os.path.dirname(BEAM_HISTORY_CSV),
+                               os.path.basename(BEAM_HISTORY_CSV), mimetype="text/csv")
 
 
 def is_vmm_daq_running():
