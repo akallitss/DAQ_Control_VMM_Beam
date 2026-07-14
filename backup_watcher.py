@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Autonomous EOS backup watcher for nTof DREAM DAQ data.
+Autonomous EOS backup watcher for the P2 VMM DAQ data tree.
 
 Syncs the entire source_dir to eos_dir, excluding specified subdirectories.
 The runs_subdir gets smart per-subrun sync (waits for each subrun to be stable
@@ -15,12 +15,12 @@ Usage:
     python backup_watcher.py <backup_config_json_path>
 
 Config keys (see backup_config.py to generate the JSON):
-  source_dir          : local top-level data directory (e.g. /mnt/data/x17/beam_may/)
+  source_dir          : local top-level data directory (base_data_dir)
   eos_dir             : EOS destination (locally FUSE-mounted, same structure)
   runs_subdir         : name of the runs subdir that gets smart per-subrun sync
-  exclude_dirs        : list of subdir names to never sync (e.g. ['dream_run'])
+  exclude_dirs        : list of subdir names to never sync (e.g. ['sim_pcapng'])
   gpg_pass_file       : path to GPG-encrypted CERN password (~/.cern_pass.gpg)
-  cern_principal      : Kerberos principal (e.g. dneff@CERN.CH)
+  cern_principal      : Kerberos principal (e.g. <user>@CERN.CH)
   kinit_interval      : seconds between kinit renewal attempts   (default: 3600)
   include_runs        : list of run dir names to sync exclusively (null = all)
   exclude_runs        : list of run dir names to skip             (null = none)

@@ -26,8 +26,8 @@ CONFIG = {
     # Subdir of source_dir that gets smart per-subrun sync
     'runs_subdir': 'runs',
 
-    # Subdirs of source_dir to never sync
-    'exclude_dirs': ['dream_run'],
+    # Subdirs of source_dir to never sync (e.g. ['sim_pcapng'])
+    'exclude_dirs': [],
 
     # GPG-encrypted CERN password file (created with: gpg --encrypt -r KEY -o ~/.cern_pass.gpg)
     'gpg_pass_file': GPG_PASS_FILE,
@@ -38,7 +38,7 @@ CONFIG = {
     # Seconds between kinit renewal attempts (ticket lasts ~25h, renew well before expiry)
     'kinit_interval': 3600,
 
-    # Run filtering for the runs_subdir (same semantics as processor_config.py)
+    # Run filtering for the runs_subdir
     'include_runs': None,   # e.g. ['run_1', 'run_2'] — only sync these; None = all
     'exclude_runs': None,   # e.g. ['run_35']          — skip these
 

@@ -36,7 +36,6 @@ from monitor import DaqMonitor, fetch_chat_id, get_bot_username
 
 # Repo root (parent of flask_app/) — no per-machine edit needed.
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_TEMPLATE_DIR = f"{BASE_DIR}/config/json_templates"
 CONFIG_RUN_DIR = f"{BASE_DIR}/config/json_run_configs"
 CONFIG_PY_PATH = f"{BASE_DIR}/run_config_beam.py"
 BASH_DIR = f"{BASE_DIR}/bash_scripts"
@@ -51,8 +50,6 @@ CURRENT_RUN_STATE_PATH = f"{BASE_DIR}/config/current_run_state.json"
 # Post-sub-run pause flag; presence tells daq_control to wait at the next sub-run
 # boundary. Path must match PAUSE_FLAG in daq_control.py (repo root).
 PAUSE_FLAG_PATH = f"{BASE_DIR}/.pause_run"
-# ANALYSIS_DIR = "/media/dylan/data/x17"
-# RUN_DIR = "/media/dylan/data/x17/dream_run_test"
 ANALYSIS_DIR = f'{BASE_DATA_DIR}analysis'
 RUN_DIR = f'{BASE_DATA_DIR}runs'
 GENERAL_ANALYSIS_DIR = f'{BASE_DATA_DIR}analysis'

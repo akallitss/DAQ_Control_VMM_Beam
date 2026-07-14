@@ -651,7 +651,7 @@ document.getElementById("rerun-qa").addEventListener("click", async () => {
   showPopup(rerunData.message, rerunData.success ? "#fd7e14" : "#dc3545");
 });
 
-// Processor / QA / Backup watchers use single toggle buttons (Start when stopped,
+// QA / Backup watchers use single toggle buttons (Start when stopped,
 // Stop when running); wiring + state tracking lives with WATCHER_TOGGLES below.
 
 async function startRun() {

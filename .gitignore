@@ -213,8 +213,6 @@ __marimo__/
 hv_creds.txt
 .idea/
 config/backup_config.json
-config/pedestal_qa_config.json
-config/processor_config.json
 config/qa_config.json
 config/json_run_configs/
 
