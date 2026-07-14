@@ -65,6 +65,84 @@ Alerts go to **Telegram** (bot token + chat ID) and/or **WhatsApp** (free
 CallMeBot gateway — a third-party relay, fine for status pings) — both are
 configured from the GUI's Monitoring → Setup panel.
 
+## Remote access and operations
+
+The DAQ computer sits in the beam area — all interaction is remote. Three
+rules cover it: reach the GUI through an SSH tunnel, edit code anywhere
+*except* the DAQ machine, and let one account own the running stack.
+
+### GUI from another machine (SSH tunnel)
+
+The GUI has **no authentication** — anyone who reaches port 5002 controls
+the DAQ. Never ask for the port to be opened; the SSH tunnel *is* the
+access control. From any machine whose SSH config can reach the DAQ host
+(directly or via a jump host, e.g. the `vmm_daplxa` alias at Saclay):
+
+```bash
+ssh -f -N -L 15002:localhost:5002 <daq-host-alias>
+# then browse http://localhost:15002
+```
+
+If the page stops loading (laptop suspend, network change, DAQ reboot),
+the tunnel is dead — kill any leftover and start a new one:
+
+```bash
+pkill -f 'ssh.*-L 15002' ; ssh -f -N -L 15002:localhost:5002 <daq-host-alias>
+```
+
+For a tunnel that survives drops on its own, use autossh
+(`autossh -M 0 -f -N -L 15002:localhost:5002 <daq-host-alias>`) or add
+`ServerAliveInterval 30` / `ExitOnForwardFailure yes` to the host's SSH
+config block. Several people can hold their own tunnels to the same GUI
+at once — the port number on the laptop side is free choice.
+
+### Code changes: edit locally, push, pull on the DAQ machine
+
+Treat the DAQ checkout as a **deploy target, never a workspace**:
+
+- develop and commit on your own machine → `git push`;
+- deploy on the DAQ machine with the GUI's **Git Reset** button (it runs
+  `git reset --hard origin && git pull`) or `ssh <daq> 'cd DAQ_Control_VMM_Beam && git pull'`;
+- then **Restart All** in the GUI so the running services pick up the code.
+
+Because Git Reset is a hard reset, any uncommitted edit made directly on
+the DAQ machine is silently wiped at the next deploy — that is by design
+(the button must always produce a known state during a shift). If a
+mid-shift hotfix on the machine is unavoidable, commit and push it from
+there immediately afterwards. Note DAQ networks often block outbound
+HTTPS, so the git remote must use SSH (`git@github.com:...`); pushing
+from the DAQ machine requires a key — either your forwarded agent
+(`ForwardAgent yes`, as at Saclay) or a per-machine deploy key with write
+access. Runtime state (`config/*_state.json`, run configs, credentials,
+`logs/`) is gitignored, so deploys never touch it.
+
+### Several operators, one DAQ
+
+Shifters do not need shell accounts to *operate* the DAQ — the GUI is the
+control surface, and a browser plus tunnel is enough. The clean model:
+
+- **One account owns the stack** (ideally a service account, e.g. `p2daq`,
+  created by the machine admin; otherwise the account that cloned the
+  repo). It owns the checkout, the venv, the data directory and all
+  `vmm_*` tmux sessions, and is the only one that can `tmux attach` to
+  them — tmux sockets are per-user, so a stack started by one user is
+  invisible to others by design. Don't run pieces as different users.
+- **Shifters** use their personal SSH accounts on the machine *only for
+  the tunnel* (`ssh -N -L ...` needs nothing but a login), then drive
+  everything from the browser. The event log records the client IP of
+  every Start/Stop, so actions stay attributable even with a shared
+  service account.
+- **Experts** who need the terminals get access to the service account
+  itself: the admin adds their public keys to the service account's
+  `~/.ssh/authorized_keys` (the usual test-beam pattern), or grants
+  `sudo -u p2daq -i`. Then `tmux attach -t vmm_daq` etc. work.
+- Keep `hv_creds.txt` and `config/monitor_config.json` readable by the
+  service account only (`chmod 600`) — they hold the CAEN password and
+  the Telegram/WhatsApp keys. If personal accounts must also read the
+  data tree, put a group on the data directory
+  (`chgrp -R <group> <base_data_dir> && chmod -R g+rX ...`), not on the
+  credentials.
+
 ## Site switch
 
 Everything machine-specific lives in the `SITES` dict at the top of
