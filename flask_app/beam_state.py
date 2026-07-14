@@ -267,7 +267,7 @@ class BeamStateTracker:
                 self._sample()
             except Exception as e:
                 print(f"[beam] Unhandled error in poll loop: {e}")
-            time.sleep(self.POLL_S)
+            time.sleep(self.poll_s)
 
     def _sample(self):
         entry = fetch_beam_png("SPS1")
@@ -292,7 +292,7 @@ class BeamStateTracker:
             # no good parse for too long -> state genuinely unknown
             if self.state != "UNKNOWN" and (
                     self.last_ok is None
-                    or (datetime.now() - self.last_ok).total_seconds() > self.UNKNOWN_AFTER_S):
+                    or (datetime.now() - self.last_ok).total_seconds() > self.unknown_after_s):
                 self._pending = []
                 self._set_state("UNKNOWN")
 
