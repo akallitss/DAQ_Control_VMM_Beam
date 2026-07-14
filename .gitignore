@@ -226,3 +226,4 @@ config/beam_config.json
 config/beam_state.json
 logs/beam_history.csv
 config/power_config.json
+config/site.txt

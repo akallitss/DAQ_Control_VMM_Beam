@@ -9,10 +9,11 @@ per network interface (dumpcap), with optional ALINX slow control (alinx-sc)
 around each sub-run. No fdf/ROOT reconstruction — online QA runs directly on
 the finalized pcapng files (vmm_qa/vmm_pcapng_qa.py).
 
-Site switching: set SITE below.
+Site switching: config/site.txt on the machine (fallback: SITE below).
   'local' — full simulation on this machine (fake CAEN HV + fake TTi LV + fake
             VMM DAQ that replays a sample pcapng), for testing the whole chain
             without hardware.
+  'bench' — Saclay VMM test bench: real ALINX capture, fake HV/LV.
   'sps'   — real hardware at the SPS beam line. Fields marked TODO-SPS must be
             filled in once the beam-area network / crate details are known.
 
@@ -24,9 +25,16 @@ import os
 from run_config_base import RunConfigBase
 
 # ---------------------------------------------------------------------------
-# Site configuration — the ONE place to switch local test <-> SPS machine
+# Site configuration — the ONE place to switch local test <-> bench <-> SPS
 # ---------------------------------------------------------------------------
-SITE = 'local'  # 'local' or 'sps'
+# Default site; each deployed machine pins its own via the gitignored
+# config/site.txt (one word: local | bench | sps) so switching site never
+# means editing tracked code on a DAQ machine.
+SITE = 'local'
+_site_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', 'site.txt')
+if os.path.isfile(_site_file):
+    with open(_site_file) as _f:
+        SITE = _f.read().strip() or SITE
 
 SITES = {
     'local': {
@@ -45,6 +53,24 @@ SITES = {
         'interfaces': [
             {'name': 'alinx', 'iface': 'enp4s0f1', 'slow_control': 'alinx',
              'alinx_config': None},
+        ],
+    },
+    'bench': {
+        # Saclay VMM test bench (dedippce185 / vmm_daplxa): real ALINX capture,
+        # fake HV + fake LV ('sim' IPs — bench LV is the TDK supplies, driven
+        # from the GUI's Hybrids LV Power panel, not by lv_control).
+        'base_data_dir': '/local/p2/p2data/vmm_daq_bench/',
+        'daq_host': '127.0.0.1',
+        'hv_ip': 'sim',
+        'hv_n_cards': 4,
+        'lv_units': {
+            'tti1': 'sim',
+            'tti2': 'sim',
+        },
+        'simulate': False,   # real dumpcap capture on the ALINX interface
+        'interfaces': [
+            {'name': 'alinx', 'iface': 'enp4s0f1', 'slow_control': 'alinx',
+             'alinx_config': '/local/p2/p2testbench/TestBenchCERN/config/config_alinx_noThresholds.json'},
         ],
     },
     'sps': {

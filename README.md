@@ -156,12 +156,17 @@ control surface, and a browser plus tunnel is enough. The clean model:
 ## Site switch
 
 Everything machine-specific lives in the `SITES` dict at the top of
-`run_config_beam.py` (**keep the filename** — several modules import it):
+`run_config_beam.py` (**keep the filename** — several modules import it).
+Each machine selects its site with the gitignored `config/site.txt`
+(one word), so switching never means editing tracked code on a DAQ machine:
 
-- `SITE = 'local'` — full simulation: fake CAEN HV, fake TTi LV and a fake VMM
-  DAQ that replays a sample pcapng from `sim_pcapng/` into the run directory.
-  Test the whole chain with no hardware. (Verified end-to-end 2026-07-09.)
-- `SITE = 'sps'` — real hardware. Deployment checklist below.
+- `local` (default) — full simulation: fake CAEN HV, fake TTi LV and a fake
+  VMM DAQ that replays a sample pcapng from `sim_pcapng/` into the run
+  directory. Test the whole chain with no hardware. (Verified e2e 2026-07-09.)
+- `bench` — Saclay VMM test bench (`vmm_daplxa`): **real ALINX capture** on
+  `enp4s0f1` with fake HV/LV (the bench LV is the TDK supplies, driven from
+  the GUI's power panel).
+- `sps` — real hardware. Deployment checklist below.
 
 ## Deploying on the DAQ computer (SPS)
 

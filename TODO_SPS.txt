@@ -2,8 +2,9 @@
  TODO-SPS CHECKLIST — things to fill in on the VMM DAQ computer at the beam
 ================================================================================
 Every item below is marked TODO-SPS in the code (grep -rn TODO-SPS).
-Work through them top to bottom on the DAQ machine; when done, switch
-SITE = 'sps' in run_config_beam.py and run:
+Work through them top to bottom on the DAQ machine; when done, select the
+site (no code edit needed) and run:
+    echo sps > config/site.txt
     .venv/bin/python run_config_beam.py     # prints a summary — read it!
 
 --------------------------------------------------------------------------------
@@ -197,7 +198,7 @@ SITE = 'sps' in run_config_beam.py and run:
  13. Final verification (in order)
 --------------------------------------------------------------------------------
  [ ] grep -rn TODO-SPS *.py        -> only comments/doc lines remain
- [ ] SITE = 'sps'; .venv/bin/python run_config_beam.py  -> summary correct
+ [ ] echo sps > config/site.txt; .venv/bin/python run_config_beam.py -> summary correct
  [ ] ping + service tests of items 3/5/6 all pass
  [ ] ./start_servers.sh ; each pane healthy (see README "First-connection tests")
  [ ] Beam Monitor chip shows ON/OFF matching the SPS page for our target
