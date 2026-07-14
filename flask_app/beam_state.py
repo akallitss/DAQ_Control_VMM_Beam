@@ -75,11 +75,14 @@ def fetch_beam_png(usr):
 
 
 # --- SPS Page 1 target-table parser ---
-# Table geometry on the 800x600 page: label + I/E11 value live in x<300,
-# rows between y=400 and y=545. Glyphs in a number are <8 px apart, tokens
-# (label / value) 100+ px, so token split at gap >= 8 px.
+# On the 800x600 page the target label + I/E11 value live in x<300, but the
+# table's VERTICAL position moves (the graph above it changes height between
+# supercycles), so scan the whole column: a line is a target row iff its
+# first token exactly matches a T2/T4/T6/T10 label bitmap — graph traces,
+# headers and footer text simply never match. Glyphs in a number are <8 px
+# apart, tokens (label / value) 100+ px, so token split at gap >= 8 px.
 _TABLE_X = (0, 300)
-_TABLE_Y = (400, 545)
+_TABLE_Y = (60, 590)
 _INK_THRESH = 100
 _TOKEN_GAP = 8
 

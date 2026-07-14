@@ -64,6 +64,11 @@ LOG_FILE = f"{LOG_DIR}/daq_events.log"
 MONITOR_CONFIG_PATH = f"{BASE_DIR}/config/monitor_config.json"
 monitor = DaqMonitor(MONITOR_CONFIG_PATH)
 
+# Runtime dirs that are gitignored — a fresh clone doesn't have them, and
+# index() lists CONFIG_RUN_DIR, so create them up front instead of 500ing.
+os.makedirs(CONFIG_RUN_DIR, exist_ok=True)
+os.makedirs(LOG_DIR, exist_ok=True)
+
 
 def log_event(event, source, **details):
     """Append one line to the DAQ event log."""
