@@ -46,6 +46,12 @@ BEAM_VISTARS = {
     "SPSBT":      {"name": "SPS BT",       "img": "https://vistar-capture.s3.cern.ch/spsbt.png"},
 }
 BEAM_CACHE_TTL = 5.0  # s — CERN asks external viewers to poll SPS1 at ~7 s
+# Scheme for the Vistar fetches; "vistar_scheme": "http" in beam_config.json
+# overrides (set by BeamStateTracker at startup). Some site firewalls (the
+# Saclay bench) stall sustained HTTPS to CERN S3 but pass plain HTTP freely —
+# it's a public status image, so on such networks http is an acceptable
+# trade-off. Keep the https default at CERN.
+VISTAR_SCHEME = "https"
 _beam_cache = {}      # usr -> {"t": fetch time, "png": bytes|None, "error": str|None}
 _beam_cache_lock = threading.Lock()
 # One kept-alive session for all Vistar fetches: a single TLS connection gets
@@ -65,7 +71,10 @@ def fetch_beam_png(usr):
         if entry and now - entry["t"] < BEAM_CACHE_TTL:
             return entry
     try:
-        r = _beam_session.get(BEAM_VISTARS[usr]["img"], timeout=20)
+        url = BEAM_VISTARS[usr]["img"]
+        if VISTAR_SCHEME != "https":
+            url = url.replace("https://", f"{VISTAR_SCHEME}://", 1)
+        r = _beam_session.get(url, timeout=20)
         r.raise_for_status()
         png, error = r.content, None
     except Exception as e:
@@ -185,6 +194,9 @@ class BeamStateTracker:
         # slower poll; UNKNOWN_AFTER_S scales so a slow poll isn't UNKNOWN.
         self.poll_s = float(self.config.get("poll_s", self.POLL_S))
         self.unknown_after_s = max(self.UNKNOWN_AFTER_S, 6 * self.poll_s)
+        # "vistar_scheme": "http" for networks that stall HTTPS (see VISTAR_SCHEME).
+        global VISTAR_SCHEME
+        VISTAR_SCHEME = self.config.get("vistar_scheme", "https")
 
         self.state = "UNKNOWN"
         self.since = datetime.now()   # when current state began

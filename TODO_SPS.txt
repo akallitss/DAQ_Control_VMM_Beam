@@ -162,6 +162,10 @@ SITE = 'sps' in run_config_beam.py and run:
         curl -sI https://vistar-capture.s3.cern.ch/sps1.png   # expect 200
     (It is a CERN host, so it works from inside CERN even on restricted
     networks; if it fails, check the machine's proxy/egress rules.)
+    If HTTPS transfers stall but plain HTTP works (some site firewalls
+    throttle sustained TLS — the Saclay bench does), set in
+    config/beam_config.json:  "vistar_scheme": "http"
+    and optionally slow the poll:  "poll_s": 60
 
  b) Target + threshold (Beam Monitor strip in the GUI): pick the SPS target
     feeding OUR beamline — T2 -> H2/H4, T4 -> H6/H8, T6 -> M2/AMBER,
