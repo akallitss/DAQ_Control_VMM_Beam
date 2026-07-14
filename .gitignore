@@ -225,3 +225,4 @@ config/qa_reset.json
 config/beam_config.json
 config/beam_state.json
 logs/beam_history.csv
+config/power_config.json

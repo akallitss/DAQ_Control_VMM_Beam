@@ -202,6 +202,9 @@ SITE = 'sps' in run_config_beam.py and run:
  [ ] ./start_servers.sh ; each pane healthy (see README "First-connection tests")
  [ ] Beam Monitor chip shows ON/OFF matching the SPS page for our target
      (item 12); if alerts wanted, Test Alert arrives on the phone
+ [ ] Hybrids LV Power buttons work: copy config/power_config.json.example
+     -> power_config.json, point it at this machine's power scripts/tools,
+     then Measure returns the supplies' V/A in the GUI
  [ ] Dry run WITHOUT beam: N_SUBRUNS=1, SUBRUN_MIN=1-2 -> HV ramps, LV CSV
      fills, pcapngs rotate in runs/run_N/.../raw_daq_data/, QA PNGs appear,
      "Hits this run" counts, Stop Run shuts down cleanly

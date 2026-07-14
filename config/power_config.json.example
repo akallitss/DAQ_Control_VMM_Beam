@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy to power_config.json and adapt per machine. 'actions' commands run with cwd set and path_prepend on PATH; the GUI shows one button per action (on/off get a confirm dialog). Values below are the Saclay VMM test bench.",
+  "cwd": "/local/p2/p2testbench/TestBenchCERN",
+  "path_prepend": [
+    "/local/p2/p2equipment/LVPS/tdk_lambda",
+    "/local/p2/p2equipment/arduino"
+  ],
+  "actions": {
+    "measure": "pilot_tdkl.py -c config/tdkl_Alinx.json --action measure && pilot_tdkl.py -c config/tdkl_Hybrids.json --action measure",
+    "on": "./switchOn_tdk.sh",
+    "off": "./switchOff_tdk.sh"
+  }
+}

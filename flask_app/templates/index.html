@@ -44,6 +44,20 @@
               <button id="rerun-qa" class="btn btn-outline-warning btn-sm ms-auto">Rerun QA</button>
             </div>
           </div>
+
+          <!-- Hybrid/ALINX LV power (site scripts via config/power_config.json);
+               hidden when that config is absent on this machine. -->
+          <div class="btn-group-block d-none" id="power-block">
+            <span class="group-label">Hybrids LV Power</span>
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <button id="power-measure" class="btn btn-outline-info btn-sm">Measure</button>
+              <button id="power-on" class="btn btn-outline-success btn-sm">Power On</button>
+              <button id="power-off" class="btn btn-outline-danger btn-sm">Power Off</button>
+              <span id="power-status" class="text-muted small font-monospace"></span>
+            </div>
+            <pre id="power-output" class="text-muted small font-monospace mt-1 mb-0 d-none"
+                 style="white-space:pre-wrap; max-height:7em; overflow-y:auto;"></pre>
+          </div>
         </div>
       </div>
     </div>
@@ -1196,6 +1210,55 @@ WATCHER_TOGGLES.forEach(cfg => {
 
 setInterval(updateStatus, 1000);  // update every 1s
 updateStatus();
+
+// ---------------------------------------------------------------------------
+// Hybrids LV power (site power scripts; /power/status, /power/run)
+// ---------------------------------------------------------------------------
+
+const POWER_CONFIRM = {
+    on:  "Power ON the hybrids + ALINX?",
+    off: "Power OFF the hybrids + ALINX?\nThis kills the front-ends — never during a run.",
+};
+
+async function updatePowerStatus() {
+    try {
+        const s = await (await fetch("/power/status")).json();
+        const block = document.getElementById("power-block");
+        if (!s.configured) { block.classList.add("d-none"); return; }
+        block.classList.remove("d-none");
+        ["power-measure", "power-on", "power-off"].forEach(id =>
+            document.getElementById(id).disabled = !!s.running);
+        const st = document.getElementById("power-status");
+        const out = document.getElementById("power-output");
+        if (s.running) {
+            st.textContent = `running: ${s.running}…`;
+        } else if (s.last) {
+            st.textContent = `${s.last.action} ${s.last.rc === 0 ? "ok" : "FAILED"} @ ${s.last.ts}`;
+            st.classList.toggle("text-danger", s.last.rc !== 0);
+            out.textContent = s.last.output;
+            out.classList.toggle("d-none", !s.last.output);
+        } else {
+            st.textContent = "";
+        }
+    } catch (e) { /* server briefly away; next poll recovers */ }
+}
+
+["measure", "on", "off"].forEach(action => {
+    document.getElementById(`power-${action}`).addEventListener("click", async () => {
+        if (POWER_CONFIRM[action] && !confirm(POWER_CONFIRM[action])) return;
+        const res = await fetch("/power/run", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({action: action}),
+        });
+        const d = await res.json();
+        showPopup(d.message, d.success ? "#17a2b8" : "#dc3545");
+        updatePowerStatus();
+    });
+});
+
+updatePowerStatus();
+setInterval(updatePowerStatus, 3000);
 
 // ---------------------------------------------------------------------------
 // Monitor panel

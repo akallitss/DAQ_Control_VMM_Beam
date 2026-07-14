@@ -65,6 +65,16 @@ Alerts go to **Telegram** (bot token + chat ID) and/or **WhatsApp** (free
 CallMeBot gateway — a third-party relay, fine for status pings) — both are
 configured from the GUI's Monitoring → Setup panel.
 
+**Hybrids LV Power** (Run Control panel): Measure / Power On / Power Off
+buttons that run the site's power scripts (e.g. the TestBenchCERN
+`switchOn_tdk.sh` / `switchOff_tdk.sh` driving the TDK-Lambda supplies for
+the hybrids + ALINX). Machine-specific commands live in the gitignored
+`config/power_config.json` — copy `power_config.json.example` and adapt;
+without it the panel stays hidden. On/Off ask for confirmation (Off kills
+the front-ends — never during a run); every On/Off is written to the event
+log with the client IP; script output (incl. the measured V/A) shows under
+the buttons.
+
 ## Remote access and operations
 
 The DAQ computer sits in the beam area — all interaction is remote. Three

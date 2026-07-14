@@ -64,6 +64,9 @@ LOG_FILE = f"{LOG_DIR}/daq_events.log"
 MONITOR_CONFIG_PATH = f"{BASE_DIR}/config/monitor_config.json"
 monitor = DaqMonitor(MONITOR_CONFIG_PATH)
 
+from power_control import PowerControl
+power = PowerControl(f"{BASE_DIR}/config/power_config.json")
+
 # Runtime dirs that are gitignored — a fresh clone doesn't have them, and
 # index() lists CONFIG_RUN_DIR, so create them up front instead of 500ing.
 os.makedirs(CONFIG_RUN_DIR, exist_ok=True)
@@ -855,6 +858,23 @@ def monitor_bot_info():
     if err:
         return jsonify({"success": False, "message": err})
     return jsonify({"success": True, "username": username})
+
+
+@app.route("/power/status")
+def power_status():
+    return jsonify(power.status())
+
+
+@app.route("/power/run", methods=["POST"])
+def power_run():
+    """Run a configured power action (on / off / measure). One at a time."""
+    data = request.get_json(silent=True) or {}
+    action = data.get("action")
+    ok, msg = power.start(action)
+    if ok and action != "measure":
+        log_event(f'POWER_{str(action).upper()}', 'flask_button',
+                  remote_addr=request.remote_addr)
+    return jsonify({"success": ok, "message": msg}), (200 if ok else 409)
 
 
 @app.route("/system_stats")
