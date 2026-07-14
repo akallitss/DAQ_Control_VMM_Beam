@@ -225,3 +225,9 @@ config/beam_state.json
 logs/beam_history.csv
 config/power_config.json
 config/site.txt
+
+# Claude Code project-local settings
+.claude/
+
+# Offline pip wheel cache (shipped to machines without PyPI access)
+.wheels/
