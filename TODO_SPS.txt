@@ -153,12 +153,51 @@ SITE = 'sps' in run_config_beam.py and run:
  - alinx-sc on PATH for the shell that runs start_servers.sh:  which alinx-sc
 
 --------------------------------------------------------------------------------
- 12. Final verification (in order)
+ 12. Beam monitor (SPS Page 1 -> ON/OFF chip, history, alerts)
+--------------------------------------------------------------------------------
+ Nothing to configure in code — it works out of the box once Flask is up —
+ but three things to check/set on site:
+
+ a) Reachability: the DAQ machine must reach the Vistar image host:
+        curl -sI https://vistar-capture.s3.cern.ch/sps1.png   # expect 200
+    (It is a CERN host, so it works from inside CERN even on restricted
+    networks; if it fails, check the machine's proxy/egress rules.)
+
+ b) Target + threshold (Beam Monitor strip in the GUI): pick the SPS target
+    feeding OUR beamline — T2 -> H2/H4, T4 -> H6/H8, T6 -> M2/AMBER,
+    T10 -> K12/NA62 (default is T2; check which hall P2 is in). Threshold
+    default 1.0 E11 is far below normal intensities (~30-50) and above
+    parasitic noise (~0.1-0.2 seen with beam off) — only touch it if the
+    chip flickers. Both are persisted in config/beam_config.json.
+    Sanity check: "Show page" — the chip state should match what the SPS
+    page shows for that target.
+
+ c) Off-period log: logs/beam_history.csv (gitignored) records every
+    ON/OFF transition with the off-duration; also served at /beam_history
+    (linked from the strip). Delete the file once before production if you
+    want it to start clean — it may contain test transitions.
+
+ Optional — beam-off alerts to your phone: Monitoring -> Setup in the GUI.
+    Telegram: bot token from @BotFather into config/monitor_config.json,
+        message the bot once, click Auto-fetch, then Test Alert.
+    WhatsApp: free CallMeBot gateway — save +34 644 51 95 23 as a contact,
+        WhatsApp it "I allow callmebot to send me messages", enter your
+        number + the API key it returns in the Setup panel. (Third-party
+        relay; fine for status pings, delivery can lag.)
+    Then toggle Monitoring ON. rule_beam_off alerts after 5 min of no beam
+    and repeats hourly while it stays off (rule_options in
+    config/monitor_config.json to tune) — it also covers dead DAQ sessions,
+    HV/LV trouble and capture errors.
+
+--------------------------------------------------------------------------------
+ 13. Final verification (in order)
 --------------------------------------------------------------------------------
  [ ] grep -rn TODO-SPS *.py        -> only comments/doc lines remain
  [ ] SITE = 'sps'; .venv/bin/python run_config_beam.py  -> summary correct
  [ ] ping + service tests of items 3/5/6 all pass
  [ ] ./start_servers.sh ; each pane healthy (see README "First-connection tests")
+ [ ] Beam Monitor chip shows ON/OFF matching the SPS page for our target
+     (item 12); if alerts wanted, Test Alert arrives on the phone
  [ ] Dry run WITHOUT beam: N_SUBRUNS=1, SUBRUN_MIN=1-2 -> HV ramps, LV CSV
      fills, pcapngs rotate in runs/run_N/.../raw_daq_data/, QA PNGs appear,
      "Hits this run" counts, Stop Run shuts down cleanly
