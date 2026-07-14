@@ -48,6 +48,11 @@ BEAM_VISTARS = {
 BEAM_CACHE_TTL = 5.0  # s — CERN asks external viewers to poll SPS1 at ~7 s
 _beam_cache = {}      # usr -> {"t": fetch time, "png": bytes|None, "error": str|None}
 _beam_cache_lock = threading.Lock()
+# One kept-alive session for all Vistar fetches: a single TLS connection gets
+# reused across polls instead of a fresh handshake every few seconds —
+# markedly more reliable through stateful/inspecting site firewalls (the
+# Saclay test bench throttles repeated new HTTPS connections to the same host).
+_beam_session = requests.Session()
 
 
 def fetch_beam_png(usr):
@@ -60,7 +65,7 @@ def fetch_beam_png(usr):
         if entry and now - entry["t"] < BEAM_CACHE_TTL:
             return entry
     try:
-        r = requests.get(BEAM_VISTARS[usr]["img"], timeout=10)
+        r = _beam_session.get(BEAM_VISTARS[usr]["img"], timeout=20)
         r.raise_for_status()
         png, error = r.content, None
     except Exception as e:
@@ -168,7 +173,7 @@ class BeamStateTracker:
     transitions. States: 'ON', 'OFF', 'UNKNOWN' (no successful parse yet, or
     none within unknown_after_s)."""
 
-    POLL_S = 7            # CERN-requested external poll rate
+    POLL_S = 7            # CERN-requested external poll rate ("poll_s" overrides)
     DEBOUNCE_N = 2        # consecutive samples to flip ON/OFF (rejects glitches)
     UNKNOWN_AFTER_S = 90  # no good parse for this long -> UNKNOWN
 
@@ -176,6 +181,10 @@ class BeamStateTracker:
         self.config = self._load_json(BEAM_CONFIG_PATH) or {}
         self.config.setdefault("target", "T2")
         self.config.setdefault("threshold_e11", 1.0)
+        # Restricted site networks (e.g. the Saclay bench) may tolerate only a
+        # slower poll; UNKNOWN_AFTER_S scales so a slow poll isn't UNKNOWN.
+        self.poll_s = float(self.config.get("poll_s", self.POLL_S))
+        self.unknown_after_s = max(self.UNKNOWN_AFTER_S, 6 * self.poll_s)
 
         self.state = "UNKNOWN"
         self.since = datetime.now()   # when current state began
