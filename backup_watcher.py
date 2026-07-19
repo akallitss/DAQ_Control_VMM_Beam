@@ -5,8 +5,23 @@ Autonomous EOS backup watcher for the P2 VMM DAQ data tree.
 
 Syncs the entire source_dir to eos_dir, excluding specified subdirectories.
 The runs_subdir gets smart per-subrun sync (waits for each subrun to be stable
-before transferring).  All other subdirs are rsynced wholesale on a slower
+before transferring).  All other subdirs are synced wholesale on a slower
 extra_sync_interval cadence.
+
+Every file under each run is backed up: subrun subdirectories AND loose
+run-level files (vmm_daq.log, run_config.json, backups, etc.).  Loose files
+are refreshed whenever any subrun of that run syncs.
+
+A slow full-reconcile sweep (reconcile_interval, default once a day) runs while
+the watcher is otherwise idle: it re-lists EVERY run on EOS and re-copies any
+file that is missing or size-mismatched, INCLUDING runs long marked stale.  This
+is what propagates after-the-fact edits (e.g. a run_config.json rewrite) to old
+runs, which the fast per-subrun path alone would never revisit.
+
+Transfers use the native xrootd protocol (xrdcp/xrdfs), NOT the FUSE mount:
+the legacy xrootdfs mount cannot mkdir/rename/overwrite, so rsync-over-FUSE
+fails for any new directory.  Files already on EOS at the same size are skipped
+(data is write-once); size-mismatched files are re-copied (xrdcp -f overwrites).
 
 Handles Kerberos via kinit -R (renewal) and falls back to a GPG-encrypted
 password for a full re-kinit when renewal fails.
@@ -15,27 +30,38 @@ Usage:
     python backup_watcher.py <backup_config_json_path>
 
 Config keys (see backup_config.py to generate the JSON):
-  source_dir          : local top-level data directory (base_data_dir)
+  source_dir          : local top-level data directory (e.g. /mnt/data/x17/beam_may/)
   eos_dir             : EOS destination (locally FUSE-mounted, same structure)
+  xrootd_url          : native xrootd endpoint (e.g. root://eospublic.cern.ch)
   runs_subdir         : name of the runs subdir that gets smart per-subrun sync
   exclude_dirs        : list of subdir names to never sync (e.g. ['sim_pcapng'])
   gpg_pass_file       : path to GPG-encrypted CERN password (~/.cern_pass.gpg)
-  cern_principal      : Kerberos principal (e.g. <user>@CERN.CH)
+  cern_principal      : Kerberos principal (e.g. dneff@CERN.CH)
   kinit_interval      : seconds between kinit renewal attempts   (default: 3600)
   include_runs        : list of run dir names to sync exclusively (null = all)
   exclude_runs        : list of run dir names to skip             (null = none)
   poll_interval       : seconds between runs-dir scans           (default: 30)
   stale_run_days      : runs with no new data for N days skipped (default: 10)
   extra_sync_interval : seconds between full syncs of non-runs dirs (default: 300)
+  reconcile_interval  : seconds between full-reconcile sweeps of all runs,
+                        run only while idle (default: 86400 = once a day)
   rsync_extra_args    : extra arguments passed verbatim to rsync  (default: [])
 """
 
+import os
 import sys
 import json
 import time
 import datetime
 import subprocess
 from pathlib import Path
+
+# The DAQ machine (banco) has no CERN realm in its system krb5.conf — point
+# kinit/xrdcp at the repo's minimal CERN config unless the caller already set
+# one. Also make sure xrdcp/xrdfs from ~/bin are found under tmux/cron.
+_REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+os.environ.setdefault('KRB5_CONFIG', os.path.join(_REPO_DIR, 'config', 'krb5_cern.conf'))
+os.environ['PATH'] = os.path.expanduser('~/bin') + os.pathsep + os.environ.get('PATH', '')
 
 
 def main():
@@ -52,6 +78,8 @@ def main():
 # ---------------------------------------------------------------------------
 
 def run_watcher(config: dict, config_path: Path):
+    global _XROOTD_URL, _XRDCP_EXTRA
+
     source_dir    = Path(config['source_dir'])
     eos_dir       = Path(config['eos_dir'])
     runs_subdir   = config.get('runs_subdir', 'runs')
@@ -59,11 +87,14 @@ def run_watcher(config: dict, config_path: Path):
     gpg_pass_file = Path(config['gpg_pass_file'])
     cern_principal = config['cern_principal']
 
+    _XROOTD_URL   = config.get('xrootd_url', 'root://eospublic.cern.ch').rstrip('/')
+    _XRDCP_EXTRA  = config.get('xrdcp_extra_args', [])
+
     kinit_interval      = config.get('kinit_interval',      3600)
     extra_sync_interval = config.get('extra_sync_interval',  300)
     poll_interval       = config.get('poll_interval',         30)
     stale_run_days      = config.get('stale_run_days',        10)
-    rsync_extra         = config.get('rsync_extra_args',      [])
+    reconcile_interval  = config.get('reconcile_interval',  86400)
 
     include_runs = set(config['include_runs']) if config.get('include_runs') else None
     exclude_runs = set(config['exclude_runs']) if config.get('exclude_runs') else set()
@@ -73,6 +104,7 @@ def run_watcher(config: dict, config_path: Path):
 
     print(f"[backup] source_dir         : {source_dir}")
     print(f"[backup] eos_dir            : {eos_dir}")
+    print(f"[backup] xrootd_url         : {_XROOTD_URL}")
     print(f"[backup] runs_subdir        : {runs_subdir}")
     print(f"[backup] exclude_dirs       : {sorted(exclude_dirs)}")
     print(f"[backup] principal          : {cern_principal}")
@@ -94,6 +126,7 @@ def run_watcher(config: dict, config_path: Path):
 
     last_kinit_check  = -kinit_interval   # trigger immediately on first iteration
     last_extra_sync   = -extra_sync_interval
+    last_reconcile    = -reconcile_interval  # reconcile on first idle after startup
     kerberos_ok       = False
 
     idle_ticks = 0
@@ -163,14 +196,14 @@ def run_watcher(config: dict, config_path: Path):
                         mb = current_size // (1024 * 1024)
                         print(f"[backup] {run_dir.name}/{subrun_dir.name}  size={mb}MB")
 
-                        ok = _rsync_subrun(subrun_dir, eos_runs_dir / run_dir.name, rsync_extra)
+                        ok = _xrd_sync_tree(subrun_dir, eos_runs_dir / run_dir.name / subrun_dir.name)
                         if ok:
-                            _rsync_run_config(run_dir, eos_runs_dir / run_dir.name)
+                            _xrd_loose_files(run_dir, eos_runs_dir / run_dir.name)
                             synced_sizes[key] = current_size
                             _save_state(state_path, synced_sizes)
                             found_new = True
                         else:
-                            print(f"[backup] rsync FAILED for {run_dir.name}/{subrun_dir.name}")
+                            print(f"[backup] sync FAILED for {run_dir.name}/{subrun_dir.name}")
 
                     if is_stale:
                         checked_stale_runs.add(run_dir.name)
@@ -189,7 +222,37 @@ def run_watcher(config: dict, config_path: Path):
                         continue
                     _end_idle()
                     print(f"[backup] extra sync: {subdir.name}/")
-                    _rsync_dir(subdir, eos_dir / subdir.name, rsync_extra)
+                    if _xrd_sync_tree(subdir, eos_dir / subdir.name):
+                        print(f"[backup] extra sync done: {subdir.name}/")
+                    else:
+                        print(f"[backup] extra sync FAILED: {subdir.name}/")
+
+            # --- Full-reconcile sweep (idle-only backstop) ---
+            # Re-verifies EVERY run against EOS and re-copies any missing or
+            # size-mismatched file, ignoring the stale-skip and per-subrun size
+            # caches. This is what propagates after-the-fact edits (e.g. a bulk
+            # run_config.json rewrite) and loose files to old/stale runs, which
+            # the fast per-subrun path never revisits. Only runs while idle so it
+            # never competes with live data transfer.
+            if not found_new and runs_dir.exists() and now - last_reconcile >= reconcile_interval:
+                last_reconcile = now
+                _end_idle()
+                print(f"[backup] full reconcile: verifying all runs against EOS")
+                n_runs = n_gap_runs = 0
+                for run_dir in sorted(runs_dir.iterdir()):
+                    if not run_dir.is_dir():
+                        continue
+                    if include_runs is not None and run_dir.name not in include_runs:
+                        continue
+                    if run_dir.name in exclude_runs:
+                        continue
+                    n_runs += 1
+                    # Recursive sync of the whole run: subruns + loose files.
+                    if not _xrd_sync_tree(run_dir, eos_runs_dir / run_dir.name):
+                        n_gap_runs += 1
+                        print(f"[backup] reconcile: sync gaps remain in {run_dir.name}")
+                print(f"[backup] full reconcile done: {n_runs} runs checked, "
+                      f"{n_gap_runs} with unresolved gaps")
 
         if found_new:
             idle_ticks = 0
@@ -246,56 +309,115 @@ def _refresh_kerberos(principal: str, gpg_pass_file: Path) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# rsync helpers
+# XRootD transfer helpers
+#
+# The EOS FUSE mount (legacy xrootdfs) cannot mkdir/rename/overwrite, so
+# rsync-over-FUSE fails for every new directory.  The native xrootd protocol
+# has no such limitation, so all transfers go through xrdcp/xrdfs instead.
 # ---------------------------------------------------------------------------
 
-_RSYNC_BASE = ['rsync', '-rlt', '--update', '--no-perms', '--omit-dir-times', '--info=progress2']
+_XROOTD_URL  = None   # e.g. 'root://eospublic.cern.ch' — set by run_watcher()
+_XRDCP_EXTRA = []     # extra xrdcp args from config — set by run_watcher()
 
 
-def _rsync_subrun(subrun_dir: Path, eos_run_dir: Path, extra: list) -> bool:
-    """rsync subrun_dir/ into eos_run_dir/subrun_name/. Returns True on success."""
-    dest = eos_run_dir / subrun_dir.name
-    try:
-        dest.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        print(f"[backup] Cannot create dest dir {dest}: {e}")
-        return False
-    print(f"[backup] rsync -> {dest}")
-    result = subprocess.run(_RSYNC_BASE + extra + [str(subrun_dir) + '/', str(dest) + '/'])
+def _xrd_url(eos_path: Path) -> str:
+    """Native xrootd URL for an absolute EOS path: root://host//eos/..."""
+    return f"{_XROOTD_URL}//{str(eos_path).lstrip('/')}"
+
+
+def _remote_size_map(eos_dir: Path, recursive: bool = True) -> dict:
+    """{relative_path: size} for files under eos_dir on EOS.
+
+    recursive=True walks the whole tree (relpath keys); recursive=False lists only
+    the immediate directory (bare-filename keys) — used for the cheap loose-file check.
+    Empty dict if the directory does not exist yet (so all files get copied).
+    Parses `xrdfs <url> ls -l [-R]` lines: '<flags> <owner> <group> <size> <date> <time> <path>'.
+    """
+    ls_args = ['ls', '-l', '-R', str(eos_dir)] if recursive else ['ls', '-l', str(eos_dir)]
+    result = subprocess.run(
+        ['xrdfs', _XROOTD_URL, *ls_args],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return {}
+    base = str(eos_dir).rstrip('/') + '/'
+    sizes: dict = {}
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 7 or parts[0].startswith('d'):
+            continue
+        try:
+            size = int(parts[3])
+        except ValueError:
+            continue
+        path = parts[-1]
+        if path.startswith(base):
+            sizes[path[len(base):]] = size
+    return sizes
+
+
+def _xrdcp_file(local: Path, eos_path: Path) -> bool:
+    """Copy one local file to EOS via native xrdcp (-f overwrite, -p make dirs)."""
+    result = subprocess.run(
+        ['xrdcp', '-f', '-p', '--nopbar', *_XRDCP_EXTRA, str(local), _xrd_url(eos_path)],
+        capture_output=True, text=True,
+    )
     if result.returncode == 0:
-        print(f"[backup] rsync done: {subrun_dir.name}")
         return True
-    print(f"[backup] rsync exit {result.returncode}: {subrun_dir.name}")
+    print(f"[backup] xrdcp FAILED (exit {result.returncode}) {local.name}: "
+          f"{result.stderr.strip()[:200]}")
     return False
 
 
-def _rsync_run_config(run_dir: Path, eos_run_dir: Path):
-    """Sync the run-level run_config.json if present."""
-    cfg = run_dir / 'run_config.json'
-    if not cfg.exists():
-        return
-    try:
-        eos_run_dir.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        return
-    subprocess.run(
-        ['rsync', '-lt', '--update', '--no-perms', str(cfg), str(eos_run_dir) + '/'],
-        capture_output=True,
-    )
+def _xrd_sync_tree(local_dir: Path, eos_dir: Path) -> bool:
+    """Copy every file under local_dir into eos_dir on EOS, skipping files already
+    there at the same size (data is write-once). Returns True if nothing failed.
+
+    Incomplete trees self-heal: absent files copy, size-matched files skip, and a
+    partial file (size mismatch) is re-copied — native xrdcp -f can overwrite it.
+    """
+    remote_sizes = _remote_size_map(eos_dir)
+    all_ok, copied, skipped = True, 0, 0
+    for f in sorted(local_dir.rglob('*')):
+        if not f.is_file():
+            continue
+        rel = f.relative_to(local_dir).as_posix()
+        try:
+            local_size = f.stat().st_size
+        except OSError:
+            continue
+        if remote_sizes.get(rel) == local_size:
+            skipped += 1
+            continue
+        if _xrdcp_file(f, eos_dir / rel):
+            copied += 1
+        else:
+            all_ok = False
+    if copied:
+        print(f"[backup] xrdcp -> {eos_dir}: {copied} new, {skipped} already there")
+    return all_ok
 
 
-def _rsync_dir(src: Path, dest: Path, extra: list):
-    """rsync an entire directory wholesale."""
-    try:
-        dest.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        print(f"[backup] Cannot create dest dir {dest}: {e}")
-        return
-    result = subprocess.run(_RSYNC_BASE + extra + [str(src) + '/', str(dest) + '/'])
-    if result.returncode == 0:
-        print(f"[backup] extra sync done: {src.name}/")
-    else:
-        print(f"[backup] extra sync FAILED (exit {result.returncode}): {src.name}/")
+def _xrd_loose_files(run_dir: Path, eos_run_dir: Path):
+    """Copy every loose file sitting directly in run_dir (not in a subrun subdir):
+    vmm_daq.log, run_config.json and its backups, notes, etc.
+
+    Size-checked against EOS so unchanged files are skipped; changed files (e.g. an
+    edited run_config.json) are re-copied since xrdcp -f overwrites. The per-subrun
+    _xrd_sync_tree only walks subrun subdirectories, so these top-level files would
+    otherwise never be backed up.
+    """
+    remote_sizes = _remote_size_map(eos_run_dir, recursive=False)
+    for f in sorted(run_dir.iterdir()):
+        if not f.is_file():
+            continue
+        try:
+            local_size = f.stat().st_size
+        except OSError:
+            continue
+        if remote_sizes.get(f.name) == local_size:
+            continue
+        _xrdcp_file(f, eos_run_dir / f.name)
 
 
 # ---------------------------------------------------------------------------

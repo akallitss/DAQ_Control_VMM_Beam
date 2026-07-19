@@ -222,7 +222,9 @@ config/qa_state.json
 config/qa_reset.json
 config/beam_config.json
 config/beam_state.json
+config/beam_intensity_state.json
 logs/beam_history.csv
+logs/system_stats/
 config/power_config.json
 config/site.txt
 

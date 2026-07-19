@@ -70,12 +70,20 @@
           <span id="sys-load-avg" class="ms-auto"></span>
         </div>
         <div class="panel-body">
-          <div id="sys-cpu-grid"></div>
-          <div class="sys-rows">
-            <div id="sys-mem-row"></div>
-            <div id="sys-swp-row"></div>
-            <div id="sys-ssd-row"></div>
-            <div id="sys-hdd-row"></div>
+          <div class="sys-col-title">CPU &amp; Memory</div>
+          <div id="sys-cpumem-plot" class="sys-plot-tall"></div>
+          <div class="sys-io-row">
+            <div>
+              <div class="sys-col-title">Disk Space</div>
+              <div class="sys-rows sys-diskspace">
+                <div id="sys-ssd-row"></div>
+                <div id="sys-hdd-row"></div>
+              </div>
+            </div>
+            <div>
+              <div class="sys-col-title">Network &amp; Disk I/O</div>
+              <div id="sys-io-plot" class="sys-plot"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -276,6 +284,232 @@
 </div>
 
 
+
+<!-- Beam Tab: live SPS beam intensity from NXCALS/Timber (runs alongside the
+     Overview Vistar ON/OFF monitor — this is the proton-intensity trend). -->
+<div class="tab-pane fade" id="beam">
+  <div class="row g-3">
+    <!-- Current state -->
+    <div class="col-12 col-xl-4">
+      <div class="panel h-100">
+        <div class="panel-header">
+          <span class="panel-title">SPS Beam</span>
+          <span id="beam-conn" class="ms-auto panel-header-note">…</span>
+        </div>
+        <div class="panel-body">
+          <!-- NXCALS watcher control (own tmux session + NXCALS venv) -->
+          <div class="d-flex align-items-center gap-2 mb-3">
+            <button id="beam-watcher-toggle" class="btn btn-info btn-sm">Start Beam Watcher</button>
+            <span id="beam-watcher-msg" class="text-muted small"></span>
+          </div>
+          <div class="run-stats mb-0">
+            <div class="stat">
+              <div class="stat-label">Beam status</div>
+              <div class="stat-value" id="beam-state-big" style="font-size:1.6rem;">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Last spill</div>
+              <div class="stat-value" id="beam-last-pulse" style="font-size:1.1rem;">—</div>
+            </div>
+          </div>
+          <div class="run-stats mb-0 mt-2">
+            <div class="stat">
+              <div class="stat-label">Spills / 10 min</div>
+              <div class="stat-value" id="beam-pulses-10m" style="font-size:1.1rem;">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Protons / 10 min</div>
+              <div class="stat-value" id="beam-protons-10m" style="font-size:1.1rem;">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Avg spill</div>
+              <div class="stat-value" id="beam-avg-10m" style="font-size:1.1rem;">—</div>
+            </div>
+          </div>
+          <p class="text-muted small mb-0 mt-3">
+            <span class="font-monospace">SPS.BCTDC.51454:SFTPRO_INT</span> — protons
+            slow-extracted from the SPS towards the North Area (placeholder until the
+            assigned beam line's counters are confirmed), one point per SFTPRO cycle,
+            read from NXCALS (Timber) every 30&nbsp;s. Beam counts as OFF after
+            5&nbsp;min without a spill. Logged to
+            <span class="font-monospace" id="beam-csv-path">beam_monitor logs</span>.
+          </p>
+          <p class="text-muted small mb-0 mt-2">
+            <span id="beam-krb"></span>
+          </p>
+          <p class="text-muted small mb-0 mt-2">
+            <span id="beam-updated"></span>
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trend -->
+    <div class="col-12 col-xl-8">
+      <div class="panel h-100">
+        <div class="panel-header">
+          <span class="panel-title">Beam Intensity Trend</span>
+          <span class="panel-header-note">protons per spill — last 6 h from the log</span>
+        </div>
+        <div class="panel-body">
+          <div id="beam-plot" style="width:100%;height:380px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Disk Space Tab -->
+<div class="tab-pane fade" id="disk-space">
+  <div class="panel mb-3">
+    <div class="panel-header">
+      <span class="panel-title">Disk Space</span>
+      <span class="panel-header-note">Clear runs that are safely backed up, or restore
+        runs back from lxplus (EOS).</span>
+    </div>
+    <div class="panel-body">
+      <!-- disk usage bars -->
+      <div id="ds-usage" class="sys-rows mb-3" style="max-width:640px;">
+        <div class="text-muted">Loading disk usage…</div>
+      </div>
+
+      <!-- mode toggle -->
+      <div class="btn-group btn-group-sm mb-3" role="group">
+        <button id="ds-mode-free" class="btn btn-info">Free space</button>
+        <button id="ds-mode-restore" class="btn btn-outline-info">Restore from lxplus</button>
+      </div>
+
+      <!-- free-space controls (inline flex so JS display toggling works) -->
+      <div id="ds-free-controls" style="display:flex; align-items:flex-end; gap:1rem; flex-wrap:wrap;">
+        <div class="btn-group-block mb-0">
+          <label class="form-label" for="ds-disk">Disk</label>
+          <select id="ds-disk" class="form-select form-select-sm" style="width:auto;">
+            <option value="data">Data disk — runs (from backup_config.json)</option>
+          </select>
+        </div>
+        <div class="btn-group-block mb-0">
+          <button id="ds-check" class="btn btn-info btn-sm">Run safety check</button>
+        </div>
+        <div class="btn-group-block mb-0 ms-auto text-muted" id="ds-scan-meta" style="font-size:0.8rem;"></div>
+      </div>
+
+      <!-- restore controls -->
+      <div id="ds-restore-controls" style="display:none; align-items:flex-end; gap:1rem; flex-wrap:wrap;">
+        <div class="btn-group-block mb-0">
+          <button id="ds-restore-check" class="btn btn-info btn-sm">Check lxplus for runs</button>
+        </div>
+        <div class="btn-group-block mb-0" style="max-width:520px;">
+          <span class="text-muted" style="font-size:0.8rem;">Pulls runs from EOS back onto the
+            local data disk. Only files missing or size-mismatched locally are fetched.</span>
+        </div>
+        <div class="btn-group-block mb-0 ms-auto text-muted" id="ds-restore-meta" style="font-size:0.8rem;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="ds-results-panel" style="display:none;">
+    <div class="panel-header">
+      <span class="panel-title">Runs</span>
+      <span id="ds-summary" class="panel-header-note"></span>
+      <div class="ms-auto d-flex gap-2 align-items-center">
+        <button id="ds-select-safe" class="btn btn-outline-secondary btn-sm">Select all safe</button>
+        <button id="ds-clear-sel" class="btn btn-outline-secondary btn-sm">Clear</button>
+        <button id="ds-delete" class="btn btn-danger btn-sm" disabled>Delete selected…</button>
+      </div>
+    </div>
+    <div class="panel-body">
+      <p class="text-muted mb-2" style="font-size:0.8rem;">
+        Tip: tick a checkbox, then <b>Shift-click</b> another to select every safe run in
+        between (like a file list). Use <b>Select all safe</b> to grab them all at once.</p>
+      <div class="table-responsive">
+        <table class="table table-dark table-sm align-middle mb-0" id="ds-table">
+          <thead>
+            <tr>
+              <th style="width:2.2rem;"></th>
+              <th>Run</th><th class="text-end">Size</th>
+              <th>Backup status</th><th>Safe to delete</th>
+            </tr>
+          </thead>
+          <tbody id="ds-tbody"></tbody>
+        </table>
+      </div>
+      <p id="ds-empty" class="text-muted d-none mb-0 mt-2">No runs found on this disk.</p>
+    </div>
+  </div>
+
+  <!-- Restore results panel -->
+  <div class="panel" id="ds-restore-panel" style="display:none;">
+    <div class="panel-header">
+      <span class="panel-title">Runs on lxplus (EOS)</span>
+      <span id="ds-restore-summary" class="panel-header-note"></span>
+      <div class="ms-auto d-flex gap-2 align-items-center">
+        <button id="ds-restore-select" class="btn btn-outline-secondary btn-sm">Select all restorable</button>
+        <button id="ds-restore-clear" class="btn btn-outline-secondary btn-sm">Clear</button>
+        <button id="ds-restore-go" class="btn btn-info btn-sm" disabled>Restore selected…</button>
+      </div>
+    </div>
+    <div class="panel-body">
+      <p class="text-muted mb-2" style="font-size:0.8rem;">
+        Tip: tick a run, then <b>Shift-click</b> another to select the range. Only runs
+        missing or incomplete locally can be restored; complete runs are already local.</p>
+      <div class="table-responsive">
+        <table class="table table-dark table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th style="width:2.2rem;"></th>
+              <th>Run</th><th class="text-end">On EOS</th>
+              <th>Local status</th><th class="text-end">To fetch</th>
+            </tr>
+          </thead>
+          <tbody id="ds-restore-tbody"></tbody>
+        </table>
+      </div>
+      <p id="ds-restore-empty" class="text-muted d-none mb-0 mt-2">No runs found on lxplus.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Disk Space: confirm + progress modal (shared by delete and restore) -->
+<div id="ds-confirm-modal" style="position:fixed; inset:0; background:rgba(0,0,0,0.6);
+     display:none; align-items:center; justify-content:center; z-index:2000;">
+  <div style="background:var(--panel); border:1px solid var(--border); border-radius:10px;
+       padding:1.2rem 1.3rem; width:min(480px,94vw);">
+    <div id="ds-modal-title" style="font-weight:600; margin-bottom:0.5rem; color:var(--bad);">Permanently delete runs</div>
+
+    <!-- confirm phase -->
+    <div id="ds-confirm-section">
+      <p id="ds-confirm-intro" class="text-muted" style="font-size:0.83rem; margin-bottom:0.5rem;"></p>
+      <ul id="ds-confirm-list" style="font-family:var(--mono); font-size:0.82rem; max-height:180px;
+          overflow:auto; margin-bottom:0.6rem;"></ul>
+      <div style="font-size:0.83rem; margin-bottom:0.35rem;"><span id="ds-confirm-sizelabel">Total to free:</span>
+        <b id="ds-confirm-size" style="font-family:var(--mono);"></b></div>
+      <div id="ds-confirm-typewrap">
+        <label class="form-label" for="ds-confirm-input">Type <b>DELETE</b> to confirm</label>
+        <input id="ds-confirm-input" type="text" class="form-control" autocomplete="off" placeholder="DELETE">
+        <div id="ds-confirm-err" style="color:var(--bad); font-size:0.8rem; min-height:1.1rem; margin-top:0.4rem;"></div>
+      </div>
+    </div>
+
+    <!-- progress phase -->
+    <div id="ds-progress-section" style="display:none;">
+      <div id="ds-progress-status" style="font-size:0.85rem; margin-bottom:0.5rem;">Deleting…</div>
+      <div class="sys-bar-track" style="height:16px; margin-bottom:0.4rem;">
+        <div id="ds-progress-bar" class="sys-bar-fill" style="width:0%; background:var(--bad);"></div>
+      </div>
+      <div id="ds-progress-pct" class="text-muted" style="font-size:0.78rem; font-family:var(--mono); margin-bottom:0.5rem;">0%</div>
+      <ul id="ds-progress-log" style="font-family:var(--mono); font-size:0.8rem; max-height:180px;
+          overflow:auto; margin-bottom:0;"></ul>
+    </div>
+
+    <div class="d-flex gap-2 justify-content-end mt-2">
+      <button id="ds-confirm-cancel" class="btn btn-sm btn-secondary">Cancel</button>
+      <button id="ds-confirm-go" class="btn btn-sm btn-danger" disabled>Delete permanently</button>
+      <button id="ds-confirm-close" class="btn btn-sm btn-secondary" style="display:none;">Close</button>
+    </div>
+  </div>
+</div>
+
+
 {% endblock %}
 
 {% block scripts %}
@@ -423,8 +657,10 @@ async function fetchHVData() {
 
 // One hue per detector (validated dark categorical palette, slots 1-4: blue/aqua/
 // yellow/green); within a detector the drift line is a lighter blend of the same hue
-// so identity = colour and electrode = shade.
-const HV_DET_COLOR = { A: "#3987e5", B: "#199e70", C: "#c98500", D: "#008300" };
+// so identity = colour and electrode = shade. Trace names come from
+// _hv_channel_labels: P2_1 -> 1_Mesh/1_Drift, so the map is keyed on the detector
+// short name (the suffix after the last '_'). Add 2/3/4 as more P2_N detectors cable up.
+const HV_DET_COLOR = { "1": "#3987e5", "2": "#c98500", "3": "#199e70", "4": "#008300" };
 function _hvLighten(hex, amt) {
     const n = parseInt(hex.slice(1), 16);
     const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
@@ -1513,6 +1749,130 @@ function sysMakeBar(label, pct, rightLabel) {
     </div>`;
 }
 
+// ---- Rolling history for the line plots ----------------------------------
+// /system_stats returns instantaneous samples, so we keep a client-side buffer
+// and rebuild the traces each poll. The window is time-based (last SYS_WINDOW_MS)
+// so the seeded CSV history + live samples share one rolling view.
+const SYS_WINDOW_MS = 10 * 60 * 1000;   // 10 min
+const sysSamples = [];   // [{t: Date, cpu: [..], cpuAvg, mem, swap, netRx, netTx, diskR, diskW}]
+
+// Drop samples older than the window (called after every push / seed).
+function sysTrim() {
+    const cutoff = Date.now() - SYS_WINDOW_MS;
+    while (sysSamples.length && sysSamples[0].t.getTime() < cutoff) sysSamples.shift();
+}
+
+// Prefill the buffer from logged CSVs (if a system_stats_watcher is running) so the
+// plots come up populated instead of filling in live. Runs once at load, before live
+// polling starts; harmless no-op when there is no logged history yet.
+async function sysSeedHistory() {
+    try {
+        const res = await fetch('/system_stats/history?minutes=' + (SYS_WINDOW_MS / 60000));
+        const d = await res.json();
+        if (!d.success || !d.time || !d.time.length) return;
+        const seeded = d.time.map((ts, i) => ({
+            t: new Date(ts),            // ISO local (no tz) -> parsed as local, matches live
+            cpu: d.cpu[i] || [],
+            cpuAvg: d.cpu_avg[i],
+            mem: d.mem[i], swap: d.swap[i],
+            netRx: d.net_rx[i], netTx: d.net_tx[i],
+            diskR: d.disk_r[i], diskW: d.disk_w[i],
+        }));
+        // Prepend logged history ahead of anything already collected live this session.
+        sysSamples.unshift(...seeded);
+        sysTrim();
+        sysDrawPlots();
+    } catch (e) { /* silent */ }
+}
+
+// Blue→red spread across the CPU cores so individual core lines stay distinct.
+function sysCoreColor(i, n) {
+    const h = 210 - (i / Math.max(1, n - 1)) * 210;
+    return `hsl(${h}, 55%, 60%)`;
+}
+
+// Shared dark plot styling (mirrors the HV plots on this page).
+const SYS_PLOT_CFG = { responsive: true, displaylogo: false, displayModeBar: false };
+const SYS_AXIS = { gridcolor: '#242e39', zerolinecolor: '#38434f', linecolor: '#38434f' };
+function sysBaseLayout() {
+    return {
+        showlegend: true,
+        legend: { orientation: 'h', font: { size: 10 }, x: 0, y: 1.22, yanchor: 'bottom' },
+        hovermode: 'x unified',
+        uirevision: 'sys',
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        font: { color: '#8b96a5', size: 10 },
+        hoverlabel: { bgcolor: '#1b222b', bordercolor: '#38434f' },
+        margin: { t: 18, r: 12, b: 20, l: 42 },
+    };
+}
+
+// Redraw the two line plots from the history buffer. Plotly can't size a plot
+// in a hidden tab (0 width), so skip drawing unless the Overview tab is visible.
+function sysDrawPlots() {
+    if (typeof Plotly === 'undefined') return;
+    const ov = document.getElementById('overview');
+    if (!ov || !ov.classList.contains('active')) return;
+    if (!sysSamples.length) return;
+
+    const t = sysSamples.map(s => s.t);
+    const nCores = sysSamples[sysSamples.length - 1].cpu.length;
+    const sysYTitle = { size: 11, color: '#cbd5e1' };
+
+    // CPU + Memory: two vertically-stacked subplots that SHARE the x-axis. CPU on top
+    // (y2), Memory below (y); the single x-axis (ticks at the bottom) is common to both.
+    const cpuTraces = [];
+    for (let i = 0; i < nCores; i++) {
+        cpuTraces.push({
+            x: t, y: sysSamples.map(s => s.cpu[i] ?? null),
+            mode: 'lines', name: 'core ' + (i + 1),
+            line: { color: sysCoreColor(i, nCores), width: 1 },
+            opacity: 0.5, showlegend: false, xaxis: 'x', yaxis: 'y2',
+        });
+    }
+    cpuTraces.push({
+        x: t, y: sysSamples.map(s => s.cpuAvg),
+        mode: 'lines', name: 'CPU avg', line: { color: '#3ddc84', width: 2.5 },
+        xaxis: 'x', yaxis: 'y2',
+    });
+    const memTraces = [
+        { x: t, y: sysSamples.map(s => s.mem), mode: 'lines', name: 'RAM',
+          line: { color: '#6ab0f3', width: 2 }, xaxis: 'x', yaxis: 'y' },
+        { x: t, y: sysSamples.map(s => s.swap), mode: 'lines', name: 'Swap',
+          line: { color: '#f0a050', width: 2 }, xaxis: 'x', yaxis: 'y' },
+    ];
+    Plotly.react('sys-cpumem-plot', [...cpuTraces, ...memTraces], {
+        ...sysBaseLayout(),
+        legend: { orientation: 'h', font: { size: 10 }, x: 0, y: 1.0, yanchor: 'bottom' },
+        margin: { t: 20, r: 12, b: 34, l: 48 },
+        xaxis:  { ...SYS_AXIS, anchor: 'y', domain: [0, 1] },
+        yaxis:  { ...SYS_AXIS, domain: [0, 0.46], range: [0, 100], ticksuffix: '%',
+                  title: { text: 'Mem', font: sysYTitle } },
+        yaxis2: { ...SYS_AXIS, domain: [0.54, 1], range: [0, 100], ticksuffix: '%',
+                  anchor: 'x', title: { text: 'CPU', font: sysYTitle } },
+    }, SYS_PLOT_CFG);
+
+    // Network + disk throughput, MB/s (rates summed across interfaces / devices).
+    // Wider left margin so the "MB/s" y tick labels aren't clipped in the narrow column.
+    const MB = 1e6;
+    Plotly.react('sys-io-plot', [
+        { x: t, y: sysSamples.map(s => s.netRx / MB), mode: 'lines', name: 'net ↓',
+          line: { color: '#6ab0f3', width: 2 } },
+        { x: t, y: sysSamples.map(s => s.netTx / MB), mode: 'lines', name: 'net ↑',
+          line: { color: '#b57edc', width: 2 } },
+        { x: t, y: sysSamples.map(s => s.diskR / MB), mode: 'lines', name: 'disk R',
+          line: { color: '#3ddc84', width: 2 } },
+        { x: t, y: sysSamples.map(s => s.diskW / MB), mode: 'lines', name: 'disk W',
+          line: { color: '#e0806a', width: 2 } },
+    ], {
+        ...sysBaseLayout(),
+        margin: { t: 18, r: 12, b: 20, l: 60 },
+        xaxis: { ...SYS_AXIS },
+        yaxis: { ...SYS_AXIS, rangemode: 'tozero', ticksuffix: ' MB/s' },
+    }, SYS_PLOT_CFG);
+}
+
 async function updateSysStats() {
     try {
         const res = await fetch('/system_stats');
@@ -1522,31 +1882,545 @@ async function updateSysStats() {
         const loadEl = document.getElementById('sys-load-avg');
         loadEl.textContent = 'load avg: ' + d.load_avg.map(x => x.toFixed(2)).join('  ');
 
-        const grid = document.getElementById('sys-cpu-grid');
-        grid.innerHTML = d.cpu_cores.map((pct, i) =>
-            sysMakeBar('CPU' + (i + 1), pct, null)
-        ).join('');
-
-        const m = d.memory, s = d.swap;
-        document.getElementById('sys-mem-row').innerHTML = sysMakeBar(
-            'Mem', m.percent,
-            sysFormatBytes(m.used) + '/' + sysFormatBytes(m.total));
-        document.getElementById('sys-swp-row').innerHTML = sysMakeBar(
-            'Swp', s.percent,
-            sysFormatBytes(s.used) + '/' + sysFormatBytes(s.total));
-
+        // Disk-space usage stays as bars.
         const sysDiskRow = (elId, label, disk) => {
             document.getElementById(elId).innerHTML = disk
                 ? sysMakeBar(label, disk.percent,
                     sysFormatBytes(disk.used) + '/' + sysFormatBytes(disk.total))
                 : sysMakeBar(label, 0, 'n/a');
         };
-        sysDiskRow('sys-ssd-row', 'SSD', d.ssd);
-        sysDiskRow('sys-hdd-row', 'HDD', d.hdd);
+        if (d.single_disk) {
+            // OS and data dir live on the same filesystem — one row instead of
+            // two identical SSD/HDD rows.
+            sysDiskRow('sys-ssd-row', 'Disk', d.ssd);
+            document.getElementById('sys-hdd-row').innerHTML = '';
+        } else {
+            sysDiskRow('sys-ssd-row', 'SSD', d.ssd);
+            sysDiskRow('sys-hdd-row', 'HDD', d.hdd);
+        }
+
+        // Accumulate a sample for the line plots. Net/disk rates are summed across
+        // interfaces / physical devices into single throughput series.
+        const cores = d.cpu_cores || [];
+        const cpuAvg = cores.length ? cores.reduce((a, b) => a + b, 0) / cores.length : 0;
+        const sumIO = (obj, ...keys) => Object.values(obj || {}).reduce((acc, v) =>
+            v ? keys.reduce((a, k) => a + (v[k] || 0), acc) : acc, 0);
+        sysSamples.push({
+            t: new Date(),
+            cpu: cores,
+            cpuAvg,
+            mem: d.memory ? d.memory.percent : 0,
+            swap: d.swap ? d.swap.percent : 0,
+            netRx: sumIO(d.net, 'rx'),
+            netTx: sumIO(d.net, 'tx'),
+            diskR: sumIO(d.disk_io, 'read'),
+            diskW: sumIO(d.disk_io, 'write'),
+        });
+        sysTrim();
+
+        sysDrawPlots();
     } catch (e) { /* silent */ }
 }
 
-updateSysStats();
-setInterval(updateSysStats, 2000);
+// Seed from the logged CSVs first (plots come up populated), then start live polling.
+sysSeedHistory().finally(() => {
+    updateSysStats();
+    setInterval(updateSysStats, 2000);
+});
 </script>
+
+<!-- ===== SPS beam intensity (NXCALS) tab JS ===== -->
+<script>
+// The NXCALS session is owned by the beam_watcher process; the GUI reads
+// /beam/status (state file) and /beam/history (per-day CSV). New data lands every
+// ~30 s, so polling is relaxed. Runs alongside the Vistar ON/OFF monitor.
+
+// intensity in 1e10 protons -> "6.8e12 p"
+function beamFmtP(e10) {
+  return e10 == null ? "—" : (e10 * 1e10).toExponential(1).replace("+", "") + " p";
+}
+
+function beamFmtAge(s) {
+  if (s == null) return "";
+  return s < 120 ? `${Math.round(s)} s ago` : `${Math.round(s / 60)} min ago`;
+}
+
+async function beamUpdateStatus() {
+  let d;
+  try { d = await (await fetch("/beam/status")).json(); } catch (e) { return; }
+
+  const conn = document.getElementById("beam-conn");
+  const big = document.getElementById("beam-state-big");
+  const toggle = document.getElementById("beam-watcher-toggle");
+
+  if (!d.connected) {
+    conn.textContent = "disconnected" + (d.last_error ? ` — ${String(d.last_error).split("\n")[0]}` : "");
+    conn.style.color = "var(--bad)";
+    big.textContent = "NO DATA";
+    big.style.color = "var(--muted)";
+    ["beam-last-pulse", "beam-pulses-10m", "beam-protons-10m", "beam-avg-10m"]
+      .forEach(id => document.getElementById(id).textContent = "—");
+    document.getElementById("beam-updated").textContent = "";
+    return;
+  }
+  conn.textContent = "connected";
+  conn.style.color = "var(--ok)";
+  // Once the watcher is publishing, the control becomes a Stop button.
+  if (toggle && !toggle.dataset.busy) {
+    toggle.textContent = "Stop Beam Watcher";
+    toggle.classList.remove("btn-info");
+    toggle.classList.add("btn-outline-danger");
+    toggle.dataset.running = "1";
+  }
+
+  big.textContent = d.beam_on ? "BEAM ON" : "BEAM OFF";
+  big.style.color = d.beam_on ? "var(--ok)" : "var(--bad)";
+
+  document.getElementById("beam-last-pulse").textContent =
+    d.last_pulse_e10 != null ? `${beamFmtP(d.last_pulse_e10)} · ${beamFmtAge(d.seconds_since_pulse)}` : "—";
+  document.getElementById("beam-pulses-10m").textContent = d.pulses_10min ?? "—";
+  document.getElementById("beam-protons-10m").textContent = beamFmtP(d.protons_10min_e10);
+  document.getElementById("beam-avg-10m").textContent = beamFmtP(d.avg_pulse_e10);
+  if (d.csv_path) document.getElementById("beam-csv-path").textContent = d.csv_path;
+  document.getElementById("beam-updated").textContent =
+    d.timestamp ? `updated ${d.timestamp.split("T")[1] || ""} · query ${d.query_s ?? "?"} s` : "";
+
+  // Kerberos expiry is the one silent failure mode — show it, red when < 12 h left.
+  const krb = document.getElementById("beam-krb");
+  if (d.krb_valid_until) {
+    const hoursLeft = (new Date(d.krb_valid_until) - Date.now()) / 3.6e6;
+    krb.textContent = `Kerberos ticket valid until ${d.krb_valid_until.replace("T", " ")} `
+                    + `(${hoursLeft.toFixed(0)} h) — reseed with kinit on the DAQ PC.`;
+    krb.style.color = hoursLeft < 12 ? "var(--bad)" : "";
+  } else {
+    krb.textContent = "";
+  }
+}
+
+async function beamRenderPlot() {
+  if (typeof Plotly === "undefined") return;
+  let h;
+  try { h = await (await fetch("/beam/history?hours=6&max_points=3000")).json(); } catch (e) { return; }
+  if (!h || !h.success) return;
+  const axis = { gridcolor: '#242e39', zerolinecolor: '#38434f', linecolor: '#38434f' };
+  const win = h.delivery_window_min || 10;
+  const layout = {
+    hovermode: "closest",
+    paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+    font: { color: "#8b96a5" }, hoverlabel: { bgcolor: "#1b222b", bordercolor: "#38434f" },
+    legend: { orientation: "h", y: -0.22, yanchor: "top" },
+    margin: { t: 20, r: 64, b: 48, l: 60 }, xaxis: { ...axis },
+    yaxis: { title: { text: "Intensity (10¹⁰ p / spill)", font: { size: 14, color: "#4dabe8" } },
+             ...axis, rangemode: "tozero" },
+    // Right axis: proton delivery RATE (trailing-window sum / window), a different
+    // quantity from per-spill intensity, so it gets its own scale.
+    yaxis2: { title: { text: "Protons / min (10¹⁰)", font: { size: 14, color: "#5cc98a" } },
+              ...axis, overlaying: "y", side: "right", rangemode: "tozero", showgrid: false },
+  };
+  // One marker per SFTPRO cycle (zeros included, so beam-off gaps are visible) —
+  // markers, not lines: spills are discrete and a line just draws noise.
+  const markers = { x: h.time, y: h.intensity, name: "Spill intensity",
+                    type: "scatter", mode: "markers", marker: { color: "#4dabe8", size: 4 } };
+  // Per-spill rolling mean — beam QUALITY (blind to duty cycle).
+  const avgLine = (h.avg_time && h.avg_time.length)
+    ? { x: h.avg_time, y: h.avg_intensity, name: `${h.avg_window_min || 10}-min avg spill`,
+        mode: "lines", line: { color: "#c98500", width: 2 } }
+    : null;
+  // Duty-cycle-aware delivery as a per-minute rate: the trailing-window proton
+  // sum divided by the window. Falls to zero during beam-off, unlike avg spill.
+  const rateLine = (h.delivery_time && h.delivery_time.length)
+    ? { x: h.delivery_time, y: h.delivery_intensity.map(v => v / win),
+        name: "Protons / min", mode: "lines", yaxis: "y2",
+        line: { color: "#5cc98a", width: 2 } }
+    : null;
+  const traces = [markers, avgLine, rateLine].filter(Boolean);
+  if (document.getElementById("beam-plot")) {
+    Plotly.react("beam-plot", traces, { ...layout, uirevision: "beam-plot" },
+                 { responsive: true, displaylogo: false });
+  }
+}
+
+// Start/Stop the NXCALS watcher (its own tmux session + NXCALS venv).
+(function () {
+  const toggle = document.getElementById("beam-watcher-toggle");
+  const msg = document.getElementById("beam-watcher-msg");
+  if (!toggle) return;
+  toggle.addEventListener("click", async () => {
+    const running = toggle.dataset.running === "1";
+    const url = running ? "/stop_beam_watcher" : "/start_beam_watcher";
+    toggle.disabled = true;
+    toggle.dataset.busy = "1";
+    if (msg) msg.textContent = running ? "stopping…" : "starting…";
+    try {
+      const r = await (await fetch(url, { method: "POST" })).json();
+      if (msg) msg.textContent = r.message || "";
+      if (r.success) {
+        toggle.dataset.running = running ? "" : "1";
+        toggle.textContent = running ? "Start Beam Watcher" : "Stop Beam Watcher";
+        toggle.classList.toggle("btn-info", running);
+        toggle.classList.toggle("btn-outline-danger", !running);
+      }
+    } catch (e) {
+      if (msg) msg.textContent = "request failed";
+    } finally {
+      toggle.disabled = false;
+      delete toggle.dataset.busy;
+    }
+  });
+})();
+
+// Plotly can't size a plot while its tab is hidden (0 width), so render on show.
+document.querySelector('a[href="#beam"]').addEventListener("shown.bs.tab", beamRenderPlot);
+
+// Refresh the history plot on a timer, but only while the Beam tab is visible.
+setInterval(() => {
+  if (document.getElementById("beam").classList.contains("active")) beamRenderPlot();
+}, 15000);
+
+beamUpdateStatus();
+setInterval(beamUpdateStatus, 5000);
+</script>
+
+<!-- ===== Disk Space tab JS ===== -->
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const gb = (n) => (n / 1073741824).toFixed(1) + " GB";
+
+  const usageBox = $("ds-usage");
+  const diskSel  = $("ds-disk");
+  let mode = "free";              // 'free' | 'restore'
+  let lastScan = null;           // last /space/scan (delete side)
+  let lastRestore = null;        // last /space/restore_scan
+  const delSel = new Set();      // runs selected for deletion
+  const resSel = new Set();      // runs selected for restore
+  let delTable = null, resTable = null;
+
+  // ---- disk usage bars ----
+  function fmtBar(u) {
+    if (!u || u.error) return `<div class="text-muted">unavailable (${u ? u.error : '—'})</div>`;
+    const pct = u.pct || 0;
+    const color = pct >= 90 ? "var(--bad)" : pct >= 75 ? "var(--warn)" : "var(--ok)";
+    const g = (n) => (n / 1073741824).toFixed(0) + " GB";
+    return `
+      <div class="sys-bar-row">
+        <span class="sys-bar-label" style="width:auto; padding-right:10px;">${u.label}</span>
+        <span class="sys-bar-track"><span class="sys-bar-fill" style="width:${pct}%; background:${color};"></span></span>
+        <span class="sys-bar-pct" style="min-width:auto;">${pct}%</span>
+        <span class="sys-bar-extra">${g(u.free)} free / ${g(u.total)}</span>
+      </div>`;
+  }
+  async function loadUsage() {
+    try {
+      const d = await (await fetch("/space/usage")).json();
+      // Single data disk here (x17 showed hdd + ssd); render whatever keys exist.
+      usageBox.innerHTML = Object.values(d).map(fmtBar).join("");
+    } catch (e) { usageBox.innerHTML = `<div class="text-muted">could not load usage</div>`; }
+  }
+
+  // ---- generic table selection with shift-click range ----
+  // Returns {all(), clear()}. Uses "click" (not "change") because only the click
+  // event carries shiftKey. selSet is filled with the checked runs' names.
+  function wireTable(tbodyEl, cbClass, selSet, onChange) {
+    let lastIdx = null;
+    const cbs = [...tbodyEl.querySelectorAll("." + cbClass)];
+    const sync = () => { selSet.clear(); cbs.forEach(c => { if (c.checked) selSet.add(c.dataset.run); }); onChange(); };
+    cbs.forEach((cb, i) => {
+      cb.addEventListener("click", (e) => {
+        if (e.shiftKey && lastIdx !== null && lastIdx !== i) {
+          const [lo, hi] = [Math.min(lastIdx, i), Math.max(lastIdx, i)];
+          for (let j = lo; j <= hi; j++) cbs[j].checked = cb.checked;
+        }
+        lastIdx = i;
+        sync();
+      });
+    });
+    return {
+      all()   { cbs.forEach(c => c.checked = true);  lastIdx = cbs.length ? cbs.length - 1 : null; sync(); },
+      clear() { cbs.forEach(c => c.checked = false); lastIdx = null; sync(); },
+    };
+  }
+
+  // ================= FREE SPACE (delete) =================
+  function updateDelBtn() {
+    const b = $("ds-delete");
+    b.disabled = delSel.size === 0;
+    b.textContent = delSel.size ? `Delete selected (${delSel.size})…` : "Delete selected…";
+  }
+  function renderDeleteRows(scan) {
+    const tb = $("ds-tbody"); tb.innerHTML = ""; delSel.clear();
+    if (!scan.runs.length) { $("ds-empty").classList.remove("d-none"); updateDelBtn(); return; }
+    $("ds-empty").classList.add("d-none");
+    for (const r of scan.runs) {
+      const tr = document.createElement("tr");
+      const badge = r.active ? `<span class="shift-flag-na">● acquiring</span>`
+        : r.safe ? `<span class="shift-flag-ok">✓ SAFE</span>`
+                 : `<span class="shift-flag-bad">✗ not safe</span>`;
+      tr.innerHTML = `
+        <td>${r.safe ? `<input type="checkbox" class="form-check-input ds-cb" data-run="${r.run}">`
+                     : `<input type="checkbox" class="form-check-input" disabled title="not safe to delete">`}</td>
+        <td><b>${r.run}</b>${r.active ? ' <span class="text-muted">(active)</span>' : ''}${r.newest && !r.active ? ' <span class="text-muted">(newest)</span>' : ''}</td>
+        <td class="text-end" style="font-family:var(--mono);">${r.size_h}</td>
+        <td style="font-size:0.82rem; color:var(--muted);">${r.reason}</td>
+        <td>${badge}</td>`;
+      tb.appendChild(tr);
+    }
+    delTable = wireTable(tb, "ds-cb", delSel, updateDelBtn);
+    updateDelBtn();
+  }
+  async function runCheck() {
+    const disk = diskSel.value;
+    const btn = $("ds-check");
+    btn.disabled = true; btn.textContent = "Checking… (verifying against EOS)";
+    $("ds-scan-meta").textContent = "";
+    try {
+      const r = await fetch(`/space/scan?disk=${encodeURIComponent(disk)}`);
+      const d = await r.json();
+      if (!r.ok || d.success === false) throw new Error(d.message || "scan failed");
+      lastScan = d;
+      $("ds-results-panel").style.display = "";
+      renderDeleteRows(d);
+      $("ds-summary").innerHTML =
+        `${d.n_safe}/${d.n_runs} safe · would free <b>${d.safe_bytes_h}</b>` +
+        (d.active_run ? ` · active: ${d.active_run}` : "");
+      $("ds-scan-meta").textContent = `Scanned ${d.n_runs} runs at ${d.scanned_at}`;
+      loadUsage();
+    } catch (e) {
+      $("ds-scan-meta").innerHTML = `<span style="color:var(--bad);">Check failed: ${e.message}</span>`;
+    } finally {
+      btn.disabled = false; btn.textContent = "Run safety check";
+    }
+  }
+
+  // ================= RESTORE (from lxplus) =================
+  function updateResBtn() {
+    const b = $("ds-restore-go");
+    b.disabled = resSel.size === 0;
+    b.textContent = resSel.size ? `Restore selected (${resSel.size})…` : "Restore selected…";
+  }
+  function restoreStatus(r) {
+    if (r.active)               return `<span class="shift-flag-na">● acquiring</span>`;
+    if (r.status === "complete")return `<span class="shift-flag-ok">✓ complete (local)</span>`;
+    if (r.status === "missing") return `<span style="color:var(--warn);">missing locally</span>`;
+    if (r.status === "partial") return `<span style="color:var(--warn);">partial (${r.have}/${r.total})</span>`;
+    return `<span class="shift-flag-bad">EOS error</span>`;
+  }
+  function renderRestoreRows(scan) {
+    const tb = $("ds-restore-tbody"); tb.innerHTML = ""; resSel.clear();
+    if (!scan.runs.length) { $("ds-restore-empty").classList.remove("d-none"); updateResBtn(); return; }
+    $("ds-restore-empty").classList.add("d-none");
+    for (const r of scan.runs) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${r.restorable ? `<input type="checkbox" class="form-check-input ds-rcb" data-run="${r.run}">`
+                           : `<input type="checkbox" class="form-check-input" disabled title="nothing to restore">`}</td>
+        <td><b>${r.run}</b>${r.active ? ' <span class="text-muted">(active)</span>' : ''}</td>
+        <td class="text-end" style="font-family:var(--mono);">${r.size_h}</td>
+        <td>${restoreStatus(r)}</td>
+        <td class="text-end" style="font-family:var(--mono);">${r.fetch_files ? r.fetch_h : '—'}</td>`;
+      tb.appendChild(tr);
+    }
+    resTable = wireTable(tb, "ds-rcb", resSel, updateResBtn);
+    updateResBtn();
+  }
+  async function runRestoreCheck() {
+    const btn = $("ds-restore-check");
+    btn.disabled = true; btn.textContent = "Checking lxplus…";
+    $("ds-restore-meta").textContent = "";
+    try {
+      const r = await fetch("/space/restore_scan");
+      const d = await r.json();
+      if (!r.ok || d.success === false) throw new Error(d.message || "scan failed");
+      lastRestore = d;
+      $("ds-restore-panel").style.display = "";
+      renderRestoreRows(d);
+      $("ds-restore-summary").innerHTML =
+        `${d.n_restorable}/${d.n_runs} restorable · would fetch <b>${d.fetch_bytes_total_h}</b>` +
+        (d.active_run ? ` · active: ${d.active_run}` : "");
+      $("ds-restore-meta").textContent = `Checked ${d.n_runs} EOS runs at ${d.scanned_at}`;
+      loadUsage();
+    } catch (e) {
+      $("ds-restore-meta").innerHTML = `<span style="color:var(--bad);">Check failed: ${e.message}</span>`;
+    } finally {
+      btn.disabled = false; btn.textContent = "Check lxplus for runs";
+    }
+  }
+
+  // ================= shared confirm + progress modal =================
+  const modal = $("ds-confirm-modal");
+  const cInput = $("ds-confirm-input");
+  const cGo = $("ds-confirm-go");
+  const cClose = $("ds-confirm-close");
+  let busy = false;      // blocks closing the modal mid-action
+  let action = null;     // the active action config (see openDelete/openRestore)
+
+  function setPhase(phase) {   // 'confirm' | 'progress' | 'done'
+    $("ds-confirm-section").style.display  = phase === "confirm" ? "" : "none";
+    $("ds-progress-section").style.display = phase === "confirm" ? "none" : "";
+    $("ds-confirm-cancel").style.display   = phase === "confirm" ? "" : "none";
+    cGo.style.display    = phase === "confirm" ? "" : "none";
+    cClose.style.display = phase === "done" ? "" : "none";
+  }
+
+  function openAction(cfg) {
+    action = cfg;
+    const total = cfg.items.reduce((a, it) => a + (it.bytes || 0), 0);
+    $("ds-modal-title").textContent = cfg.title;
+    $("ds-modal-title").style.color = cfg.danger ? "var(--bad)" : "var(--accent)";
+    $("ds-confirm-intro").innerHTML = cfg.intro;
+    $("ds-confirm-list").innerHTML = cfg.items.map(it => `<li>${it.name} — ${it.sizeH}</li>`).join("");
+    $("ds-confirm-sizelabel").textContent = cfg.sizeLabel;
+    $("ds-confirm-size").textContent = gb(total);
+    $("ds-confirm-typewrap").style.display = cfg.needType ? "" : "none";
+    cInput.value = "";
+    cGo.className = "btn btn-sm " + cfg.goClass;
+    cGo.textContent = cfg.goLabel;
+    cGo.disabled = !!cfg.needType;      // must type DELETE for destructive actions
+    setPhase("confirm");
+    modal.style.display = "flex";
+    if (cfg.needType) cInput.focus();
+  }
+  function closeModal() { if (!busy) modal.style.display = "none"; }
+
+  cInput.addEventListener("input", () => { if (action && action.needType) cGo.disabled = cInput.value !== "DELETE"; });
+  $("ds-confirm-cancel").addEventListener("click", closeModal);
+  cClose.addEventListener("click", () => { modal.style.display = "none"; if (action && action.onClose) action.onClose(); });
+  modal.addEventListener("click", e => { if (e.target === modal) closeModal(); });
+
+  // Run the selected items ONE AT A TIME so we can show real per-item progress.
+  // Each request re-verifies that single run on the server.
+  async function runItems(cfg) {
+    const total = cfg.items.reduce((a, it) => a + (it.bytes || 0), 0) || 1;
+    const log = $("ds-progress-log"); log.innerHTML = "";
+    let done = 0, bytes = 0, nOk = 0, nFail = 0;
+    for (let i = 0; i < cfg.items.length; i++) {
+      const it = cfg.items[i];
+      $("ds-progress-status").textContent = `${cfg.verbing} ${it.name} (${i + 1}/${cfg.items.length})…`;
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="text-muted">${it.name} … ${cfg.working}</span>`;
+      log.appendChild(li); log.scrollTop = log.scrollHeight;
+      let d;
+      try {
+        const r = await fetch(cfg.endpoint, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(cfg.buildBody(it.name)),
+        });
+        d = await r.json();
+      } catch (e) { d = { results: [{ run: it.name, success: false, message: e.message }] }; }
+      const rr = cfg.readResult(d);
+      if (rr.ok) {
+        nOk++; bytes += rr.bytes || 0;
+        li.innerHTML = `<span class="shift-flag-ok">✓ ${it.name}</span> <span class="text-muted">${rr.detail}</span>`;
+      } else {
+        nFail++;
+        li.innerHTML = `<span class="shift-flag-bad">✗ ${it.name}</span> <span class="text-muted">${rr.detail}</span>`;
+      }
+      done += it.bytes || 0;
+      const pct = Math.min(100, Math.round(100 * done / total));
+      $("ds-progress-bar").style.width = pct + "%";
+      $("ds-progress-pct").textContent = pct + "%";
+    }
+    $("ds-progress-bar").style.background = nFail ? "var(--warn)" : "var(--ok)";
+    $("ds-progress-status").innerHTML = cfg.doneText(nOk, nFail, bytes);
+    return { nOk, nFail, bytes };
+  }
+
+  cGo.addEventListener("click", async () => {
+    if (!action) return;
+    if (action.needType && cInput.value !== "DELETE") return;
+    busy = true;
+    setPhase("progress");
+    $("ds-progress-bar").style.background = action.barColor;
+    $("ds-progress-bar").style.width = "0%";
+    $("ds-progress-pct").textContent = "0%";
+    let res;
+    try { res = await runItems(action); }
+    finally { busy = false; setPhase("done"); }
+    if (action.meta) action.meta(res);
+  });
+
+  // ---- action builders ----
+  function openDelete() {
+    if (!delSel.size || !lastScan) return;
+    const items = lastScan.runs.filter(r => delSel.has(r.run))
+      .map(r => ({ name: r.run, sizeH: r.size_h, bytes: r.size || 0 }));
+    openAction({
+      needType: true, danger: true, title: "Permanently delete runs",
+      intro: `You are about to delete the following from <b>${lastScan.label}</b>. Each run is ` +
+             `re-verified on the server immediately before deletion; anything not provably backed up will be skipped.`,
+      sizeLabel: "Total to free:", items,
+      goLabel: "Delete permanently", goClass: "btn-danger", barColor: "var(--bad)",
+      verbing: "Deleting", working: "removing", endpoint: "/space/delete",
+      buildBody: (n) => ({ disk: lastScan.disk, runs: [n], confirm: "DELETE" }),
+      readResult: (d) => {
+        const r = (d.results && d.results[0]) || { success: false, message: (d && d.message) || "failed" };
+        return { ok: r.success, bytes: r.freed_bytes || 0,
+                 detail: r.success ? `freed ${r.freed_h || ""}` : (r.message || "skipped") };
+      },
+      doneText: (nOk, nFail, b) => `Done — deleted ${nOk}` +
+        (nFail ? `, <span style="color:var(--warn);">skipped ${nFail}</span>` : "") + `, freed ${gb(b)}.`,
+      onClose: runCheck,
+      meta: (res) => { $("ds-scan-meta").innerHTML = res.nFail
+        ? `<span style="color:var(--warn);">Deleted ${res.nOk}, skipped ${res.nFail}, freed ${gb(res.bytes)}.</span>`
+        : `<span style="color:var(--ok);">Deleted ${res.nOk} run(s), freed ${gb(res.bytes)}.</span>`; },
+    });
+  }
+  function openRestore() {
+    if (!resSel.size || !lastRestore) return;
+    const items = lastRestore.runs.filter(r => resSel.has(r.run))
+      .map(r => ({ name: r.run, sizeH: r.fetch_h, bytes: r.fetch_bytes || 0 }));
+    openAction({
+      needType: false, danger: false, title: "Restore runs from lxplus",
+      intro: `These runs will be pulled from EOS back onto the local data disk. ` +
+             `Only files missing or size-mismatched locally are fetched.`,
+      sizeLabel: "Total to fetch:", items,
+      goLabel: "Restore", goClass: "btn-info", barColor: "var(--info)",
+      verbing: "Restoring", working: "fetching", endpoint: "/space/restore",
+      buildBody: (n) => ({ runs: [n] }),
+      readResult: (d) => {
+        const r = (d.results && d.results[0]) || { success: false, message: (d && d.message) || "failed" };
+        return { ok: r.success, bytes: r.fetched_bytes || 0,
+                 detail: r.success ? `fetched ${r.fetched_h || ""} (${r.restored_files || 0} files)` : (r.message || "failed") };
+      },
+      doneText: (nOk, nFail, b) => `Done — restored ${nOk}` +
+        (nFail ? `, <span style="color:var(--warn);">failed ${nFail}</span>` : "") + `, fetched ${gb(b)}.`,
+      onClose: runRestoreCheck,
+      meta: (res) => { $("ds-restore-meta").innerHTML = res.nFail
+        ? `<span style="color:var(--warn);">Restored ${res.nOk}, failed ${res.nFail}, fetched ${gb(res.bytes)}.</span>`
+        : `<span style="color:var(--ok);">Restored ${res.nOk} run(s), fetched ${gb(res.bytes)}.</span>`; },
+    });
+  }
+
+  // ---- mode toggle ----
+  function setMode(m) {
+    mode = m;
+    $("ds-mode-free").className    = "btn btn-sm " + (m === "free" ? "btn-info" : "btn-outline-info");
+    $("ds-mode-restore").className = "btn btn-sm " + (m === "restore" ? "btn-info" : "btn-outline-info");
+    $("ds-free-controls").style.display    = m === "free" ? "flex" : "none";
+    $("ds-restore-controls").style.display = m === "restore" ? "flex" : "none";
+    $("ds-results-panel").style.display = "none";
+    $("ds-restore-panel").style.display = "none";
+  }
+
+  // ---- wire ----
+  $("ds-check").addEventListener("click", runCheck);
+  $("ds-delete").addEventListener("click", openDelete);
+  $("ds-select-safe").addEventListener("click", () => { if (delTable) delTable.all(); });
+  $("ds-clear-sel").addEventListener("click", () => { if (delTable) delTable.clear(); });
+  diskSel.addEventListener("change", () => { $("ds-results-panel").style.display = "none"; lastScan = null; });
+
+  $("ds-restore-check").addEventListener("click", runRestoreCheck);
+  $("ds-restore-go").addEventListener("click", openRestore);
+  $("ds-restore-select").addEventListener("click", () => { if (resTable) resTable.all(); });
+  $("ds-restore-clear").addEventListener("click", () => { if (resTable) resTable.clear(); });
+
+  $("ds-mode-free").addEventListener("click", () => setMode("free"));
+  $("ds-mode-restore").addEventListener("click", () => setMode("restore"));
+
+  const dsTab = document.querySelector('a[href="#disk-space"]');
+  if (dsTab) dsTab.addEventListener("shown.bs.tab", loadUsage);
+  setMode("free");
+})();
+</script>
+
 {% endblock %}

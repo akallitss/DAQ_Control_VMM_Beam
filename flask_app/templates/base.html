@@ -184,21 +184,36 @@
 
         /* ---------- System resource monitor ---------- */
         #sys-load-avg { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); }
-        #sys-cpu-grid {
+        /* CPU + Memory share one full-width, vertically-stacked (shared-x) plot on top;
+           beneath it, disk-space bars (left ~35%) sit beside the Network/Disk I/O plot. */
+        .sys-plot { height: 132px; }
+        .sys-plot-tall { height: 260px; }   /* the stacked CPU+Memory subplots */
+        .sys-io-row {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 3px 18px;
-            margin-bottom: 0.6rem;
-            font-family: var(--mono);
+            grid-template-columns: 35% 1fr;
+            gap: 1rem;
+            align-items: start;
+            margin-top: 0.7rem;
         }
+        @media (max-width: 480px) {
+            .sys-io-row { grid-template-columns: 1fr; }
+        }
+        .sys-col-title {
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            font-weight: 600;
+            color: var(--muted);
+            margin-bottom: 0.45rem;
+        }
+        .sys-col-title-sub { margin-top: 0.7rem; }
         .sys-rows {
-            border-top: 1px solid var(--border);
-            padding-top: 0.5rem;
             display: flex;
             flex-direction: column;
             gap: 3px;
             font-family: var(--mono);
         }
+        /* Disk-space usage bars (the remaining bar UI; CPU/mem/IO are line plots) */
         .sys-bar-row { display: flex; align-items: center; font-size: 0.75rem; line-height: 18px; }
         .sys-bar-label { color: var(--muted); width: 44px; text-align: right; padding-right: 6px; flex-shrink: 0; }
         .sys-bar-track {
@@ -208,12 +223,22 @@
             border-radius: 2px;
             height: 11px;
             position: relative;
-            min-width: 50px;
+            min-width: 28px;
             overflow: hidden;
         }
         .sys-bar-fill { position: absolute; inset: 0; transition: width 0.6s ease; }
         .sys-bar-pct { color: var(--muted); margin-left: 7px; min-width: 44px; flex-shrink: 0; }
         .sys-bar-extra { color: #5c6774; margin-left: 5px; }
+        /* Overview disk-space bars only: taller bars + bigger fonts to fill the vertical
+           space, labels flush-left (no indent) to stay horizontally compact. */
+        .sys-diskspace { gap: 9px; }
+        .sys-diskspace .sys-bar-row { font-size: 0.95rem; line-height: 24px; }
+        .sys-diskspace .sys-bar-label {
+            width: auto; min-width: 2.4em; text-align: left;
+            padding-right: 9px; font-weight: 600; color: var(--text);
+        }
+        .sys-diskspace .sys-bar-track { height: 20px; border-radius: 3px; }
+        .sys-diskspace .sys-bar-pct { min-width: 3.4em; }
 
         /* ---------- Monitoring strip ---------- */
         .monitor-strip .strip-row {
@@ -267,6 +292,11 @@
         .beam-off     { color: var(--bad);  border: 1px solid var(--bad);  background: rgba(239, 91, 91, 0.14); }
         .beam-unknown { color: var(--sec);  border: 1px solid var(--sec);  background: rgba(125, 136, 150, 0.12); }
 
+        /* ---------- Status flags (Disk Space tab) ---------- */
+        .shift-flag-ok   { color: var(--ok); }
+        .shift-flag-bad  { color: var(--bad); font-weight: 700; }
+        .shift-flag-na   { color: var(--muted); }
+
         /* ---------- Breadcrumb / tables ---------- */
         .breadcrumb { background: transparent; padding: 0; margin: 0; }
         .breadcrumb-item a { color: var(--muted); text-decoration: none; }
@@ -292,6 +322,12 @@
                 </li>
                 <li class="nav-item">
                     <a class="nav-link" data-bs-toggle="tab" href="#analysis-browser">Analysis</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" data-bs-toggle="tab" href="#beam">Beam</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" data-bs-toggle="tab" href="#disk-space">Disk Space</a>
                 </li>
             </ul>
         </div>
