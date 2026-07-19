@@ -227,6 +227,7 @@ logs/beam_history.csv
 logs/system_stats/
 logs/local_mirror.log
 logs/.local_mirror.lock
+logs/mem_guardian.log
 config/local_mirror.txt
 config/power_config.json
 config/site.txt

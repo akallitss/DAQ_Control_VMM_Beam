@@ -15,3 +15,7 @@ bash_scripts/start_tmux.sh vmm_lv_control "$PY $BASE_DIR/lv_control.py" 500
 bash_scripts/start_tmux.sh vmm_daq "$PY $BASE_DIR/vmm_daq_control.py" 20000
 bash_scripts/start_tmux.sh vmm_daq_control "echo 'Daq control session started'" 20000
 bash_scripts/start_tmux.sh vmm_flask "$BASE_DIR/flask_app/start_flask.sh" 5000
+# Memory guardian: on this ~8 GB box a runaway QA job can exhaust RAM and freeze
+# the machine, taking the live DAQ with it. This kills the biggest QA/compute
+# process before that happens — never the DAQ. Tunable via config/mem_guardian.json.
+bash_scripts/start_tmux.sh vmm_mem_guardian "$PY $BASE_DIR/mem_guardian.py" 2000
