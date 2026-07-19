@@ -454,6 +454,16 @@ def _run_qa_monitored(qa_python, qa_script: Path, pcap: Path, out_dir: Path,
     run_label = f"{pcap.parent.parent.parent.name}/{pcap.parent.parent.name}/{pcap.name}"
     proc = subprocess.Popen(cmd, env=env)
 
+    # Make the QA tree the kernel's (and earlyoom's) preferred OOM victim, so an
+    # 8 GB box sacrifices the restartable QA before the live DAQ under memory
+    # pressure. oom_score_adj is preserved across the nice/taskset exec chain and
+    # inherited by the python child; raising it (more killable) needs no privilege.
+    try:
+        with open(f"/proc/{proc.pid}/oom_score_adj", "w") as _f:
+            _f.write("500\n")
+    except OSError:
+        pass
+
     while proc.poll() is None:
         time.sleep(monitor_interval)
         mem_pct, free_mb = _mem_usage_pct()
