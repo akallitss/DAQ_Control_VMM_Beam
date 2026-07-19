@@ -29,12 +29,17 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Ubuntu's post-install needrestart / service-start step can make apt-get exit
+# non-zero even when the package installed fine — don't let that abort the
+# config below (that bit us on first run). Judge success by the binary, not by
+# apt's exit code, and only fall back to `apt-get update` if it's truly absent.
+export DEBIAN_FRONTEND=noninteractive
 echo "== 1/3  install earlyoom =="
 if ! command -v earlyoom >/dev/null 2>&1; then
-    apt-get install -y earlyoom || { echo "apt install failed; trying apt-get update first"; apt-get update && apt-get install -y earlyoom; }
-else
-    echo "earlyoom already installed ($(earlyoom --help 2>&1 | head -1))"
+    apt-get install -y earlyoom || { apt-get update || true; apt-get install -y earlyoom || true; }
 fi
+command -v earlyoom >/dev/null 2>&1 || { echo "earlyoom still not installed (apt/network?) — fix apt, then re-run" >&2; exit 1; }
+echo "earlyoom present: $(command -v earlyoom)"
 
 echo "== 2/3  configure + enable earlyoom =="
 cat > /etc/default/earlyoom <<'EOF'
