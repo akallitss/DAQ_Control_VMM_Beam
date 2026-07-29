@@ -180,6 +180,19 @@ P2_VMM_CABLING = {
     'P2_OUT': {'c4': (7, 14, 15), 'c5': (8, 16, 17), 'c6': (9, 18, 19)},
 }
 
+# External trigger digitizer: hybrid 0 (VMM 0 bottom / VMM 1 top) receives the
+# external trigger — not on any P2 station. Recorded here purely as metadata
+# (lands in every run's run_config.json): the capture needs nothing special
+# (dumpcap grabs every hybrid on the NIC) and the QA keys its plots on the
+# VMM ids actually present in the data, so VMM 0/1 show up automatically.
+# Colleagues' July notes: the trigger signal is digitized on VMM 1 channel 60.
+TRIGGER_VMM = {
+    'hybrid': 0,
+    'vmms': [0, 1],
+    'trigger_channel': {'vmm': 1, 'channel': 60},
+    'note': 'external trigger digitizer (H0); trigger on VMM 1 ch 60',
+}
+
 # Capture: seconds per pcapng file (dumpcap ring-buffer rotation interval).
 CAPTURE_DURATION_S = 44
 
@@ -329,6 +342,9 @@ class Config(RunConfigBase):
         #     })
 
         self.included_detectors = ['P2_IN', 'P2_MID', 'P2_OUT']
+
+        # Trigger digitizer metadata — provenance in every run_config.json.
+        self.trigger_vmm = TRIGGER_VMM
 
         # The three P2 telescope stations, mirrored from the Dream config on
         # banco (names, z positions, HV channels) — same detectors, now read
