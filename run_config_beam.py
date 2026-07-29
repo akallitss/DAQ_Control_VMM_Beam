@@ -122,8 +122,13 @@ SIMULATE = _SITE_CFG['simulate']
 #   N_SUBRUNS identical sub-runs of SUBRUN_MIN minutes at the nominal P2
 #   operating point. Short values for local simulation; set beam values at SPS.
 # ---------------------------------------------------------------------------
-N_SUBRUNS = 2       # number of identical sub-runs
-SUBRUN_MIN = 2      # run time per sub-run (minutes)
+# DRY RUN (2026-07-29): a single 10-second sub-run to exercise the whole GUI
+# chain (arming, capture, QA, provenance) without beam and without HV — the
+# sps HV server is the Dream-gating shim, which passes instantly for VMM-only
+# runs, so NO detector voltage is ramped by this run.
+# Restore beam values after the dry run (e.g. N_SUBRUNS = 2, SUBRUN_MIN = 2).
+N_SUBRUNS = 1       # number of identical sub-runs
+SUBRUN_MIN = 10 / 60  # run time per sub-run (minutes) — 10 seconds
 POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = no pause
 
 # P2 stations' HV on the SPS CAEN crate (192.168.10.199, banco's DAQ LAN),
