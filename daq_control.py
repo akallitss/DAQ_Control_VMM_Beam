@@ -93,6 +93,7 @@ def main():
 
         create_dir_if_not_exist(config.run_out_dir)
         config.write_to_file(f'{config.run_out_dir}run_config.json')
+        copy_chip_config_provenance(config.run_out_dir)
 
         vmm_daq.send('Connected to daq_control')
         vmm_daq.receive()
@@ -235,6 +236,31 @@ def main():
     print('donzo')
 
 
+def copy_chip_config_provenance(run_out_dir):
+    """Copy the GUI-selected chip-config exception file (config_ext .txt) into
+    the run directory, so every run records which chip configuration it was
+    taken with. Best-effort: an unconfigured/missing chip config never blocks
+    a run — the GUI's Configure step is where errors get surfaced."""
+    import json
+    import shutil
+    base = os.path.dirname(os.path.abspath(__file__))
+    try:
+        with open(os.path.join(base, 'config', 'chip_config.json')) as f:
+            cfg = json.load(f)
+        with open(os.path.join(base, 'config', 'chip_config_state.json')) as f:
+            state = json.load(f)
+        sel = state.get('selected_ext')
+        if not sel:
+            return
+        src = os.path.join(cfg['conf_dir'], cfg.get('ext_subdir', 'config_ext'), sel)
+        shutil.copy2(src, run_out_dir)
+        print(f'Chip config provenance: copied {sel} into the run directory')
+    except FileNotFoundError:
+        pass  # chip config not set up on this machine
+    except Exception as e:
+        print(f'Chip config provenance copy failed (non-fatal): {e}')
+
+
 def run_daq_controller(sub_run, sub_out_dir, vmm_daq_client):
     daq_controller = DAQController(subrun=sub_run, out_dir=sub_out_dir, vmm_daq_client=vmm_daq_client)
 
@@ -247,5 +273,51 @@ def run_daq_controller(sub_run, sub_out_dir, vmm_daq_client):
         daq_success = daq_controller.run()
 
 
+def dream_bridge_stop():
+    """Combined-run teardown: stop the paired Dream run and clear the
+    combined-run state, however this run ended (natural end, Stop Run, error).
+    Best-effort — failures are printed loudly but never block teardown."""
+    import json
+    import urllib.request
+    base = os.path.dirname(os.path.abspath(__file__))
+    state_path = os.path.join(base, 'config', 'dream_bridge_state.json')
+    try:
+        with open(state_path) as f:
+            state = json.load(f)
+    except Exception:
+        return
+    if not state.get('combined'):
+        return
+    try:
+        with open(os.path.join(base, 'config', 'dream_bridge.json')) as f:
+            cfg = json.load(f)
+        url = cfg['dream_flask_url'].rstrip('/') + '/vmm_trigger/stop'
+        payload = json.dumps({'token': cfg.get('token', ''),
+                              'run_name': state.get('run_name', '')}).encode()
+        for attempt in range(1, 4):
+            try:
+                req = urllib.request.Request(
+                    url, data=payload, headers={'Content-Type': 'application/json'})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    print(f'[dream] Paired Dream run stop: {r.read().decode()[:200]}')
+                    break
+            except Exception as e:
+                print(f'[dream] Stop attempt {attempt}/3 failed: {e}')
+                sleep(3)
+        else:
+            print('[dream] WARNING: could not stop the paired Dream run — '
+                  'STOP IT FROM THE DREAM GUI!')
+    except Exception as e:
+        print(f'[dream] Teardown error (non-fatal): {e}')
+    finally:
+        try:
+            os.remove(state_path)
+        except FileNotFoundError:
+            pass
+
+
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    finally:
+        dream_bridge_stop()

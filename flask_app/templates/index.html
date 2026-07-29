@@ -27,12 +27,19 @@
 
           <div class="btn-group-block">
             <span class="group-label">Run</span>
-            <div class="d-flex flex-wrap gap-2">
+            <div class="d-flex flex-wrap gap-2 align-items-center">
               <button id="run-toggle" class="btn btn-success">Start Run</button>
+              <!-- Combined run: fire the paired Dream run on banco with the
+                   same run name + our HV schedule (config/dream_bridge.json;
+                   hidden when the bridge is not configured). -->
+              <label id="dream-toggle-wrap" class="form-check-label d-none align-items-center gap-1 small">
+                <input type="checkbox" id="dream-toggle" class="form-check-input mt-0"> + Dream
+              </label>
               <button id="stop-sub-run" class="btn btn-warning">Stop Sub-Run</button>
               <button id="pause-toggle" class="btn btn-outline-warning">Pause After Subrun</button>
               <button id="restart-all" class="btn btn-outline-danger">Restart All</button>
               <button id="git-reset" class="btn btn-secondary">Git Reset</button>
+              <span id="dream-chip" class="text-muted small font-monospace"></span>
             </div>
           </div>
 
@@ -55,7 +62,24 @@
               <button id="power-off" class="btn btn-outline-danger btn-sm">Power Off</button>
               <span id="power-status" class="text-muted small font-monospace"></span>
             </div>
-            <pre id="power-output" class="text-muted small font-monospace mt-1 mb-0 d-none"
+            <!-- Parsed TDK readings (manual or auto measure); raw command
+                 output is shown only when an action FAILS. -->
+            <div id="power-readings" class="small font-monospace mt-1"></div>
+            <pre id="power-output" class="text-danger small font-monospace mt-1 mb-0 d-none"
+                 style="white-space:pre-wrap; max-height:7em; overflow-y:auto;"></pre>
+          </div>
+
+          <!-- VMM chip configuration: base yaml + a config_ext exception file,
+               applied via the p2basket utility (config/chip_config.json,
+               gitignored); hidden when that config is absent on this machine. -->
+          <div class="btn-group-block d-none" id="chipcfg-block">
+            <span class="group-label">VMM Chip Config</span>
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <select id="chipcfg-select" class="form-select form-select-sm w-auto"></select>
+              <button id="chipcfg-apply" class="btn btn-outline-warning btn-sm">Configure chip</button>
+              <span id="chipcfg-status" class="text-muted small font-monospace"></span>
+            </div>
+            <pre id="chipcfg-output" class="text-muted small font-monospace mt-1 mb-0 d-none"
                  style="white-space:pre-wrap; max-height:7em; overflow-y:auto;"></pre>
           </div>
         </div>
@@ -199,7 +223,7 @@
   <div class="panel mt-3">
     <div class="panel-header">
       <span class="panel-title">LV Monitor</span>
-      <span class="panel-header-note">TTi PSU voltage and current readings from LV control (same subrun as HV)</span>
+      <span class="panel-header-note">TDK-Lambda supplies (measure history) + TTi PSU readings when present (same subrun as HV)</span>
     </div>
     <div class="panel-body">
       <div class="row g-3">
@@ -750,28 +774,58 @@ async function updateHVPlots() {
     }
 }
 
-// --- LV Plots (near-copy of the HV pair; same run/subrun selector) ---
+// --- LV Plots: TDK-Lambda measure history (always, when available) plus the
+// --- TTi PSU per-subrun traces when that CSV exists (near-copy of HV pair) ---
+const TDK_SUPPLY_COLOR = { "ALINX 12V": "#2fbf71", "Hybrids 3.3V": "#e4574c",
+                           "Hybrids 2.2V": "#9b6ef3" };
 async function updateLVPlots() {
     try {
         const run = document.getElementById("run-select").value;
         const subrun = document.getElementById("hv-subrun-select").value;
-        const res = await fetch(`/lv_data?run=${encodeURIComponent(run)}&subrun=${encodeURIComponent(subrun)}`);
-        const data = await res.json();
-        if (!data || Object.keys(data).length === 0 || !data.success) return;
+        const voltageTraces = [], currentTraces = [];
 
-        const time = data.time;
-        // One hue per PSU unit; channel = shade (ch1 darkest .. ch3 lightest).
-        const LV_UNIT_COLOR = { tti1: "#3987e5", tti2: "#c98500" };
-        function lvTraceColor(name) {
-            const m = name.match(/^(\w+?)_ch(\d)$/);
-            const base = LV_UNIT_COLOR[m ? m[1] : ""] || "#8b96a5";
-            const ch = m ? parseInt(m[2]) : 1;
-            return _hvLighten(base, (ch - 1) * 0.28);
-        }
-        const mkTraces = obj => Object.entries(obj).map(([key, values]) => ({
-            x: time, y: values, mode: 'lines', name: key,
-            line: { color: lvTraceColor(key), width: 2 }
-        }));
+        // TTi PSU traces from the selected subrun's lv_monitor.csv (absent at
+        // sites without TTi units — the TDK curves below still plot).
+        try {
+            const res = await fetch(`/lv_data?run=${encodeURIComponent(run)}&subrun=${encodeURIComponent(subrun)}`);
+            const data = await res.json();
+            if (data && data.success) {
+                const time = data.time;
+                // One hue per PSU unit; channel = shade (ch1 darkest .. ch3 lightest).
+                const LV_UNIT_COLOR = { tti1: "#3987e5", tti2: "#c98500" };
+                function lvTraceColor(name) {
+                    const m = name.match(/^(\w+?)_ch(\d)$/);
+                    const base = LV_UNIT_COLOR[m ? m[1] : ""] || "#8b96a5";
+                    const ch = m ? parseInt(m[2]) : 1;
+                    return _hvLighten(base, (ch - 1) * 0.28);
+                }
+                const mkTraces = obj => Object.entries(obj).map(([key, values]) => ({
+                    x: time, y: values, mode: 'lines', name: key,
+                    line: { color: lvTraceColor(key), width: 2 }
+                }));
+                voltageTraces.push(...mkTraces(data.voltage));
+                currentTraces.push(...mkTraces(data.current));
+            }
+        } catch (e) { /* no TTi data — fine */ }
+
+        // TDK-Lambda supply curves from the measure history (manual + auto).
+        try {
+            const hres = await fetch("/power/lv_history");
+            const h = await hres.json();
+            if (h && h.success) {
+                let idx = 0;
+                for (const [name, ser] of Object.entries(h.supplies)) {
+                    const color = TDK_SUPPLY_COLOR[name] ||
+                        ["#2fbf71", "#e4574c", "#9b6ef3", "#c98500"][idx++ % 4];
+                    voltageTraces.push({ x: ser.time, y: ser.v, mode: 'lines',
+                        name: name, line: { color: color, width: 2 } });
+                    currentTraces.push({ x: ser.time, y: ser.i, mode: 'lines',
+                        name: name, line: { color: color, width: 2, dash: 'dot' } });
+                }
+            }
+        } catch (e) { /* no TDK history yet — fine */ }
+
+        if (!voltageTraces.length && !currentTraces.length) return;
 
         const uirev = `${run}/${subrun}`;
         const axisStyle = { gridcolor: '#242e39', zerolinecolor: '#38434f', linecolor: '#38434f' };
@@ -788,12 +842,12 @@ async function updateLVPlots() {
         };
         const plotConfig = { responsive: true, displaylogo: false };
 
-        Plotly.react('lv-voltage-plot', mkTraces(data.voltage), {
+        Plotly.react('lv-voltage-plot', voltageTraces, {
             ...commonLayout,
             xaxis: { ...axisStyle },
             yaxis: { title: { text: 'LV Voltage (V)', font: yTitleFont }, ...axisStyle }
         }, plotConfig);
-        Plotly.react('lv-current-plot', mkTraces(data.current), {
+        Plotly.react('lv-current-plot', currentTraces, {
             ...commonLayout,
             xaxis: { ...axisStyle },
             yaxis: { title: { text: 'LV Current (A)', font: yTitleFont }, ...axisStyle }
@@ -919,16 +973,22 @@ async function startRun() {
   const runName = configData.run_name;
 
   // ----- STEP 3: Ask user for confirmation -----
+  const withDream = document.getElementById("dream-toggle").checked;
   const confirmMsg =
     `Start run?\n\n` +
     `Run name: ${runName}\n` +
+    (withDream ? `COMBINED with a paired Dream run on banco (same name).\n` : ``) +
     `Are you sure you want to continue?`;
 
   const confirmRun = confirm(confirmMsg);
   if (!confirmRun) return;
 
   // ----- STEP 4: Start the run -----
-  const res = await fetch("/run_config_py", { method: "POST" });
+  const res = await fetch("/run_config_py", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dream: withDream }),
+  });
   const data = await res.json();
 
   // ----- STEP 5: Popup status -----
@@ -1469,12 +1529,24 @@ async function updatePowerStatus() {
         if (s.running) {
             st.textContent = `running: ${s.running}…`;
         } else if (s.last) {
-            st.textContent = `${s.last.action} ${s.last.rc === 0 ? "ok" : "FAILED"} @ ${s.last.ts}`;
+            // On/Off/Measure give a clean ok/FAILED signal; the raw command
+            // output is only surfaced when something went wrong.
+            st.textContent = `${s.last.action} ${s.last.rc === 0 ? "ok ✓" : "FAILED ✗"} @ ${s.last.ts}`;
             st.classList.toggle("text-danger", s.last.rc !== 0);
+            st.classList.toggle("text-success", s.last.rc === 0);
             out.textContent = s.last.output;
-            out.classList.toggle("d-none", !s.last.output);
+            out.classList.toggle("d-none", s.last.rc === 0 || !s.last.output);
         } else {
             st.textContent = "";
+        }
+        // Parsed supply readings (from the last manual or auto measure).
+        const rd = document.getElementById("power-readings");
+        if (s.readings) {
+            rd.textContent = s.readings.rows
+                .map(r => `${r.name}: ${r.v.toFixed(3)} V · ${r.i.toFixed(3)} A`)
+                .join("   |   ") + `   @ ${s.readings.ts}`;
+        } else {
+            rd.textContent = "";
         }
     } catch (e) { /* server briefly away; next poll recovers */ }
 }
@@ -1495,6 +1567,102 @@ async function updatePowerStatus() {
 
 updatePowerStatus();
 setInterval(updatePowerStatus, 3000);
+
+// ---------------------------------------------------------------------------
+// VMM chip config (base yaml + config_ext exception file; /chip_config/*)
+// ---------------------------------------------------------------------------
+
+let chipcfgFilesKey = "";  // rebuild the <select> only when the file list changes
+
+async function updateChipcfgStatus() {
+    try {
+        const s = await (await fetch("/chip_config/status")).json();
+        const block = document.getElementById("chipcfg-block");
+        if (!s.configured) { block.classList.add("d-none"); return; }
+        block.classList.remove("d-none");
+        const sel = document.getElementById("chipcfg-select");
+        const key = JSON.stringify(s.files);
+        if (key !== chipcfgFilesKey) {
+            chipcfgFilesKey = key;
+            sel.innerHTML = "";
+            for (const f of s.files) {
+                const o = document.createElement("option");
+                o.value = f;
+                o.textContent = f;
+                sel.appendChild(o);
+            }
+        }
+        if (s.selected && sel.value !== s.selected && document.activeElement !== sel)
+            sel.value = s.selected;
+        const btn = document.getElementById("chipcfg-apply");
+        btn.disabled = s.running || s.capture_active;
+        btn.textContent = s.running ? "Configuring…" : "Configure chip";
+        const st = document.getElementById("chipcfg-status");
+        const out = document.getElementById("chipcfg-output");
+        if (s.capture_active) {
+            st.textContent = "capture running — configure blocked";
+            st.classList.remove("text-danger");
+        } else if (s.last) {
+            st.textContent = `${s.last.file} ${s.last.rc === 0 ? "ok" : "FAILED"} @ ${s.last.ts}`;
+            st.classList.toggle("text-danger", s.last.rc !== 0);
+            out.textContent = s.last.output;
+            out.classList.toggle("d-none", !s.last.output);
+        } else {
+            st.textContent = "";
+        }
+    } catch (e) { /* server briefly away; next poll recovers */ }
+}
+
+document.getElementById("chipcfg-select").addEventListener("change", async (ev) => {
+    const res = await fetch("/chip_config/select", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({file: ev.target.value}),
+    });
+    const d = await res.json();
+    if (!d.success) showPopup(d.message, "#dc3545");
+    updateChipcfgStatus();
+});
+
+document.getElementById("chipcfg-apply").addEventListener("click", async () => {
+    const sel = document.getElementById("chipcfg-select");
+    if (!confirm(`Configure the VMM chips now?\nBase yaml + ${sel.value}\nNever during a run.`)) return;
+    const res = await fetch("/chip_config/apply", {method: "POST"});
+    const d = await res.json();
+    showPopup(d.message, d.success ? "#17a2b8" : "#dc3545");
+    updateChipcfgStatus();
+});
+
+updateChipcfgStatus();
+setInterval(updateChipcfgStatus, 3000);
+
+// ---------------------------------------------------------------------------
+// Dream bridge: "+ Dream" toggle visibility + live chip (/dream/status)
+// ---------------------------------------------------------------------------
+
+async function updateDreamStatus() {
+    try {
+        const s = await (await fetch("/dream/status")).json();
+        const wrap = document.getElementById("dream-toggle-wrap");
+        const chip = document.getElementById("dream-chip");
+        if (!s.configured) { wrap.classList.add("d-none"); chip.textContent = ""; return; }
+        wrap.classList.remove("d-none");
+        wrap.classList.add("d-flex");
+        if (s.combined && s.combined.combined) {
+            chip.textContent = `⛓ combined run active: ${s.combined.run_name}`;
+            chip.classList.remove("text-danger");
+        } else if (s.reachable) {
+            chip.textContent = `Dream: ${s.dream_run || "idle"}`;
+            chip.classList.remove("text-danger");
+        } else {
+            chip.textContent = "Dream: unreachable";
+            chip.classList.add("text-danger");
+        }
+    } catch (e) { /* server briefly away; next poll recovers */ }
+}
+
+updateDreamStatus();
+setInterval(updateDreamStatus, 5000);
 
 // ---------------------------------------------------------------------------
 // Monitor panel

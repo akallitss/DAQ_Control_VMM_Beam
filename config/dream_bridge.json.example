@@ -1,0 +1,11 @@
+{
+  "_comment": "Combined VMM+Dream runs — copy to config/dream_bridge.json (gitignored) and adjust. dream_flask_url = Dream's Flask on banco. token must match the Dream-side trigger route (see docs/dream_side/). hv_gate.channel_labels maps VMM HV channels 'slot:ch' to the Dream /hv_data trace labels for the SAME physical channels (set when the P2 basket entry is added to Dream's HV config). The shim gates each subrun's start on Dream's readback being within tolerance_v of that subrun's targets.",
+  "dream_flask_url": "http://128.141.21.144:5001",
+  "token": "CHANGE-ME-shared-secret",
+  "hv_gate": {
+    "channel_labels": {"1:0": "B_Mesh", "1:1": "B_Drift"},
+    "tolerance_v": 3.0,
+    "poll_s": 5,
+    "timeout_s": 900
+  }
+}

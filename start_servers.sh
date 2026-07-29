@@ -10,7 +10,16 @@ PY="$BASE_DIR/.venv/bin/python"
 # Start sessions. 3rd arg = tmux scrollback cap in LINES (memory-saving).
 # hv_control / lv_control are very chatty (monitor rows every couple of
 # seconds), so keep them short. The others keep a longer buffer for debugging.
-bash_scripts/start_tmux.sh vmm_hv_control "$PY $BASE_DIR/hv_control.py" 500
+# HV server: at 'sps' the CAEN crate hangs off banco's private LAN and the
+# Dream DAQ owns ALL HV — run the remote-HV shim (per-subrun scan gate against
+# Dream's readback) instead of the CAEN-driving hv_control.
+SITE="$(cat "$BASE_DIR/config/site.txt" 2>/dev/null || echo local)"
+if [ "$SITE" = "sps" ]; then
+  HV_SERVER="$BASE_DIR/hv_dream_shim.py"
+else
+  HV_SERVER="$BASE_DIR/hv_control.py"
+fi
+bash_scripts/start_tmux.sh vmm_hv_control "$PY $HV_SERVER" 500
 bash_scripts/start_tmux.sh vmm_lv_control "$PY $BASE_DIR/lv_control.py" 500
 bash_scripts/start_tmux.sh vmm_daq "$PY $BASE_DIR/vmm_daq_control.py" 20000
 bash_scripts/start_tmux.sh vmm_daq_control "echo 'Daq control session started'" 20000

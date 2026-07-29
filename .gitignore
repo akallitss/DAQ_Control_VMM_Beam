@@ -237,3 +237,9 @@ config/site.txt
 
 # Offline pip wheel cache (shipped to machines without PyPI access)
 .wheels/
+config/chip_config.json
+config/chip_config_state.json
+config/dream_bridge.json
+config/dream_bridge_state.json
+logs/tdk_lv_history.csv
+logs/daq_events.log

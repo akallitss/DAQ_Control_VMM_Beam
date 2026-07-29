@@ -71,6 +71,87 @@ monitor = DaqMonitor(MONITOR_CONFIG_PATH)
 from power_control import PowerControl
 power = PowerControl(f"{BASE_DIR}/config/power_config.json")
 
+# VMM chip configuration (base yaml + config_ext exception file, applied by the
+# TestBenchCosmics p2basket utility as a subprocess). Selected file persists in
+# chip_config_state.json — daq_control.py copies it into each run directory.
+from chip_config import ChipConfig
+chip = ChipConfig(f"{BASE_DIR}/config/chip_config.json",
+                  f"{BASE_DIR}/config/chip_config_state.json")
+
+# ---------------------------------------------------------------------------
+# Combined VMM + Dream runs — trigger/status bridge to the Dream DAQ on banco.
+# Wiring in gitignored config/dream_bridge.json (see .example). The state file
+# written at combined start is read by hv_dream_shim.py (per-subrun HV gate)
+# and cleared by daq_control's teardown, which also stops the paired Dream run.
+# ---------------------------------------------------------------------------
+import urllib.request as _urlreq
+
+DREAM_BRIDGE_CONFIG = f"{BASE_DIR}/config/dream_bridge.json"
+DREAM_BRIDGE_STATE = f"{BASE_DIR}/config/dream_bridge_state.json"
+
+
+def _dream_cfg():
+    try:
+        with open(DREAM_BRIDGE_CONFIG) as f:
+            cfg = json.load(f)
+        return cfg if cfg.get("dream_flask_url") else None
+    except Exception:
+        return None
+
+
+def _dream_request(path, payload=None, timeout=10):
+    cfg = _dream_cfg()
+    if not cfg:
+        raise RuntimeError("dream_bridge not configured")
+    url = cfg["dream_flask_url"].rstrip("/") + path
+    if payload is None:
+        req = _urlreq.Request(url)
+    else:
+        req = _urlreq.Request(url, data=json.dumps(payload).encode(),
+                              headers={"Content-Type": "application/json"})
+    with _urlreq.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode())
+
+
+def _dream_trigger_start(run_name, run_cfg):
+    """Fire the paired Dream run. (ok, message); on ok the combined-run state
+    file is written so the HV shim starts gating on Dream's readback."""
+    cfg = _dream_cfg()
+    if not cfg:
+        return False, "config/dream_bridge.json missing or incomplete"
+    payload = {"token": cfg.get("token", ""), "run_name": run_name,
+               "sub_runs": run_cfg.get("sub_runs", []), "source": "vmm_daq"}
+    try:
+        resp = _dream_request("/vmm_trigger/start", payload, timeout=20)
+    except Exception as e:
+        return False, str(e)
+    if not resp.get("success"):
+        return False, resp.get("message", "Dream refused the run")
+    state = {"combined": True, "run_name": run_name,
+             "dream_run_param": resp.get("run_param", run_name),
+             "started": datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    with open(DREAM_BRIDGE_STATE, "w") as f:
+        json.dump(state, f, indent=2)
+    return True, resp.get("message", "Dream run started")
+
+
+def _dream_trigger_stop(run_name):
+    """Best-effort stop of the paired Dream run + state cleanup (used when the
+    local start fails after Dream already started)."""
+    cfg = _dream_cfg()
+    try:
+        _dream_request("/vmm_trigger/stop",
+                       {"token": (cfg or {}).get("token", ""),
+                        "run_name": run_name}, timeout=10)
+    except Exception:
+        pass
+    try:
+        os.remove(DREAM_BRIDGE_STATE)
+    except FileNotFoundError:
+        pass
+
+
+
 # Runtime dirs that are gitignored — a fresh clone doesn't have them, and
 # index() lists CONFIG_RUN_DIR, so create them up front instead of 500ing.
 os.makedirs(CONFIG_RUN_DIR, exist_ok=True)
@@ -365,11 +446,33 @@ def update_run_config_py():
 @app.route("/run_config_py", methods=['POST'])
 def run_config_py():
     try:
+        data = request.get_json(silent=True) or {}
+        with_dream = bool(data.get("dream"))
+
         subprocess.Popen([sys.executable, f"{BASE_DIR}/run_config_beam.py"])
         time.sleep(1)
         config_path = os.path.join(CONFIG_RUN_DIR, 'run_config_beam.json')
         if not os.path.exists(config_path):
             return jsonify({"message": f"Config not found: {config_path}"}), 404
+
+        # Load config json to get run name (+ sub_runs for the Dream trigger)
+        try:
+            with open(config_path) as f:
+                cfg = json.load(f)
+            run_name = cfg.get("run_name", "Unknown")
+        except Exception as e:
+            cfg, run_name = {}, "Error loading run name"
+
+        # Combined run: fire the paired Dream run FIRST — if Dream refuses or
+        # is unreachable, abort loudly and start nothing (running VMM alone is
+        # done explicitly by unchecking the toggle, never silently).
+        if with_dream:
+            ok, msg = _dream_trigger_start(run_name, cfg)
+            if not ok:
+                return jsonify({"success": False,
+                                "message": f"Dream trigger failed — nothing started: {msg}"}), 502
+            log_event('DREAM_TRIGGER', 'flask_button', run=run_name,
+                      remote_addr=request.remote_addr)
 
         script_path = f"{BASH_DIR}/start_run.sh"
         result = subprocess.run(
@@ -378,18 +481,14 @@ def run_config_py():
             text=True
         )
 
-        # Load config path json to get run name
-        try:
-            with open(config_path) as f:
-                cfg = json.load(f)
-            run_name = cfg.get("run_name", "Unknown")
-        except Exception as e:
-            run_name = "Error loading run name"
-
         if result.returncode == 0:
             _save_current_run(run_name)  # seed Current run immediately
-            return jsonify({"success": True, "message": f"Run started with loaded run_config_beam.py", "run_name": run_name})
+            msg = "Run started with loaded run_config_beam.py" + \
+                  (" — combined with Dream" if with_dream else "")
+            return jsonify({"success": True, "message": msg, "run_name": run_name})
         else:
+            if with_dream:
+                _dream_trigger_stop(run_name)  # no orphaned Dream run
             return jsonify({"message": f"Error: {result.stderr}"}), 500
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
@@ -877,6 +976,66 @@ def power_run():
     ok, msg = power.start(action)
     if ok and action != "measure":
         log_event(f'POWER_{str(action).upper()}', 'flask_button',
+                  remote_addr=request.remote_addr)
+    return jsonify({"success": ok, "message": msg}), (200 if ok else 409)
+
+
+@app.route("/power/lv_history")
+def power_lv_history():
+    """TDK-Lambda measure history for the LV Monitor plots: per-supply time
+    series from logs/tdk_lv_history.csv (manual + auto measures)."""
+    try:
+        df = pd.read_csv(f"{LOG_DIR}/tdk_lv_history.csv")
+    except Exception:
+        return jsonify({"success": False})
+    supplies = {}
+    for name, g in df.groupby("name"):
+        g = g.tail(HV_TAIL)
+        supplies[str(name)] = {"time": g["timestamp"].astype(str).tolist(),
+                               "v": g["volt_v"].tolist(),
+                               "i": g["curr_a"].tolist()}
+    return jsonify({"success": True, "supplies": supplies})
+
+
+@app.route("/dream/status")
+def dream_status():
+    """For the GUI chip: bridge configured? Dream reachable? its current run?
+    plus the local combined-run state if one is active."""
+    cfg = _dream_cfg()
+    out = {"configured": bool(cfg), "reachable": False, "dream_run": None}
+    try:
+        with open(DREAM_BRIDGE_STATE) as f:
+            out["combined"] = json.load(f)
+    except Exception:
+        out["combined"] = None
+    if cfg:
+        try:
+            r = _dream_request("/get_current_run", timeout=4)
+            out["reachable"] = True
+            out["dream_run"] = r.get("run_name")
+        except Exception as e:
+            out["error"] = str(e)
+    return jsonify(out)
+
+
+@app.route("/chip_config/status")
+def chip_config_status():
+    return jsonify(chip.status())
+
+
+@app.route("/chip_config/select", methods=["POST"])
+def chip_config_select():
+    data = request.get_json(silent=True) or {}
+    ok, msg = chip.select(data.get("file", ""))
+    return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
+
+
+@app.route("/chip_config/apply", methods=["POST"])
+def chip_config_apply():
+    """Configure the VMM chips: base yaml + the selected config_ext file."""
+    ok, msg = chip.apply()
+    if ok:
+        log_event('CHIP_CONFIG', 'flask_button', file=chip.selected() or '?',
                   remote_addr=request.remote_addr)
     return jsonify({"success": ok, "message": msg}), (200 if ok else 409)
 
