@@ -818,15 +818,10 @@ function updateStatus() {
                   </div>`;
             });
 
-            // "Hits this run" is folded into the vmm_daq card by /status, so it
-            // refreshes in lockstep with that card (1s) rather than a separate
-            // timer. While a run is ACTIVE the live counter below owns the tile
-            // (raw pcapng estimate beats the QA-lagged analyzed number there).
-            const dd = data.find(s => s.name === "vmm_daq");
-            if (dd && dd.run_events != null && !window._liveHitsActive) {
-                document.getElementById("events-display").textContent =
-                    Number(dd.run_events).toLocaleString();
-            }
+            // "Hits this run" is owned entirely by the live pcapng counter
+            // (updateLiveHits) — the QA-analyzed count lags a rotation + QA
+            // pass and undercounts until the decode is fixed, so it is not
+            // shown on the tile (still available via /get_run_events).
 
             updateWatcherToggles(data);
             updateRunToggle(data);
@@ -1899,30 +1894,22 @@ async function updateChipcfgStatus() {
 }
 
 // ---------------------------------------------------------------------------
-// Live hits: during an active run the Overview tile shows the raw-pcapng
-// estimate (/live_hits, incremental scan) instead of the QA-lagged analyzed
-// count; it flips back to the analyzed number once the run ends.
+// Live hits: the Overview tile always shows the raw-pcapng count of the
+// current run (/live_hits, incremental scan) — live while capturing, final
+// totals after. The QA-analyzed number is deliberately not shown.
 // ---------------------------------------------------------------------------
 async function updateLiveHits() {
     try {
-        const runActive =
-            document.getElementById("run-toggle").textContent.trim() === "Stop Run";
-        const label = document.getElementById("events-label");
-        if (!runActive) {
-            window._liveHitsActive = false;
-            label.textContent = "Hits this run (analyzed)";
-            return;
-        }
         const d = await (await fetch("/live_hits")).json();
         if (d && d.success) {
-            window._liveHitsActive = true;
-            label.textContent =
-                `Hits this run (live est., ${(d.bytes / 1048576).toFixed(1)} MB)`;
+            document.getElementById("events-label").textContent =
+                `Hits this run (live, ${(d.bytes / 1048576).toFixed(1)} MB)`;
             document.getElementById("events-display").textContent =
                 Number(d.hits_est).toLocaleString();
         }
     } catch (e) { /* next poll recovers */ }
 }
+updateLiveHits();
 setInterval(updateLiveHits, 2000);
 
 document.getElementById("warm-reset").addEventListener("click", async () => {
