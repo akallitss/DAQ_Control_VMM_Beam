@@ -97,7 +97,8 @@ SITES = {
             # Data NIC: the CERN base yaml points the FEC (192.168.0.12) at
             # DAQ PC 192.168.0.14 = the USB adapter enx00249b8724a0 — NOT
             # enp4s0f1 (that carries the old Saclay bench addressing).
-            {'name': 'alinx', 'iface': 'enx00249b8724a0', 'slow_control': 'p2basket',
+            # {'name': 'alinx', 'iface': 'enx00249b8724a0', 'slow_control': 'p2basket',
+            {'name': 'alinx', 'iface': 'enp4s0f1', 'slow_control': 'p2basket',
              # CERN deploy, per TestBenchCERN/README: acquisition is armed with
              # bare `p2basket-sc --acq-on/--acq-off` (no config file), run from
              # the TestBenchCERN directory. alinx-sc only exists in the old
