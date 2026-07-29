@@ -51,6 +51,7 @@ CONFIG = {
     'poll_interval':   10,  # seconds between scans
     'stale_run_days':   1,  # runs with no new capture files for this many days are skipped
     'memory_kill_pct': 80,  # kill the QA process if system RAM usage exceeds this % (retried next poll)
+    'max_attempts':     3,  # give up on a file after this many failed/killed QA attempts (qa_reset to retry)
 
     # CPU throttling — keep QA from starving the DAQ.
     'cpu_nice':         19,          # nice level (also ionice idle class); null = no niceing

@@ -42,6 +42,10 @@ Config keys (see qa_config.py to generate the JSON):
                           The QA is always launched; memory is monitored during the run and
                           the process is terminated if the system crosses the threshold.
                           A killed file is NOT marked done and will be retried next poll.
+  max_attempts        : give up on a capture file after this many failed QA attempts
+                          (non-zero exit or memory kill); the file is then skipped until
+                          a qa_reset clears its run (default: 3). Protects against a bad
+                          file being relaunched on every poll forever.
   cpu_nice            : nice level for the QA subprocess (default: 19, lowest priority).
                           Also runs the process at ionice idle class so DAQ I/O wins.
                           null disables both niceing and ionice.
@@ -113,6 +117,7 @@ def run_watcher(config: dict, reset_signal_path: Path = None):
     poll_interval   = config.get('poll_interval',   10)
     stale_run_days  = config.get('stale_run_days',    4)
     memory_kill_pct = config.get('memory_kill_pct',  80)
+    max_attempts    = config.get('max_attempts',      3)
     cpu_nice        = config.get('cpu_nice',         19)
     cpu_affinity    = config.get('cpu_affinity')  # list[int] or None
     qa_threads      = config.get('qa_threads')    # int or None
@@ -135,6 +140,7 @@ def run_watcher(config: dict, reset_signal_path: Path = None):
         print(f"[qa_watcher] exclude_runs    : {sorted(exclude_runs)}")
     print(f"[qa_watcher] poll            : {poll_interval}s  stale_after={stale_run_days}d")
     print(f"[qa_watcher] memory_kill_pct : {memory_kill_pct}%")
+    print(f"[qa_watcher] max_attempts    : {max_attempts}")
     print(f"[qa_watcher] cpu_nice        : {cpu_nice}")
     print(f"[qa_watcher] cpu_affinity    : {cpu_affinity if cpu_affinity else 'all cores'}")
     print(f"[qa_watcher] qa_threads      : {qa_threads if qa_threads else 'unlimited'}")
@@ -155,8 +161,10 @@ def run_watcher(config: dict, reset_signal_path: Path = None):
             sys.stdout.flush()
             idle_line = False
 
-    # (run_name, subrun_name) -> set of processed pcapng basenames (persisted)
-    done_files: dict = _load_state(state_path)
+    # (run_name, subrun_name) -> set of processed pcapng basenames, and
+    # (run_name, subrun_name) -> {pcapng basename: failed attempt count}
+    # (both persisted in qa_state.json)
+    done_files, fail_counts = _load_state(state_path)
     # pcap path -> size at last poll; a file must hold its size for one full
     # poll on top of the finalize conditions before QA is launched.
     last_sizes: dict = {}
@@ -169,15 +177,18 @@ def run_watcher(config: dict, reset_signal_path: Path = None):
             if reset is not False:
                 if reset is None:
                     done_files.clear()
+                    fail_counts.clear()
                     checked_stale_runs.clear()
-                    _save_state(state_path, done_files)
+                    _save_state(state_path, done_files, fail_counts)
                     _end_idle()
                     print("[qa_watcher] Reset: all runs will be reprocessed")
                 else:
                     for key in list(done_files):
                         if key[0] in reset: del done_files[key]
+                    for key in list(fail_counts):
+                        if key[0] in reset: del fail_counts[key]
                     checked_stale_runs -= reset
-                    _save_state(state_path, done_files)
+                    _save_state(state_path, done_files, fail_counts)
                     _end_idle()
                     print(f"[qa_watcher] Reset: {sorted(reset)} will be reprocessed")
 
@@ -210,10 +221,13 @@ def run_watcher(config: dict, reset_signal_path: Path = None):
 
                     key = (run_dir.name, subrun_dir.name)
                     done = done_files.setdefault(key, set())
+                    fails = fail_counts.setdefault(key, {})
 
                     for pcap in _finalized_pcapngs(raw_dir, capture_duration_s, last_sizes):
                         if pcap.name in done:
                             continue
+                        if fails.get(pcap.name, 0) >= max_attempts:
+                            continue  # gave up on this file (see QA_GIVEUP); qa_reset clears it
                         _end_idle()
                         mem_pct, free_mb = _mem_usage_pct()
                         size_mb = pcap.stat().st_size / 1024 ** 2
@@ -231,9 +245,20 @@ def run_watcher(config: dict, reset_signal_path: Path = None):
                             qa_threads=qa_threads)
                         if completed_ok:
                             done.add(pcap.name)
-                            _save_state(state_path, done_files)
+                            fails.pop(pcap.name, None)
+                            _save_state(state_path, done_files, fail_counts)
                             _log('QA_DONE', run=run_dir.name, subrun=subrun_dir.name,
                                  file=pcap.name)
+                        else:
+                            n = fails.get(pcap.name, 0) + 1
+                            fails[pcap.name] = n
+                            _save_state(state_path, done_files, fail_counts)
+                            if n >= max_attempts:
+                                print(f"[qa_watcher] Giving up on {run_dir.name}/"
+                                      f"{subrun_dir.name}/{pcap.name} after {n} failed"
+                                      f" attempts (qa_reset to retry)")
+                                _log('QA_GIVEUP', run=run_dir.name, subrun=subrun_dir.name,
+                                     file=pcap.name, attempts=n)
                         found_new = True
 
                 if is_stale:
@@ -316,23 +341,38 @@ def _finalized_pcapngs(raw_dir: Path, capture_duration_s: float,
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _load_state(state_path: Path) -> dict:
+def _load_state(state_path: Path) -> tuple:
+    """Return (done_files, fail_counts). Accepts the legacy format where each
+    run/subrun maps to a plain list of done basenames (no failure counts)."""
     if state_path is None or not state_path.exists():
-        return {}
+        return {}, {}
     try:
         with open(state_path) as f:
             raw = json.load(f)
-        return {tuple(k.split('/', 1)): set(v) for k, v in raw.items()}
+        done, fails = {}, {}
+        for k, v in raw.items():
+            key = tuple(k.split('/', 1))
+            if isinstance(v, list):  # legacy format
+                done[key] = set(v)
+            else:
+                done[key] = set(v.get('done', []))
+                fails[key] = {n: int(c) for n, c in v.get('failed', {}).items()}
+        return done, fails
     except Exception as e:
         print(f"[qa_watcher] Could not load state from {state_path}: {e}")
-        return {}
+        return {}, {}
 
 
-def _save_state(state_path: Path, done_files: dict):
+def _save_state(state_path: Path, done_files: dict, fail_counts: dict):
     if state_path is None:
         return
     try:
-        raw = {f"{k[0]}/{k[1]}": sorted(v) for k, v in done_files.items()}
+        raw = {}
+        for key in set(done_files) | set(fail_counts):
+            raw[f"{key[0]}/{key[1]}"] = {
+                'done':   sorted(done_files.get(key, ())),
+                'failed': fail_counts.get(key) or {},
+            }
         with open(state_path, 'w') as f:
             json.dump(raw, f, indent=2)
     except Exception as e:
