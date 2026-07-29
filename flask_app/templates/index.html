@@ -21,6 +21,10 @@
               <div class="stat-label">Hits this run (analyzed)</div>
               <div class="stat-value" id="events-display">0</div>
             </div>
+            <div class="stat">
+              <div class="stat-label">Beam</div>
+              <div class="stat-value" id="run-beam" style="font-size:1.1rem;">—</div>
+            </div>
           </div>
 
           <select id="run-select" class="form-select d-none" style="width:auto;"></select>
@@ -321,11 +325,6 @@
           <span id="beam-conn" class="ms-auto panel-header-note">…</span>
         </div>
         <div class="panel-body">
-          <!-- NXCALS watcher control (own tmux session + NXCALS venv) -->
-          <div class="d-flex align-items-center gap-2 mb-3">
-            <button id="beam-watcher-toggle" class="btn btn-info btn-sm">Start Beam Watcher</button>
-            <span id="beam-watcher-msg" class="text-muted small"></span>
-          </div>
           <div class="run-stats mb-0">
             <div class="stat">
               <div class="stat-label">Beam status</div>
@@ -351,12 +350,13 @@
             </div>
           </div>
           <p class="text-muted small mb-0 mt-3">
-            <span class="font-monospace">SPS.BCTDC.51454:SFTPRO_INT</span> — protons
-            slow-extracted from the SPS towards the North Area (placeholder until the
-            assigned beam line's counters are confirmed), one point per SFTPRO cycle,
-            read from NXCALS (Timber) every 30&nbsp;s. Beam counts as OFF after
-            5&nbsp;min without a spill. Logged to
+            <span class="font-monospace" id="beam-variable">—</span> — protons
+            slow-extracted from the SPS towards the North Area, one point per
+            spill, read from NXCALS (Timber) every 30&nbsp;s. Beam counts as OFF
+            after 5&nbsp;min without a spill. Logged to
             <span class="font-monospace" id="beam-csv-path">beam_monitor logs</span>.
+            The spill's internal structure, and whether it reaches H4, are on the
+            <b>Beam2</b> tab.
           </p>
           <p class="text-muted small mb-0 mt-2">
             <span id="beam-krb"></span>
@@ -373,10 +373,219 @@
       <div class="panel h-100">
         <div class="panel-header">
           <span class="panel-title">Beam Intensity Trend</span>
-          <span class="panel-header-note">protons per spill — last 6 h from the log</span>
+          <span class="panel-header-note">protons per spill, from the log</span>
+          <select id="beam-range" class="form-select form-select-sm ms-auto" style="width:auto;">
+            <option value="6" selected>last 6 h</option>
+            <option value="24">last 24 h</option>
+            <option value="72">last 3 d</option>
+            <option value="168">last 7 d</option>
+            <option value="336">last 14 d</option>
+          </select>
         </div>
         <div class="panel-body">
           <div id="beam-plot" style="width:100%;height:380px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- =====================================================================
+     Beam2 — SPS slow-extraction spill structure + H4 line state.
+     The Beam tab reduces each spill to one number; this shows the shape of
+     the spill itself (extraction rate vs time) and whether the beam is
+     actually reaching our zone. Fed by sps_monitor/ via the same
+     lxplus -> EOS -> beam_bridge path as the Beam tab.
+     ===================================================================== -->
+<div class="tab-pane fade" id="beam2">
+  <div class="row g-3">
+    <!-- Current state -->
+    <div class="col-12 col-xl-4">
+      <div class="panel h-100">
+        <div class="panel-header">
+          <span class="panel-title">SPS Spill</span>
+          <span id="sps-conn" class="ms-auto panel-header-note">…</span>
+        </div>
+        <div class="panel-body">
+          <div class="run-stats mb-0">
+            <div class="stat">
+              <div class="stat-label">Spill status</div>
+              <div class="stat-value" id="sps-state-big" style="font-size:1.6rem;">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">H4 line</div>
+              <div class="stat-value" id="sps-h4-big" style="font-size:1.6rem;">—</div>
+            </div>
+          </div>
+          <div class="run-stats mb-0 mt-2">
+            <div class="stat">
+              <div class="stat-label">Last spill</div>
+              <div class="stat-value" id="sps-last-spill" style="font-size:1.1rem;">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Spill length</div>
+              <div class="stat-value" id="sps-spill-len" style="font-size:1.1rem;">—</div>
+            </div>
+          </div>
+          <div class="run-stats mb-0 mt-2">
+            <div class="stat">
+              <div class="stat-label">Supercycle</div>
+              <div class="stat-value" id="sps-period" style="font-size:1.1rem;">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Duty factor</div>
+              <div class="stat-value" id="sps-duty" style="font-size:1.1rem;">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Mean spill rate</div>
+              <div class="stat-value" id="sps-mean-rate" style="font-size:1.1rem;">—</div>
+            </div>
+          </div>
+          <div class="run-stats mb-0 mt-2">
+            <div class="stat">
+              <div class="stat-label">Spills / 10 min</div>
+              <div class="stat-value" id="sps-spills-10m" style="font-size:1.1rem;">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Protons / 10 min</div>
+              <div class="stat-value" id="sps-protons-10m" style="font-size:1.1rem;">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">H4 counts / 10 min</div>
+              <div class="stat-value" id="sps-h4-counts" style="font-size:1.1rem;">—</div>
+            </div>
+          </div>
+          <p class="text-muted small mb-0 mt-3">
+            SPS <b>slow extraction</b> — there is no single pulse: beam is bled out
+            of the ring over seconds. The trace is the ring intensity's negative
+            derivative from
+            <span class="font-monospace">SPS.BCTDC24.51454</span>, i.e. the
+            instantaneous extraction rate, gated to the machine's own
+            <span class="font-monospace">EXTRACTION_TIME…BEAM_OUT_TIME</span> window
+            so the end-of-cycle internal dump is not counted as delivered flux.
+            Only <span class="font-monospace" id="sps-dest">FTARGET</span> cycles
+            extract; other cycles in the supercycle are pauses.
+          </p>
+          <p class="text-muted small mb-0 mt-2">
+            <b>H4 line</b> is a separate question from the spill: the SPS can
+            extract perfectly while our line is not powered. NXCALS publishes no
+            North Area beam-stopper flag, so OPEN/CLOSED comes from the H4
+            <b>bend-magnet currents</b> (<span id="sps-h4-basis">—</span>) — the
+            zone scalers cannot serve, as they sit on a large ambient floor and
+            never reach zero. An unknown state is shown as such, never as closed.
+          </p>
+          <p class="text-muted small mb-0 mt-2">
+            Line configuration: <span class="font-monospace" id="sps-h4-config">—</span>
+            <span id="sps-h4-comment"></span>
+          </p>
+          <p class="text-muted small mb-0 mt-2">
+            Polled inside the <b>lxplus beam watcher</b> (it borrows that NXCALS
+            session — no second Spark JVM) and pulled to banco by the beam bridge,
+            so this tab is blank whenever either is stopped. Logged to
+            <span class="font-monospace" id="sps-csv-path">sps_spill CSV</span>
+            plus a 5 ms-resolution profile archive.
+          </p>
+          <p class="text-muted small mb-0 mt-2"><span id="sps-updated"></span></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- The money plot: stitched extraction rate on absolute time -->
+    <div class="col-12 col-xl-8">
+      <div class="panel h-100">
+        <div class="panel-header">
+          <span class="panel-title">Extraction Rate vs Time</span>
+          <span class="panel-header-note">pause / spill / pause — last ~5 min</span>
+        </div>
+        <div class="panel-body">
+          <div id="sps-timeline-plot" style="width:100%;height:300px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Single-cycle detail -->
+    <div class="col-12 col-xl-6">
+      <div class="panel h-100">
+        <div class="panel-header">
+          <span class="panel-title">Latest Spill — single cycle</span>
+          <span class="panel-header-note" id="sps-profile-note">ring intensity + extraction rate</span>
+        </div>
+        <div class="panel-body">
+          <div id="sps-profile-plot" style="width:100%;height:320px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Per-cycle trend -->
+    <div class="col-12 col-xl-6">
+      <div class="panel h-100">
+        <div class="panel-header">
+          <span class="panel-title">Per-cycle Trend</span>
+          <span class="panel-header-note" id="sps-trend-note">extracted intensity &amp; spill length</span>
+          <select id="sps-range" class="form-select form-select-sm ms-auto" style="width:auto;">
+            <option value="6" selected>last 6 h</option>
+            <option value="24">last 24 h</option>
+            <option value="72">last 3 d</option>
+            <option value="168">last 7 d</option>
+            <option value="336">last 14 d</option>
+          </select>
+        </div>
+        <div class="panel-body">
+          <div id="sps-trend-plot" style="width:100%;height:320px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- H4 barrier (T2 TAX) — access candidates on our own line -->
+    <div class="col-12">
+      <div class="panel h-100">
+        <div class="panel-header">
+          <span class="panel-title">H4 Barrier — T2 TAX
+            <span class="badge bg-warning text-dark ms-2">TEST</span></span>
+          <span class="ms-auto panel-header-note" id="sps-tax-note">…</span>
+        </div>
+        <div class="panel-body">
+          <div class="run-stats mb-2">
+            <div class="stat">
+              <div class="stat-label">H4 line</div>
+              <div class="stat-value" id="sps-tax-state" style="font-size:1.6rem;">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">TAX position</div>
+              <div class="stat-value" id="sps-tax-pos" style="font-size:1.1rem;">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">In this state</div>
+              <div class="stat-value" id="sps-tax-since" style="font-size:1.1rem;">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Blocked spans (24 h)</div>
+              <div class="stat-value" id="sps-tax-count" style="font-size:1.1rem;">—</div>
+            </div>
+          </div>
+          <div id="sps-tax-plot" style="width:100%;height:260px;"></div>
+          <div class="table-responsive mt-2" style="max-height:220px;overflow-y:auto;">
+            <table class="table table-sm table-dark mb-0" style="font-size:0.85rem;">
+              <thead><tr><th>Start</th><th>End</th><th>Duration</th><th>Peak (mm)</th></tr></thead>
+              <tbody id="sps-tax-intervals"><tr><td colspan="4" class="text-muted">…</td></tr></tbody>
+            </table>
+          </div>
+          <p class="text-muted small mb-0 mt-2">
+            <span class="font-monospace">XTAX_022_023:POSITION_MEAS</span> — parks near
+            <span class="font-monospace">−140 mm</span> with beam going to H4 and drives to
+            <span class="font-monospace">+141 mm</span> to block it. Spans below are
+            <em>access candidates</em>: the position says the line is blocked, not why —
+            confirm against the H4 flux counters. ⚠ H4/H6/H8 have no
+            <span class="font-monospace">XB&lt;line&gt;.XTAX</span> variable; this standalone
+            motor name is the only read-out of H4's barrier.
+          </p>
+          <p class="text-muted small mb-0 mt-2">
+            <b>Proxied from the n_TOF x17 DAQ</b>, which polls NXCALS directly — banco is not
+            TN-trusted, so it cannot reach <span class="font-monospace">cs-ccr-nxcals*</span>
+            itself. This panel is blank whenever the x17 Flask server is down; the rest of the
+            tab is unaffected.
+          </p>
         </div>
       </div>
     </div>
@@ -2099,9 +2308,11 @@ sysSeedHistory().finally(() => {
 
 <!-- ===== SPS beam intensity (NXCALS) tab JS ===== -->
 <script>
-// The NXCALS session is owned by the beam_watcher process; the GUI reads
-// /beam/status (state file) and /beam/history (per-day CSV). New data lands every
-// ~30 s, so polling is relaxed. Runs alongside the Vistar ON/OFF monitor.
+// ---------------------------------------------------------------------------
+// SPS beam intensity (Beam tab + Overview mirror). The NXCALS session is owned
+// by the beam_watcher process; the GUI reads /beam/status (state file) and
+// /beam/history (per-day CSV). New data lands every ~30 s, so polling is relaxed.
+// ---------------------------------------------------------------------------
 
 // intensity in 1e10 protons -> "6.8e12 p"
 function beamFmtP(e10) {
@@ -2110,7 +2321,26 @@ function beamFmtP(e10) {
 
 function beamFmtAge(s) {
   if (s == null) return "";
-  return s < 120 ? `${Math.round(s)} s ago` : `${Math.round(s / 60)} min ago`;
+  if (s < 120) return `${Math.round(s)} s ago`;
+  if (s < 7200) return `${Math.round(s / 60)} min ago`;
+  return s < 172800 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
+}
+
+// Kerberos expiry is the one silent failure mode of the watcher — an expired
+// ticket stops the publishing chain while the last state file sits there looking
+// like live beam. Shown on both the healthy and the unknown path, red once it is
+// under 12 h, and called out explicitly once it has run out.
+function beamShowKrb(d) {
+  const krb = document.getElementById("beam-krb");
+  if (!d.krb_valid_until) { krb.textContent = ""; return; }
+  const hoursLeft = (new Date(d.krb_valid_until) - Date.now()) / 3.6e6;
+  const when = d.krb_valid_until.replace("T", " ");
+  krb.textContent = hoursLeft <= 0
+    ? `Kerberos ticket EXPIRED ${when} (${(-hoursLeft).toFixed(0)} h ago) — the beam `
+      + `feed cannot publish until it is reseeded with kinit on the watcher host.`
+    : `Kerberos ticket valid until ${when} (${hoursLeft.toFixed(0)} h) `
+      + `— reseed with kinit on the DAQ PC.`;
+  krb.style.color = hoursLeft < 12 ? "var(--bad)" : "";
 }
 
 async function beamUpdateStatus() {
@@ -2119,27 +2349,33 @@ async function beamUpdateStatus() {
 
   const conn = document.getElementById("beam-conn");
   const big = document.getElementById("beam-state-big");
-  const toggle = document.getElementById("beam-watcher-toggle");
+  const runStat = document.getElementById("run-beam");
 
-  if (!d.connected) {
-    conn.textContent = "disconnected" + (d.last_error ? ` — ${String(d.last_error).split("\n")[0]}` : "");
+  // Two ways we can fail to know the beam state, and neither may be shown as a
+  // beam state: the watcher isn't publishing at all (!connected), or it stopped
+  // publishing a while ago and the file is frozen (stale, flagged by /beam/status
+  // from the payload timestamp). In both cases every derived number below is a
+  // memory, not a measurement, so blank them rather than show a stale ON/OFF.
+  if (!d.connected || d.stale) {
+    const why = d.last_error ? String(d.last_error).split("\n")[0] : "";
+    conn.textContent = (d.stale && d.connected ? "stale data" : "disconnected")
+                     + (why ? ` — ${why}` : "");
     conn.style.color = "var(--bad)";
-    big.textContent = "NO DATA";
-    big.style.color = "var(--muted)";
+    big.textContent = "UNKNOWN";
+    big.style.color = "var(--warn)";
     ["beam-last-pulse", "beam-pulses-10m", "beam-protons-10m", "beam-avg-10m"]
       .forEach(id => document.getElementById(id).textContent = "—");
-    document.getElementById("beam-updated").textContent = "";
+    document.getElementById("beam-updated").textContent = d.timestamp
+      ? `no update since ${d.timestamp.replace("T", " ")} (${beamFmtAge(d.age_s)}) `
+        + `— beam may be on or off, the GUI cannot tell.`
+      : "no beam data — beam may be on or off, the GUI cannot tell.";
+    beamShowKrb(d);
+    runStat.innerHTML = `<span style="color:var(--warn);">UNKNOWN</span> · `
+                      + `no data ${d.age_s != null ? beamFmtAge(d.age_s) : ""}`;
     return;
   }
   conn.textContent = "connected";
   conn.style.color = "var(--ok)";
-  // Once the watcher is publishing, the control becomes a Stop button.
-  if (toggle && !toggle.dataset.busy) {
-    toggle.textContent = "Stop Beam Watcher";
-    toggle.classList.remove("btn-info");
-    toggle.classList.add("btn-outline-danger");
-    toggle.dataset.running = "1";
-  }
 
   big.textContent = d.beam_on ? "BEAM ON" : "BEAM OFF";
   big.style.color = d.beam_on ? "var(--ok)" : "var(--bad)";
@@ -2150,25 +2386,37 @@ async function beamUpdateStatus() {
   document.getElementById("beam-protons-10m").textContent = beamFmtP(d.protons_10min_e10);
   document.getElementById("beam-avg-10m").textContent = beamFmtP(d.avg_pulse_e10);
   if (d.csv_path) document.getElementById("beam-csv-path").textContent = d.csv_path;
+  // Name the variable from the state rather than hard-coding it: it is
+  // env-overridable on the watcher, and a caption that drifts out of step with
+  // what is actually plotted is worse than no caption.
+  const bv = document.getElementById("beam-variable");
+  if (bv && d.variable) bv.textContent = d.variable;
   document.getElementById("beam-updated").textContent =
     d.timestamp ? `updated ${d.timestamp.split("T")[1] || ""} · query ${d.query_s ?? "?"} s` : "";
 
-  // Kerberos expiry is the one silent failure mode — show it, red when < 12 h left.
-  const krb = document.getElementById("beam-krb");
-  if (d.krb_valid_until) {
-    const hoursLeft = (new Date(d.krb_valid_until) - Date.now()) / 3.6e6;
-    krb.textContent = `Kerberos ticket valid until ${d.krb_valid_until.replace("T", " ")} `
-                    + `(${hoursLeft.toFixed(0)} h) — reseed with kinit on the DAQ PC.`;
-    krb.style.color = hoursLeft < 12 ? "var(--bad)" : "";
-  } else {
-    krb.textContent = "";
-  }
+  beamShowKrb(d);
+
+  // Mirror into the Run Control header (Overview tab): show the duty-cycle-aware
+  // delivery RATE (protons in the last 10 min / 10) rather than a single spill.
+  const pPerMin = d.protons_10min_e10 != null
+    ? beamFmtP(d.protons_10min_e10 / 10) + "/min" : "—";
+  runStat.innerHTML = d.beam_on
+    ? `<span style="color:var(--ok);">ON</span> · ${pPerMin}`
+    : `<span style="color:var(--bad);">OFF</span> · ${beamFmtAge(d.seconds_since_pulse)}`;
 }
+
+// Range comes from the picker. The server loads per-day CSVs to cover it, so a
+// 14 d request really does read 15 files — see beam_history() in app.py.
+const beamRangeHours = () => {
+  const el = document.getElementById("beam-range");
+  return el ? el.value : "6";
+};
 
 async function beamRenderPlot() {
   if (typeof Plotly === "undefined") return;
   let h;
-  try { h = await (await fetch("/beam/history?hours=6&max_points=3000")).json(); } catch (e) { return; }
+  try { h = await (await fetch(`/beam/history?hours=${beamRangeHours()}&max_points=3000`)).json(); }
+  catch (e) { return; }
   if (!h || !h.success) return;
   const axis = { gridcolor: '#242e39', zerolinecolor: '#38434f', linecolor: '#38434f' };
   const win = h.delivery_window_min || 10;
@@ -2187,6 +2435,8 @@ async function beamRenderPlot() {
   };
   // One marker per SFTPRO cycle (zeros included, so beam-off gaps are visible) —
   // markers, not lines: spills are discrete and a line just draws noise.
+  // Plain SVG scatter (not scattergl): ~3000 points is light, and it keeps the
+  // plot working on machines/browsers without WebGL.
   const markers = { x: h.time, y: h.intensity, name: "Spill intensity",
                     type: "scatter", mode: "markers", marker: { color: "#4dabe8", size: 4 } };
   // Per-spill rolling mean — beam QUALITY (blind to duty cycle).
@@ -2201,52 +2451,353 @@ async function beamRenderPlot() {
         name: "Protons / min", mode: "lines", yaxis: "y2",
         line: { color: "#5cc98a", width: 2 } }
     : null;
+  // Beam tab and Overview mirror show the same three: per-spill markers, the
+  // per-spill average (quality), and the protons/min delivery rate (right axis).
   const traces = [markers, avgLine, rateLine].filter(Boolean);
-  if (document.getElementById("beam-plot")) {
-    Plotly.react("beam-plot", traces, { ...layout, uirevision: "beam-plot" },
-                 { responsive: true, displaylogo: false });
-  }
-}
-
-// Start/Stop the NXCALS watcher (its own tmux session + NXCALS venv).
-(function () {
-  const toggle = document.getElementById("beam-watcher-toggle");
-  const msg = document.getElementById("beam-watcher-msg");
-  if (!toggle) return;
-  toggle.addEventListener("click", async () => {
-    const running = toggle.dataset.running === "1";
-    const url = running ? "/stop_beam_watcher" : "/start_beam_watcher";
-    toggle.disabled = true;
-    toggle.dataset.busy = "1";
-    if (msg) msg.textContent = running ? "stopping…" : "starting…";
-    try {
-      const r = await (await fetch(url, { method: "POST" })).json();
-      if (msg) msg.textContent = r.message || "";
-      if (r.success) {
-        toggle.dataset.running = running ? "" : "1";
-        toggle.textContent = running ? "Start Beam Watcher" : "Stop Beam Watcher";
-        toggle.classList.toggle("btn-info", running);
-        toggle.classList.toggle("btn-outline-danger", !running);
-      }
-    } catch (e) {
-      if (msg) msg.textContent = "request failed";
-    } finally {
-      toggle.disabled = false;
-      delete toggle.dataset.busy;
+  ["beam-plot", "beam-plot-overview"].forEach(id => {
+    if (document.getElementById(id)) {
+      Plotly.react(id, traces, { ...layout, uirevision: id }, { responsive: true, displaylogo: false });
     }
   });
+}
+
+// Plotly can't size a plot while its tab is hidden (display:none -> 0 width), so
+// (re)render when a tab showing a beam plot is shown.
+["#beam", "#overview"].forEach(sel =>
+  document.querySelector(`a[href="${sel}"]`).addEventListener("shown.bs.tab", beamRenderPlot));
+
+// Range picker: redraw immediately rather than waiting for the refresh timer.
+(() => {
+  const el = document.getElementById("beam-range");
+  if (el) el.addEventListener("change", beamRenderPlot);
 })();
 
-// Plotly can't size a plot while its tab is hidden (0 width), so render on show.
-document.querySelector('a[href="#beam"]').addEventListener("shown.bs.tab", beamRenderPlot);
-
-// Refresh the history plot on a timer, but only while the Beam tab is visible.
+// Refresh the history plot on a timer, but only while a tab that shows it is visible.
 setInterval(() => {
-  if (document.getElementById("beam").classList.contains("active")) beamRenderPlot();
+  const vis = document.getElementById("overview").classList.contains("active") ||
+              document.getElementById("beam").classList.contains("active");
+  if (vis) beamRenderPlot();
 }, 15000);
 
 beamUpdateStatus();
 setInterval(beamUpdateStatus, 5000);
+beamRenderPlot();   // initial draw (Overview is the default-active tab at load)
+
+// ---------------------------------------------------------------------------
+// Beam2 — SPS slow-extraction spill + H4 line state.
+// Reads /sps/status (state file: summary, stitched timeline, newest cycle
+// profile, H4) and /sps/history (per-cycle CSV).
+// ---------------------------------------------------------------------------
+const SPS_AXIS = { gridcolor: '#242e39', zerolinecolor: '#38434f', linecolor: '#38434f' };
+const SPS_BASE_LAYOUT = {
+  paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+  font: { color: "#8b96a5" }, hoverlabel: { bgcolor: "#1b222b", bordercolor: "#38434f" },
+  legend: { orientation: "h", y: -0.22, yanchor: "top" },
+  margin: { t: 20, r: 64, b: 48, l: 64 },
+};
+const SPS_CFG = { responsive: true, displaylogo: false };
+
+// 1e10 protons -> "1.3e13 p"
+function spsFmtP(e10) {
+  return e10 == null ? "—" : (e10 * 1e10).toExponential(1).replace("+", "") + " p";
+}
+
+let spsState = null;
+
+async function spsUpdateStatus() {
+  let d;
+  try { d = await (await fetch("/sps/status")).json(); } catch (e) { return; }
+  spsState = d;
+
+  const conn = document.getElementById("sps-conn");
+  const big = document.getElementById("sps-state-big");
+  const h4 = document.getElementById("sps-h4-big");
+  const ids = ["sps-last-spill", "sps-spill-len", "sps-period", "sps-duty",
+               "sps-spills-10m", "sps-protons-10m", "sps-mean-rate", "sps-h4-counts"];
+  const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+  // Stale counts as "no data": the bridge rewrites the local file every poll, so
+  // a frozen state from a dead lxplus watcher would otherwise render as live.
+  if (!d.connected || d.stale) {
+    conn.textContent = (d.stale && d.connected ? "stale" : "no data")
+      + (d.last_error ? ` — ${String(d.last_error).split("\n")[0]}` : "");
+    conn.style.color = "var(--bad)";
+    big.textContent = "NO DATA";
+    big.style.color = "var(--muted)";
+    h4.textContent = "UNKNOWN";
+    h4.style.color = "var(--muted)";
+    ids.forEach(id => setText(id, "—"));
+    ["sps-h4-basis", "sps-h4-config"].forEach(id => setText(id, "—"));
+    setText("sps-h4-comment", "");
+    document.getElementById("sps-updated").textContent = "";
+    return;
+  }
+  conn.textContent = "connected";
+  conn.style.color = "var(--ok)";
+
+  big.textContent = d.spill_on ? "SPILLING" : "NO SPILL";
+  big.style.color = d.spill_on ? "var(--ok)" : "var(--bad)";
+
+  // Three-valued on purpose — see _h4_summary() in sps_spill_controller.py.
+  // "unknown" must never be painted as "closed".
+  if (d.h4_open === true)       { h4.textContent = "OPEN";    h4.style.color = "var(--ok)"; }
+  else if (d.h4_open === false) { h4.textContent = "CLOSED";  h4.style.color = "var(--bad)"; }
+  else                          { h4.textContent = "UNKNOWN"; h4.style.color = "var(--muted)"; }
+
+  const since = d.seconds_since_spill;
+  document.getElementById("sps-last-spill").textContent =
+    d.last_extracted_e10 != null
+      ? `${spsFmtP(d.last_extracted_e10)} · ${since == null ? "" : Math.round(since) + " s ago"}`
+      : "—";
+  document.getElementById("sps-spill-len").textContent =
+    d.last_spill_len_ms != null ? `${(d.last_spill_len_ms / 1000).toFixed(2)} s` : "—";
+  document.getElementById("sps-period").textContent =
+    d.supercycle_period_s != null ? `${d.supercycle_period_s.toFixed(1)} s` : "—";
+  document.getElementById("sps-duty").textContent =
+    d.last_duty_factor != null ? d.last_duty_factor.toFixed(3) : "—";
+  document.getElementById("sps-spills-10m").textContent = d.spills_10min ?? "—";
+  document.getElementById("sps-protons-10m").textContent = spsFmtP(d.protons_10min_e10);
+  document.getElementById("sps-mean-rate").textContent =
+    d.profile && d.profile.mean_rate_e10_per_s != null
+      ? spsFmtP(d.profile.mean_rate_e10_per_s) + "/s" : "—";
+
+  // Sum of the zone counters over the last 10 min — the empirical "beam is
+  // actually arriving here", independent of what the line status flags claim.
+  const counts = d.h4_counts_10min || {};
+  const keys = Object.keys(counts);
+  document.getElementById("sps-h4-counts").textContent = keys.length
+    ? keys.reduce((a, k) => a + (counts[k] || 0), 0).toLocaleString() : "—";
+
+  // What the OPEN/CLOSED verdict is actually based on, and which line config is
+  // loaded — "the beam vanished and nothing is broken" is usually someone
+  // re-tuning H4 for another user, and that shows up here first.
+  setText("sps-h4-basis", d.h4_open_from || "—");
+  setText("sps-h4-config", d.line_config || "—");
+  setText("sps-h4-comment", d.line_comment ? ` — ${d.line_comment}` : "");
+
+  if (d.csv_path) document.getElementById("sps-csv-path").textContent = d.csv_path;
+  document.getElementById("sps-updated").textContent =
+    d.timestamp ? `updated ${d.timestamp.split("T")[1] || ""}` : "";
+}
+
+// The pause / spill / pause trace: every cycle's extraction rate stitched onto
+// absolute wall-clock time. Filled area, because the thing being shown is
+// "beam is flowing / beam is not flowing", not a trend line.
+function spsRenderTimeline() {
+  if (typeof Plotly === "undefined") return;
+  const d = spsState;
+  const el = document.getElementById("sps-timeline-plot");
+  if (!el || !d || !d.timeline || !d.timeline.t_unix || !d.timeline.t_unix.length) return;
+  // unix seconds -> local Date objects Plotly can place on a time axis
+  const x = d.timeline.t_unix.map(t => new Date(t * 1000));
+  Plotly.react("sps-timeline-plot", [{
+    x, y: d.timeline.rate_e10_per_s, name: "Extraction rate",
+    type: "scatter", mode: "lines", fill: "tozeroy",
+    line: { color: "#5cc98a", width: 1 }, fillcolor: "rgba(92,201,138,0.25)",
+    hovertemplate: "%{x|%H:%M:%S}<br>%{y:.0f}e10 p/s<extra></extra>",
+  }], {
+    ...SPS_BASE_LAYOUT, uirevision: "sps-timeline", showlegend: false,
+    xaxis: { ...SPS_AXIS, type: "date" },
+    yaxis: { title: { text: "Extraction rate (10¹⁰ p/s)", font: { size: 13, color: "#5cc98a" } },
+             ...SPS_AXIS, rangemode: "tozero" },
+  }, SPS_CFG);
+}
+
+// One cycle in detail: ring intensity draining (left) against the rate it
+// drains at (right). The flat top then the linear ramp IS the spill.
+function spsRenderProfile() {
+  if (typeof Plotly === "undefined") return;
+  const d = spsState;
+  const el = document.getElementById("sps-profile-plot");
+  if (!el || !d || !d.profile) return;
+  const p = d.profile;
+  const xs = p.t_ms.map(v => v / 1000);
+  document.getElementById("sps-profile-note").textContent =
+    `cycle at ${(p.cycle_start || "").split("T")[1] || ""} · ${p.destination}`;
+  Plotly.react("sps-profile-plot", [
+    { x: xs, y: p.intensity_e10, name: "Ring intensity", mode: "lines",
+      line: { color: "#4dabe8", width: 2 },
+      hovertemplate: "%{x:.2f} s<br>%{y:.0f}e10 p<extra></extra>" },
+    { x: xs, y: p.rate_e10_per_s, name: "Extraction rate", mode: "lines", yaxis: "y2",
+      fill: "tozeroy", line: { color: "#5cc98a", width: 1 },
+      fillcolor: "rgba(92,201,138,0.22)",
+      hovertemplate: "%{x:.2f} s<br>%{y:.0f}e10 p/s<extra></extra>" },
+  ], {
+    ...SPS_BASE_LAYOUT, uirevision: "sps-profile",
+    xaxis: { title: { text: "Time in cycle (s)", font: { size: 13 } }, ...SPS_AXIS },
+    yaxis: { title: { text: "Ring intensity (10¹⁰ p)", font: { size: 13, color: "#4dabe8" } },
+             ...SPS_AXIS, rangemode: "tozero" },
+    yaxis2: { title: { text: "Rate (10¹⁰ p/s)", font: { size: 13, color: "#5cc98a" } },
+              ...SPS_AXIS, overlaying: "y", side: "right", rangemode: "tozero", showgrid: false },
+  }, SPS_CFG);
+}
+
+const spsRangeHours = () => {
+  const el = document.getElementById("sps-range");
+  return el ? el.value : "6";
+};
+
+async function spsRenderTrend() {
+  if (typeof Plotly === "undefined") return;
+  let h;
+  try { h = await (await fetch(`/sps/history?hours=${spsRangeHours()}&max_points=3000`)).json(); }
+  catch (e) { return; }
+  if (!h || !h.success || !document.getElementById("sps-trend-plot")) return;
+  const traces = [
+    { x: h.time, y: h.extracted, name: "Extracted / cycle", type: "scatter",
+      mode: "markers", marker: { color: "#4dabe8", size: 4 } },
+  ];
+  // Beam actually reaching our zone. THE point of this trace is where it is
+  // absent: the SPS markers carry on across an access while this drops to zero,
+  // and no SPS-side variable shows that, because only our branch closes.
+  if (h.beam_here_time && h.beam_here_time.length) {
+    traces.push({ x: h.beam_here_time, y: h.beam_here_counts,
+                  name: "Counts in our zone", type: "scatter", mode: "lines",
+                  yaxis: "y3", line: { color: "#5cc98a", width: 1 },
+                  hovertemplate: "%{x|%H:%M:%S}<br>%{y:,.0f} counts<extra></extra>" });
+  }
+  if (h.spill_time && h.spill_time.length) {
+    traces.push({ x: h.spill_time, y: h.spill_len_ms.map(v => v == null ? null : v / 1000),
+                  name: "Spill length (s)", mode: "lines", yaxis: "y2",
+                  line: { color: "#c98500", width: 2 } });
+  }
+  // Shade the access windows so they read as events, not as a missing line.
+  const shapes = (h.no_beam_windows || []).map(w => ({
+    type: "rect", xref: "x", yref: "paper", x0: w.from, x1: w.to, y0: 0, y1: 1,
+    fillcolor: "rgba(224,92,75,0.13)", line: { width: 0 }, layer: "below",
+  }));
+  const note = document.getElementById("sps-trend-note");
+  if (note) {
+    const n = (h.no_beam_windows || []).length;
+    note.textContent = n
+      ? `${n} no-beam window(s) shaded — SPS delivering, our zone counting nothing`
+      : "extracted intensity & spill length — last 6 h";
+  }
+  Plotly.react("sps-trend-plot", traces, {
+    ...SPS_BASE_LAYOUT, uirevision: "sps-trend", shapes,
+    xaxis: { ...SPS_AXIS },
+    yaxis: { title: { text: "Extracted (10¹⁰ p)", font: { size: 13, color: "#4dabe8" } },
+             ...SPS_AXIS, rangemode: "tozero" },
+    yaxis2: { title: { text: "Spill length (s)", font: { size: 13, color: "#c98500" } },
+              ...SPS_AXIS, overlaying: "y", side: "right", rangemode: "tozero", showgrid: false },
+    // Third axis, hidden: the zone counts share the plot only so the reader can
+    // line them up in time with the SPS trace. Their absolute scale is a scaler
+    // rate in arbitrary units and would just crowd the axis furniture.
+    yaxis3: { ...SPS_AXIS, overlaying: "y", side: "right", rangemode: "tozero",
+              showgrid: false, showticklabels: false, visible: false },
+  }, SPS_CFG);
+}
+
+// H4 barrier. Both endpoints are PROXIES to the x17 DAQ (banco cannot reach
+// NXCALS). Differs from the x17 original in one way: there the live state rides
+// along in /sps/status, here it needs its own fetch, because banco's own
+// sps_state.json comes from the lxplus bridge and carries no h4_tax block.
+async function spsUpdateTax() {
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  const stateEl = document.getElementById("sps-tax-state");
+  if (!stateEl) return;
+  let t = null;
+  try { t = await (await fetch("/sps/tax_state")).json(); } catch (e) { t = null; }
+  if (!t || t.position_mm == null) {
+    set("sps-tax-state", "—");
+    set("sps-tax-pos", "—");
+    set("sps-tax-since", "—");
+    set("sps-tax-note", (t && t.error) ? t.error : "no data yet");
+    stateEl.className = "stat-value text-muted";
+    return;
+  }
+  const label = { open: "OPEN", blocked: "BLOCKED", moving: "MOVING" }[t.state] || "—";
+  set("sps-tax-state", label);
+  stateEl.className = "stat-value " + (t.state === "open" ? "text-success"
+                       : t.state === "blocked" ? "text-danger" : "text-warning");
+  stateEl.style.fontSize = "1.6rem";
+  set("sps-tax-pos", t.position_mm.toFixed(1) + " mm");
+  // seconds_in_state is only resolvable inside the poll's lookback window
+  set("sps-tax-since", t.state_older_than_window ? "> " + Math.round(t.window_s / 60) + " min"
+      : t.seconds_in_state == null ? "—"
+      : t.seconds_in_state < 90 ? Math.round(t.seconds_in_state) + " s"
+      : (t.seconds_in_state / 60).toFixed(0) + " min");
+  set("sps-tax-note", t.var);
+}
+
+async function spsRenderTax() {
+  if (typeof Plotly === "undefined") return;
+  if (!document.getElementById("sps-tax-plot")) return;
+  let h;
+  try { h = await (await fetch("/sps/tax_history?hours=24")).json(); } catch (e) { return; }
+  if (!h || !h.success) return;
+  const body = document.getElementById("sps-tax-intervals");
+  const ivs = h.intervals || [];
+  const cnt = document.getElementById("sps-tax-count");
+  if (cnt) cnt.textContent = String(ivs.length);
+  if (body) {
+    body.innerHTML = ivs.length
+      ? ivs.slice().reverse().map(iv =>
+          `<tr><td>${iv.start_str}</td><td>${iv.ongoing ? "<em>ongoing</em>" : iv.end_str}</td>` +
+          `<td>${iv.minutes} min</td><td>${iv.pos_max.toFixed(1)}</td></tr>`).join("")
+      : `<tr><td colspan="4" class="text-muted">${h.note || "no blocked spans in this window"}</td></tr>`;
+  }
+  Plotly.react("sps-tax-plot", [
+    { x: h.time, y: h.position_mm, name: "TAX position", mode: "lines",
+      line: { color: "#4dabe8", width: 2 } },
+  ], {
+    ...SPS_BASE_LAYOUT, uirevision: "sps-tax",
+    xaxis: { ...SPS_AXIS },
+    yaxis: { title: { text: "Position (mm)", font: { size: 13, color: "#4dabe8" } }, ...SPS_AXIS },
+    shapes: [
+      { type: "line", xref: "paper", x0: 0, x1: 1, yref: "y",
+        y0: h.open_max_mm, y1: h.open_max_mm,
+        line: { color: "#3fb950", width: 1, dash: "dot" } },
+      { type: "line", xref: "paper", x0: 0, x1: 1, yref: "y",
+        y0: h.block_min_mm, y1: h.block_min_mm,
+        line: { color: "#e5534b", width: 1, dash: "dot" } },
+    ],
+    annotations: [
+      { xref: "paper", x: 0.005, y: h.open_max_mm, yanchor: "bottom", showarrow: false,
+        text: "open ↓", font: { size: 10, color: "#3fb950" } },
+      { xref: "paper", x: 0.005, y: h.block_min_mm, yanchor: "top", showarrow: false,
+        text: "blocked ↑", font: { size: 10, color: "#e5534b" } },
+    ],
+  }, SPS_CFG);
+}
+
+// spsRenderTax is deliberately NOT here — see the split intervals at the bottom.
+function spsRenderAll() {
+  spsRenderTimeline(); spsRenderProfile(); spsRenderTrend();
+  spsUpdateTax();
+}
+
+// Plotly can't size a plot in a hidden tab (display:none -> 0 width), so draw on show.
+(() => {
+  const tab = document.querySelector('a[href="#beam2"]');
+  if (tab) tab.addEventListener("shown.bs.tab",
+    () => spsUpdateStatus().then(() => { spsRenderAll(); spsRenderTax(); }));
+  const range = document.getElementById("sps-range");
+  if (range) range.addEventListener("change", spsRenderTrend);
+})();
+
+// Only poll while the tab is visible — the state file carries a ~130 kB timeline.
+const spsTabActive = () => document.getElementById("beam2").classList.contains("active");
+
+setInterval(() => {
+  if (!spsTabActive()) return;
+  spsUpdateStatus().then(spsRenderAll);
+}, 15000);
+
+// The barrier's two feeds move at very different speeds, so they are polled
+// separately rather than both riding the 15 s status loop:
+//
+//   tiles   /sps/tax_state    ~300 B   -> 5 s
+//   trace   /sps/tax_history  ~100 kB  -> 60 s
+//
+// Freshness is bounded by NXCALS, not by us: the archive's own ingestion lag is
+// a MEASURED 14-23 s, and mx17 polls it every ~27 s, so the newest sample here
+// is 23-43 s old no matter how fast this loop runs. 5 s just removes the client
+// from the error budget. The 24 h trace changes far more slowly than that, and
+// at 100 kB it was the expensive half of the old 15 s poll — moving it to 60 s
+// cuts this tab's steady-state traffic ~4x while making the tiles fresher.
+setInterval(() => { if (spsTabActive()) spsUpdateTax(); },  5000);
+setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
 </script>
 
 <!-- ===== Disk Space tab JS ===== -->
