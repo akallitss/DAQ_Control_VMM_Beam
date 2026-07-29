@@ -139,12 +139,34 @@ P2_HV = {
     'P2_MID': {'drift': (8, 2), 'mesh': (8, 3)},
     'P2_OUT': {'drift': (8, 4), 'mesh': (8, 5)},
 }
+# uRWELL tracking references: read out by the DREAM DAQ (not by VMM), but
+# their HV is carried here too — this file is the single HV edit point for
+# combined runs, and every sub-run's targets include them. They are the
+# telescope reference, so scans NEVER step them (scan templates iterate
+# P2_HV only); they sit at the operating point for the whole run.
+URWELL_HV = {
+    'EIC_uRWELL_front': {'drift': (8, 6), 'resist': (12, 0)},
+    'EIC_uRWELL_back':  {'drift': (8, 7), 'resist': (12, 1)},
+}
 # Operating point of 2026-07-27/28 (mirrored from Dream's OPERATING_HV):
 # P2_IN is the new metallic-mesh chamber, measured slightly lower.
 OPERATING_HV = {
     'P2_IN':  {'drift': 740, 'mesh': 440},   # gap = 300 V
     'P2_MID': {'drift': 750, 'mesh': 450},   # gap = 300 V
     'P2_OUT': {'drift': 750, 'mesh': 450},   # gap = 300 V
+    'EIC_uRWELL_front': {'drift': 620, 'resist': 420},
+    'EIC_uRWELL_back':  {'drift': 620, 'resist': 420},
+}
+
+# VMM readout cabling, per station: connector -> (hybrid, bottom VMM, top VMM).
+# As cabled 2026-07-29 (Alexandra). Hybrid H<n> carries VMMs 2n (bottom) and
+# 2n+1 (top); hybrid 0 (VMMs 0/1) is the trigger digitizer, not on a station.
+# NOTE: P2_OUT now uses THREE connectors c4-c6 (it was c4-c7 on the Dream
+# readout) — same for all three stations.
+P2_VMM_CABLING = {
+    'P2_IN':  {'c4': (1, 2, 3),   'c5': (2, 4, 5),   'c6': (3, 6, 7)},
+    'P2_MID': {'c4': (4, 8, 9),   'c5': (5, 10, 11), 'c6': (6, 12, 13)},
+    'P2_OUT': {'c4': (7, 14, 15), 'c5': (8, 16, 17), 'c6': (9, 18, 19)},
 }
 
 # Capture: seconds per pcapng file (dumpcap ring-buffer rotation interval).
@@ -253,13 +275,15 @@ class Config(RunConfigBase):
         }
 
         # ----- Run schedule (built from module constants above) -----
-        # Each sub-run's 'hvs' carries the targets of ALL P2 stations at the
-        # operating point ({card: {channel: volts}}).
+        # Each sub-run's 'hvs' carries the targets of ALL detectors — the three
+        # P2 stations AND the uRWELL references — as {card: {channel: volts}}.
+        # Scans modify only the P2 station entries; the references stay put.
         def _operating_hvs():
             hvs = {}
-            for det, roles in P2_HV.items():
-                for role, (card, ch) in roles.items():
-                    hvs.setdefault(str(card), {})[str(ch)] = OPERATING_HV[det][role]
+            for group in (P2_HV, URWELL_HV):
+                for det, roles in group.items():
+                    for role, (card, ch) in roles.items():
+                        hvs.setdefault(str(card), {})[str(ch)] = OPERATING_HV[det][role]
             return hvs
 
         self.sub_runs = []
@@ -287,10 +311,12 @@ class Config(RunConfigBase):
 
         self.included_detectors = ['P2_IN', 'P2_MID', 'P2_OUT']
 
-        # The three P2 telescope stations, mirrored 2026-07-29 from the Dream
-        # config on banco (names, z positions, HV channels) — same detectors,
-        # now read out by the VMM chain. TODO-SPS: per-station hybrid/VMM split
-        # in vmm_map (ask the p2basket colleagues for the cabling).
+        # The three P2 telescope stations, mirrored from the Dream config on
+        # banco (names, z positions, HV channels) — same detectors, now read
+        # out by the VMM chain, with the per-station cabling of 2026-07-29
+        # (P2_VMM_CABLING above). The uRWELL references are deliberately NOT
+        # detectors here — Dream reads them; only their HV rides along in the
+        # sub-run targets (URWELL_HV).
         _P2_Z_MM = {'P2_IN': 320.0, 'P2_MID': 630.0, 'P2_OUT': 940.0}
         self.detectors = [
             {
@@ -304,10 +330,16 @@ class Config(RunConfigBase):
                 'det_center_coords': {'x': 0, 'y': 0, 'z': _P2_Z_MM[det]},  # mm
                 'det_orientation': {'x': 0, 'y': 0, 'z': 0},  # deg
                 'hv_channels': P2_HV[det],
-                # VMM readout cabling (informational; used to label QA plots).
-                # iface -> hybrid/VMM ids seen in the data. TODO-SPS: actual split.
+                # VMM readout cabling (informational; labels QA plots).
                 'vmm_map': {
-                    'enx00249b8724a0': {'hybrids': 'alinx', 'vmms': list(range(16))},
+                    'enx00249b8724a0': {
+                        'hybrids': [h for h, _, _ in P2_VMM_CABLING[det].values()],
+                        'vmms': sorted(v for _, b, t in P2_VMM_CABLING[det].values()
+                                       for v in (b, t)),
+                        'connectors': {
+                            c: {'hybrid': h, 'bot_vmm': b, 'top_vmm': t}
+                            for c, (h, b, t) in P2_VMM_CABLING[det].items()},
+                    },
                 },
             }
             for det in ['P2_IN', 'P2_MID', 'P2_OUT']
@@ -336,7 +368,9 @@ if __name__ == '__main__':
     print(f'Base data dir: {BASE_DATA_DIR}')
     print(f'Gas: {config.gas}')
     for _det, _p in OPERATING_HV.items():
-        print(f'{_det}: mesh {_p["mesh"]} V   drift {_p["drift"]} V   (gap = {_p["drift"] - _p["mesh"]} V)')
+        _roles = '   '.join(f'{r} {v} V' for r, v in _p.items())
+        _gap = f'   (gap = {_p["drift"] - _p["mesh"]} V)' if 'mesh' in _p else '   (Dream-read reference)'
+        print(f'{_det}: {_roles}{_gap}')
     print(f'Capture: {", ".join(ifaces)}  ({config.vmm_daq_info["capture_tool"]}, '
           f'{config.vmm_daq_info["capture_duration_s"]} s/file)')
     print(f'LV units: {", ".join(config.lv_info["units"].keys())}')

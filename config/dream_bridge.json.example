@@ -1,9 +1,20 @@
 {
-  "_comment": "Combined VMM+Dream runs — copy to config/dream_bridge.json (gitignored) and adjust. dream_flask_url = Dream's Flask on banco. token must match the Dream-side trigger route (see docs/dream_side/). hv_gate.channel_labels maps VMM HV channels 'slot:ch' to the Dream /hv_data trace labels for the SAME physical channels (set when the P2 basket entry is added to Dream's HV config). The shim gates each subrun's start on Dream's readback being within tolerance_v of that subrun's targets.",
+  "_comment": "Combined VMM+Dream runs \u2014 copy to config/dream_bridge.json (gitignored) and adjust. dream_flask_url = Dream's Flask on banco. token must match the Dream-side trigger route (see docs/dream_side/). hv_gate.channel_labels maps VMM HV channels 'slot:ch' to the Dream /hv_data trace labels for the SAME physical channels (set when the P2 basket entry is added to Dream's HV config). The shim gates each subrun's start on Dream's readback being within tolerance_v of that subrun's targets.",
   "dream_flask_url": "http://128.141.21.144:5001",
   "token": "CHANGE-ME-shared-secret",
   "hv_gate": {
-    "channel_labels": {"8:0": "IN_Drift", "8:1": "IN_Mesh", "8:2": "MID_Drift", "8:3": "MID_Mesh", "8:4": "OUT_Drift", "8:5": "OUT_Mesh"},
+    "channel_labels": {
+      "8:0": "IN_Drift",
+      "8:1": "IN_Mesh",
+      "8:2": "MID_Drift",
+      "8:3": "MID_Mesh",
+      "8:4": "OUT_Drift",
+      "8:5": "OUT_Mesh",
+      "8:6": "front_Drift",
+      "12:0": "front_Resist",
+      "8:7": "back_Drift",
+      "12:1": "back_Resist"
+    },
     "tolerance_v": 3.0,
     "poll_s": 5,
     "timeout_s": 900
