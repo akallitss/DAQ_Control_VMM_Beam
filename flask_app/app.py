@@ -1021,6 +1021,47 @@ def dream_status():
     return jsonify(out)
 
 
+@app.route("/hv_data_dream")
+def hv_data_dream():
+    """HV traces proxied READ-ONLY from the Dream DAQ — the crate owner at
+    this site (our hv server is the gating shim and writes no hv_monitor.csv).
+
+    Tries run-matched data first (combined runs share run/subrun names and the
+    trigger writes Dream's run config as <run>.json), then falls back to
+    Dream's CURRENT run's latest subrun — a live view of what the crate is
+    doing — tagged with source/dream_run/dream_subrun so the GUI labels it."""
+    from urllib.parse import urlencode
+    run = request.args.get("run", "")
+    subrun = request.args.get("subrun", "")
+    base_run = run[:-5] if run.endswith(".json") else run
+    if base_run and subrun:
+        try:
+            q = urlencode({"run": f"{base_run}.json", "subrun": subrun})
+            d = _dream_request(f"/hv_data?{q}", timeout=6)
+            if d and d.get("success"):
+                d["source"] = "dream-matched"
+                return jsonify(d)
+        except Exception:
+            pass
+    try:
+        subs = _dream_request("/get_subruns?run=run_config_beam.json", timeout=6)
+        if isinstance(subs, list) and subs:
+            latest = sorted(subs)[-1]
+            q = urlencode({"run": "run_config_beam.json", "subrun": latest})
+            d = _dream_request(f"/hv_data?{q}", timeout=8)
+            if d and d.get("success"):
+                d["source"] = "dream-current"
+                try:
+                    d["dream_run"] = _dream_request("/get_current_run", timeout=4).get("run_name")
+                except Exception:
+                    d["dream_run"] = None
+                d["dream_subrun"] = latest
+                return jsonify(d)
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+    return jsonify({"success": False, "message": "no HV data from Dream"})
+
+
 @app.route("/chip_config/status")
 def chip_config_status():
     return jsonify(chip.status())

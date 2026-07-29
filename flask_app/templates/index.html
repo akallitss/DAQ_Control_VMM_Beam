@@ -203,7 +203,7 @@
   <div class="panel mt-3">
     <div class="panel-header">
       <span class="panel-title">HV Monitor</span>
-      <span class="panel-header-note">latest voltage and current readings from HV control</span>
+      <span class="panel-header-note" id="hv-note">latest voltage and current readings from HV control</span>
       <span class="ms-auto d-flex align-items-center gap-2">
         <label for="hv-subrun-select" class="text-muted small mb-0">Subrun</label>
         <select id="hv-subrun-select" class="form-select form-select-sm" style="width:auto;">
@@ -878,14 +878,33 @@ document.getElementById("restart-all").addEventListener("click", () => {
 
 
 // --- HV Plots ---
+// Local hv_monitor.csv first (bench sites); at sps the crate belongs to the
+// Dream DAQ, so fall back to the read-only /hv_data_dream proxy: matched run
+// when one exists (combined runs share names), else Dream's live current run.
 async function fetchHVData() {
     const run = document.getElementById("run-select").value;
     const subrun = document.getElementById("hv-subrun-select").value;
-    const res = await fetch(`/hv_data?run=${encodeURIComponent(run)}&subrun=${encodeURIComponent(subrun)}`);
-    const data = await res.json();
-    if (!data || Object.keys(data).length === 0) return null;
-    if (!data.success) throw data.message;
-    return data;
+    const note = document.getElementById("hv-note");
+    try {
+        const res = await fetch(`/hv_data?run=${encodeURIComponent(run)}&subrun=${encodeURIComponent(subrun)}`);
+        const data = await res.json();
+        if (data && Object.keys(data).length !== 0 && data.success) {
+            note.textContent = "latest voltage and current readings from HV control";
+            return data;
+        }
+    } catch (e) { /* fall through to the Dream proxy */ }
+    try {
+        const res = await fetch(`/hv_data_dream?run=${encodeURIComponent(run)}&subrun=${encodeURIComponent(subrun)}`);
+        const data = await res.json();
+        if (data && data.success) {
+            note.textContent = data.source === "dream-matched"
+                ? "HV via Dream DAQ (matched run)"
+                : `HV via Dream DAQ — live crate view (${data.dream_run || "?"} / ${data.dream_subrun || "?"})`;
+            return data;
+        }
+    } catch (e) { /* neither source available */ }
+    note.textContent = "no HV data (local or Dream)";
+    return null;
 }
 
 // One hue per detector (validated dark categorical palette, slots 1-4: blue/aqua/
@@ -893,7 +912,10 @@ async function fetchHVData() {
 // so identity = colour and electrode = shade. Trace names come from
 // _hv_channel_labels: P2_1 -> 1_Mesh/1_Drift, so the map is keyed on the detector
 // short name (the suffix after the last '_'). Add 2/3/4 as more P2_N detectors cable up.
-const HV_DET_COLOR = { "1": "#3987e5", "2": "#c98500", "3": "#199e70", "4": "#008300" };
+const HV_DET_COLOR = { "1": "#3987e5", "2": "#c98500", "3": "#199e70", "4": "#008300",
+                       // Dream-proxied traces: P2 stations + uRWELL references
+                       "IN": "#3987e5", "MID": "#c98500", "OUT": "#199e70",
+                       "front": "#9b6ef3", "back": "#e4574c" };
 function _hvLighten(hex, amt) {
     const n = parseInt(hex.slice(1), 16);
     const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
