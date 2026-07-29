@@ -95,10 +95,11 @@ SITES = {
         },
         'simulate': False,
         'interfaces': [
-            # Data NIC: the CERN base yaml points the FEC (192.168.0.12) at
-            # DAQ PC 192.168.0.14 = the USB adapter enx00249b8724a0 — NOT
-            # enp4s0f1 (that carries the old Saclay bench addressing).
-            # {'name': 'alinx', 'iface': 'enx00249b8724a0', 'slow_control': 'p2basket',
+            # Data NIC: enp4s0f1, CONFIRMED empirically by run_2 (2026-07-29):
+            # capturing on the USB adapter enx00249b8724a0 gave a 280-byte
+            # empty pcapng while the pulser was firing — the yaml's
+            # 192.168.0.14 destination is slow-control addressing, the VMM
+            # data stream rides the 10G NIC.
             {'name': 'alinx', 'iface': 'enp4s0f1', 'slow_control': 'p2basket',
              # CERN deploy, per TestBenchCERN/README: acquisition is armed with
              # bare `p2basket-sc --acq-on/--acq-off` (no config file), run from
@@ -188,7 +189,7 @@ class Config(RunConfigBase):
         super().__init__(config_path)
 
     def _set_defaults(self, config_path=None):
-        self.run_name = 'run_2'
+        self.run_name = 'run_3'
         self.base_out_dir = BASE_DATA_DIR
         self.data_out_dir = f'{self.base_out_dir}runs/'
         self.run_out_dir = f'{self.data_out_dir}{self.run_name}/'
@@ -342,7 +343,7 @@ class Config(RunConfigBase):
                 'hv_channels': P2_HV[det],
                 # VMM readout cabling (informational; labels QA plots).
                 'vmm_map': {
-                    'enx00249b8724a0': {
+                    'enp4s0f1': {
                         'hybrids': [h for h, _, _ in P2_VMM_CABLING[det].values()],
                         'vmms': sorted(v for _, b, t in P2_VMM_CABLING[det].values()
                                        for v in (b, t)),
