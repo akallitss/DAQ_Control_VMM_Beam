@@ -108,8 +108,12 @@ class ChipConfig:
 
     @staticmethod
     def capture_active():
-        """True while dumpcap/tcpdump captures — never reconfigure mid-run."""
-        return subprocess.run(["pgrep", "-f", "dumpcap -i|tcpdump -i"],
+        """True while a dumpcap/tcpdump capture runs — never reconfigure the
+        chips mid-run. Matches the exact PROCESS NAME (-x): the old -f pattern
+        matched command-line substrings and false-triggered on the QA
+        subprocess while it processed pcapng files, blocking warm reset (and
+        so run arming) for the whole QA pass."""
+        return subprocess.run(["pgrep", "-x", "dumpcap|tcpdump"],
                               capture_output=True).returncode == 0
 
     def apply(self):
