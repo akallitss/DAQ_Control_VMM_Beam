@@ -21,6 +21,7 @@ Site switching: config/site.txt on the machine (fallback: SITE below).
 """
 
 import os
+import sys
 
 from run_config_base import RunConfigBase
 
@@ -252,7 +253,10 @@ class Config(RunConfigBase):
             self.hv_info['username'] = 'admin'
             self.hv_info['password'] = 'admin'
             if not SIMULATE:
-                print(f'WARNING: {creds_path} not found — using default admin/admin HV credentials.')
+                # stderr, NOT stdout: get_config_py.py's stdout is parsed as
+                # JSON by the GUI — a warning line there breaks Start Run.
+                print(f'WARNING: {creds_path} not found — using default admin/admin HV credentials.',
+                      file=sys.stderr)
 
         self.lv_control_info = {
             'ip': _SITE_CFG['daq_host'],
