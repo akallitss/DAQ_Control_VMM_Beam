@@ -77,16 +77,26 @@ SITES = {
         # July 2026 test beam, SPS H4: shared group data tree on the DAQ machine
         # (basketp2 group-writable, setgid + default ACLs).
         'base_data_dir': '/local/p2/p2data/TB_July26_H4/',
-        'daq_host': '127.0.0.1',                            # TODO-SPS: DAQ computer IP (as seen by clients)
-        'hv_ip': '192.168.10.81',                           # TODO-SPS: CAEN mainframe IP at SPS
-        'hv_n_cards': 4,                                    # TODO-SPS: number of cards in SPS crate
+        'daq_host': '127.0.0.1',
+        # HV: the CAEN crate hangs off banco — port 2100 here is served by
+        # hv_dream_shim.py (start_servers.sh picks it at sps), which gates
+        # combined runs on the Dream DAQ's readback and passes instantly for
+        # VMM-only runs. hv_ip is unused by the shim; 'sim' documents that no
+        # CAEN is driven from this machine.
+        'hv_ip': 'sim',
+        'hv_n_cards': 4,
+        # LV: no Aim-TTi units at this setup — the real LV is the TDK-Lambda
+        # supplies, monitored via the GUI power panel (60 s auto-measure).
         'lv_units': {
-            'tti1': '192.168.0.241',                        # TODO-SPS: Aim-TTi unit 1 IP
-            'tti2': '192.168.0.242',                        # TODO-SPS: Aim-TTi unit 2 IP
+            'tti1': 'sim',
+            'tti2': 'sim',
         },
         'simulate': False,
         'interfaces': [
-            {'name': 'alinx', 'iface': 'enp4s0f1', 'slow_control': 'p2basket',
+            # Data NIC: the CERN base yaml points the FEC (192.168.0.12) at
+            # DAQ PC 192.168.0.14 = the USB adapter enx00249b8724a0 — NOT
+            # enp4s0f1 (that carries the old Saclay bench addressing).
+            {'name': 'alinx', 'iface': 'enx00249b8724a0', 'slow_control': 'p2basket',
              # CERN deploy, per TestBenchCERN/README: acquisition is armed with
              # bare `p2basket-sc --acq-on/--acq-off` (no config file), run from
              # the TestBenchCERN directory. alinx-sc only exists in the old
