@@ -43,7 +43,8 @@ class ChipConfig:
         self.state_path = state_path
         self.config = self._load()
         self._lock = threading.Lock()
-        self.running = False
+        self.running = False        # a configure apply in flight
+        self.reset_running = False  # a warm reset in flight
         self.last = None   # {"file", "base_yaml", "rc", "output", "ts"}
         state = self._read_state()
         self.last = state.get("last_applied")
@@ -153,7 +154,74 @@ class ChipConfig:
             self.running = False
         self._write_state(last_applied=self.last)
 
+    # ---- warm reset (p2basket_sc_warm_reset.py; EXIT CODE = failed hybrids) ----
+    #
+    # A successful warm reset (0 failed hybrids) ARMS exactly one run; the run
+    # start consumes it (warm_reset_consumed_ts). This encodes the operational
+    # rule that every run must be preceded by a warm reset — the known failure
+    # mode is hybrids coming up non-ready after acquisition start/stops.
+
+    def run_armed(self):
+        """False when a warm reset is required before the next run. Sites
+        without a warm_reset_script configured are never gated."""
+        if not self.configured or not self.config.get("warm_reset_script"):
+            return True
+        st = self._read_state()
+        last = st.get("warm_reset_last")
+        if not last or last.get("failed") != 0:
+            return False
+        consumed = st.get("warm_reset_consumed_ts")
+        return not consumed or last["ts"] > consumed
+
+    def consume_warm_reset(self):
+        self._write_state(
+            warm_reset_consumed_ts=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+    def warm_reset(self):
+        """Run the p2basket warm-reset utility (force + retry loop) in a
+        worker thread. (ok, message)."""
+        if not self.configured:
+            return False, "Chip config not configured (config/chip_config.json)."
+        script = self.config.get("warm_reset_script")
+        if not script:
+            return False, "warm_reset_script not set in config/chip_config.json."
+        base = self.base_yaml()
+        if not base:
+            return False, "Base yaml not found (need exactly one *.yaml in config_base)."
+        if self.capture_active():
+            return False, "A capture is running — refusing warm reset during acquisition."
+        with self._lock:
+            if self.running or self.reset_running:
+                return False, "Another chip operation is already in progress."
+            self.reset_running = True
+        threading.Thread(target=self._warm_run, args=(base,), daemon=True,
+                         name="chip-warm-reset").start()
+        return True, "Warm reset started — bringing hybrids to the ready state…"
+
+    def _warm_run(self, base):
+        cfg = self.config
+        cmd = [cfg["warm_reset_script"],
+               "-c", cfg["conf_dir"],
+               "-b", os.path.join(cfg.get("base_subdir", "config_base"), base),
+               "-W", "-w", str(cfg.get("warm_reset_loop", 3))]
+        timeout = cfg.get("timeout_s", DEFAULT_TIMEOUT_S)
+        try:
+            r = subprocess.run(cmd, cwd=cfg["conf_dir"], capture_output=True,
+                               text=True, timeout=timeout)
+            failed, output = r.returncode, (r.stdout + r.stderr).strip()
+        except subprocess.TimeoutExpired:
+            failed, output = -1, f"Timed out after {timeout}s."
+        except Exception as e:
+            failed, output = -1, str(e)
+        last = {"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "failed": failed,   # exit code = non-ready hybrid count; -1 = error
+                "output": output[-2000:]}
+        with self._lock:
+            self.reset_running = False
+        self._write_state(warm_reset_last=last)
+
     def status(self):
+        st = self._read_state()
         with self._lock:
             return {"configured": self.configured,
                     "files": self.ext_files(),
@@ -161,4 +229,9 @@ class ChipConfig:
                     "base_yaml": self.base_yaml(),
                     "running": self.running,
                     "capture_active": self.capture_active(),
-                    "last": self.last}
+                    "last": self.last,
+                    "warm_reset": {"running": self.reset_running,
+                                   "available": bool(self.configured and
+                                                     self.config.get("warm_reset_script")),
+                                   "last": st.get("warm_reset_last"),
+                                   "armed": self.run_armed()}}

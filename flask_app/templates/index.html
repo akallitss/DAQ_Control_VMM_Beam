@@ -32,6 +32,10 @@
           <div class="btn-group-block">
             <span class="group-label">Run</span>
             <div class="d-flex flex-wrap gap-2 align-items-center">
+              <!-- Pre-run readiness gate: a successful warm reset (all hybrids
+                   ready) arms exactly one Start Run. Hidden when the warm-reset
+                   script is not configured (bench sites). -->
+              <button id="warm-reset" class="btn btn-info d-none">Warm Reset</button>
               <button id="run-toggle" class="btn btn-success">Start Run</button>
               <!-- Combined run: fire the paired Dream run on banco with the
                    same run name + our HV schedule (config/dream_bridge.json;
@@ -43,6 +47,7 @@
               <button id="pause-toggle" class="btn btn-outline-warning">Pause After Subrun</button>
               <button id="restart-all" class="btn btn-outline-danger">Restart All</button>
               <button id="git-reset" class="btn btn-secondary">Git Reset</button>
+              <span id="warmreset-chip" class="text-muted small font-monospace"></span>
               <span id="dream-chip" class="text-muted small font-monospace"></span>
             </div>
           </div>
@@ -1851,8 +1856,53 @@ async function updateChipcfgStatus() {
         } else {
             st.textContent = "";
         }
+
+        // --- Warm-reset gate UI (button + chip + Start Run arming) ---
+        const wr = s.warm_reset || {};
+        const wrBtn = document.getElementById("warm-reset");
+        const wrChip = document.getElementById("warmreset-chip");
+        if (wr.available) {
+            wrBtn.classList.remove("d-none");
+            wrBtn.disabled = wr.running || s.running || s.capture_active;
+            wrBtn.textContent = wr.running ? "Resetting…" : "Warm Reset";
+            if (wr.running) {
+                wrChip.textContent = "warm reset in progress…";
+                wrChip.className = "text-muted small font-monospace";
+            } else if (wr.armed) {
+                wrChip.textContent = `hybrids ready ✓ @ ${wr.last.ts} — run armed`;
+                wrChip.className = "text-success small font-monospace";
+            } else if (wr.last && wr.last.failed > 0) {
+                wrChip.textContent = `${wr.last.failed} hybrid(s) NOT ready @ ${wr.last.ts} — warm reset again`;
+                wrChip.className = "text-danger small font-monospace";
+            } else if (wr.last && wr.last.failed < 0) {
+                wrChip.textContent = "warm reset ERROR — see event log / retry";
+                wrChip.className = "text-danger small font-monospace";
+            } else {
+                wrChip.textContent = "warm reset required before Start Run";
+                wrChip.className = "text-warning small font-monospace";
+            }
+            // Gate Start Run (never touch the button while it is Stop Run).
+            const runBtn = document.getElementById("run-toggle");
+            if (runBtn.textContent.trim() === "Start Run") {
+                runBtn.disabled = !wr.armed;
+                runBtn.title = wr.armed ? "" : "Warm reset required first";
+            } else {
+                runBtn.title = "";
+            }
+        } else {
+            wrBtn.classList.add("d-none");
+            wrChip.textContent = "";
+        }
     } catch (e) { /* server briefly away; next poll recovers */ }
 }
+
+document.getElementById("warm-reset").addEventListener("click", async () => {
+    if (!confirm("Warm reset the FECs/hybrids now?\nBrings all hybrids to the ready state. Never during a run.")) return;
+    const res = await fetch("/chip_config/warm_reset", { method: "POST" });
+    const d = await res.json();
+    showPopup(d.message, d.success ? "#17a2b8" : "#dc3545");
+    updateChipcfgStatus();
+});
 
 document.getElementById("chipcfg-select").addEventListener("change", async (ev) => {
     const res = await fetch("/chip_config/select", {

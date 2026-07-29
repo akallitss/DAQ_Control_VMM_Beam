@@ -452,6 +452,16 @@ def run_config_py():
         data = request.get_json(silent=True) or {}
         with_dream = bool(data.get("dream"))
 
+        # Pre-run readiness gate: every run start must be preceded by a warm
+        # reset that brought ALL hybrids to ready (the known failure mode is
+        # non-ready hybrids after acq start/stops). A successful warm reset
+        # arms exactly one start; sites without the script are never gated.
+        if not chip.run_armed():
+            return jsonify({"success": False,
+                            "message": "Warm reset required before starting a run — "
+                                       "press Warm Reset and wait for all hybrids "
+                                       "to come back ready."}), 409
+
         subprocess.Popen([sys.executable, f"{BASE_DIR}/run_config_beam.py"])
         time.sleep(1)
         config_path = os.path.join(CONFIG_RUN_DIR, 'run_config_beam.json')
@@ -486,6 +496,7 @@ def run_config_py():
 
         if result.returncode == 0:
             _save_current_run(run_name)  # seed Current run immediately
+            chip.consume_warm_reset()    # next run needs a fresh warm reset
             msg = "Run started with loaded run_config_beam.py" + \
                   (" — combined with Dream" if with_dream else "")
             return jsonify({"success": True, "message": msg, "run_name": run_name})
@@ -1081,6 +1092,16 @@ def chip_config_apply():
     if ok:
         log_event('CHIP_CONFIG', 'flask_button', file=chip.selected() or '?',
                   remote_addr=request.remote_addr)
+    return jsonify({"success": ok, "message": msg}), (200 if ok else 409)
+
+
+@app.route("/chip_config/warm_reset", methods=["POST"])
+def chip_config_warm_reset():
+    """Warm-reset the FECs/hybrids (p2basket utility; exit code = failed
+    hybrids). A fully-ready result (0 failed) arms exactly one run start."""
+    ok, msg = chip.warm_reset()
+    if ok:
+        log_event('WARM_RESET', 'flask_button', remote_addr=request.remote_addr)
     return jsonify({"success": ok, "message": msg}), (200 if ok else 409)
 
 
