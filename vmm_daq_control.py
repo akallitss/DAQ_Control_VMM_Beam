@@ -265,6 +265,7 @@ class DumpcapCapture:
         self.iface = iface
         duration = info.get('capture_duration_s', 44)
         cmd = ['dumpcap', '-i', iface, '-q',
+               '-g',  # group-read on output files (dumpcap forces 0600 otherwise)
                '-b', f'duration:{duration}',
                '-w', os.path.join(raw_dir, f'{iface}.pcapng')]
         bpf = info.get('bpf_filter')
