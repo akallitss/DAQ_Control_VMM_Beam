@@ -86,9 +86,12 @@ SITES = {
         # CAEN is driven from this machine.
         'hv_ip': 'sim',
         'hv_n_cards': 4,
-        # Aim-TTi units on the DAQ LAN (same addresses as the previous setup);
-        # the TDK-Lambda hybrid/ALINX supplies are separate, monitored via the
-        # GUI power panel.
+        # No Aim-TTi units at H4 — the LV is the TDK-Lambda supplies
+        # (.247-.249 on this same subnet), driven by switchOn/Off_tdk.sh and
+        # monitored via the GUI power panel + per-run tdk_lv_monitor.csv.
+        # The .241/.242 addresses were inherited placeholders; run_2 confirmed
+        # nothing answers there. lv_monitoring off = no empty lv_monitor.csv.
+        'lv_monitoring': False,
         'lv_units': {
             'tti1': '192.168.0.241',
             'tti2': '192.168.0.242',
@@ -272,7 +275,12 @@ class Config(RunConfigBase):
                 for name, ip in _SITE_CFG['lv_units'].items()
             },
             'run_out_dir': self.run_out_dir,
-            'lv_monitoring': True,      # True to monitor LV during run, False to not monitor
+            # Site-switchable: at sps there are NO Aim-TTi units — the LV is
+            # the TDK-Lambda supplies (switchOn/Off_tdk.sh), monitored by the
+            # GUI power panel (10 s auto-measure) and recorded per run in
+            # tdk_lv_monitor.csv by daq_control. Monitoring 'sim'/absent TTis
+            # only produced DISCONNECTED retries + empty lv_monitor.csv.
+            'lv_monitoring': _SITE_CFG.get('lv_monitoring', True),
             'monitor_interval': 2,      # seconds between LV monitoring rows
             'also_write_tti_logs': False,  # True: additionally write legacy tti*_mon.log files
             'reconnect_interval': 5,    # seconds between reconnect attempts after a socket error
