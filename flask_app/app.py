@@ -1032,6 +1032,67 @@ def dream_status():
     return jsonify(out)
 
 
+# ---------------------------------------------------------------------------
+# Live hit counter — incremental walk of the CURRENT run's growing pcapng
+# files. Only bytes appended since the last poll are read (per-file offsets
+# cached), so polling every couple of seconds stays cheap for GB files.
+# hits_est = per-packet (captured_len - 42 eth/ip/udp - 16 frame header) / 6
+# byte hit words — a live ESTIMATE; the QA decode remains the analyzed truth.
+# ---------------------------------------------------------------------------
+import threading as _lh_threading
+import struct as _lh_struct
+import glob as _lh_glob
+
+_LIVE_CAP = {}
+_LIVE_LOCK = _lh_threading.Lock()
+
+
+def _scan_pcapng_increment(path, st):
+    """Advance st over complete pcapng blocks appended since st['offset']."""
+    with open(path, 'rb') as f:
+        f.seek(st['offset'])
+        while True:
+            hdr = f.read(8)
+            if len(hdr) < 8:
+                break
+            btype, blen = _lh_struct.unpack('<II', hdr)
+            if blen < 12 or blen % 4:
+                break  # corrupt / unexpected endianness — stop advancing
+            body = f.read(blen - 8)
+            if len(body) < blen - 8:
+                break  # incomplete tail block — dumpcap is mid-write
+            st['offset'] += blen
+            if btype == 6:  # Enhanced Packet Block
+                cap_len = _lh_struct.unpack_from('<I', body, 12)[0]
+                st['packets'] += 1
+                st['bytes'] += cap_len
+                st['hits'] += max(0, cap_len - 42 - 16) // 6
+
+
+@app.route("/live_hits")
+def live_hits():
+    """Live packets/hits estimate straight from the current run's pcapng files."""
+    run_name = _current_run_cache
+    if not run_name:
+        return jsonify({"success": False, "message": "no current run"})
+    paths = sorted(_lh_glob.glob(os.path.join(
+        RUN_DIR, run_name, "*", "raw_daq_data", "*.pcapng")))
+    tot = {"packets": 0, "hits_est": 0, "bytes": 0, "files": len(paths)}
+    with _LIVE_LOCK:
+        for p in paths:
+            st = _LIVE_CAP.setdefault(p, {"offset": 0, "packets": 0,
+                                          "hits": 0, "bytes": 0})
+            try:
+                if os.path.getsize(p) > st["offset"]:
+                    _scan_pcapng_increment(p, st)
+            except OSError:
+                continue
+            tot["packets"] += st["packets"]
+            tot["hits_est"] += st["hits"]
+            tot["bytes"] += st["bytes"]
+    return jsonify({"success": True, "run": run_name, **tot})
+
+
 @app.route("/hv_data_dream")
 def hv_data_dream():
     """HV traces proxied READ-ONLY from the Dream DAQ — the crate owner at
