@@ -1830,14 +1830,24 @@ async function updateChipcfgStatus() {
         btn.textContent = s.running ? "Configuring…" : "Configure chip";
         const st = document.getElementById("chipcfg-status");
         const out = document.getElementById("chipcfg-output");
-        if (s.capture_active) {
+        // Clean signal only — the raw script output is surfaced ONLY on failure.
+        if (s.running) {
+            st.textContent = `loading configuration into the chips (${s.selected || "…"})…`;
+            st.classList.remove("text-danger", "text-success");
+            out.classList.add("d-none");
+        } else if (s.capture_active) {
             st.textContent = "capture running — configure blocked";
-            st.classList.remove("text-danger");
+            st.classList.remove("text-danger", "text-success");
+            out.classList.add("d-none");
         } else if (s.last) {
-            st.textContent = `${s.last.file} ${s.last.rc === 0 ? "ok" : "FAILED"} @ ${s.last.ts}`;
-            st.classList.toggle("text-danger", s.last.rc !== 0);
+            const ok = s.last.rc === 0;
+            st.textContent = ok
+                ? `chip configured ✓ (${s.last.file}) @ ${s.last.ts}`
+                : `configure FAILED ✗ (${s.last.file}) @ ${s.last.ts}`;
+            st.classList.toggle("text-danger", !ok);
+            st.classList.toggle("text-success", ok);
             out.textContent = s.last.output;
-            out.classList.toggle("d-none", !s.last.output);
+            out.classList.toggle("d-none", ok || !s.last.output);
         } else {
             st.textContent = "";
         }
