@@ -74,7 +74,9 @@ SITES = {
         ],
     },
     'sps': {
-        'base_data_dir': '/local/p2/p2data/sps_vmm_2026/',  # TODO-SPS: data disk on VMM DAQ machine
+        # July 2026 test beam, SPS H4: shared group data tree on the DAQ machine
+        # (basketp2 group-writable, setgid + default ACLs).
+        'base_data_dir': '/local/p2/p2data/TB_July26_H4/',
         'daq_host': '127.0.0.1',                            # TODO-SPS: DAQ computer IP (as seen by clients)
         'hv_ip': '192.168.10.81',                           # TODO-SPS: CAEN mainframe IP at SPS
         'hv_n_cards': 4,                                    # TODO-SPS: number of cards in SPS crate
@@ -84,9 +86,15 @@ SITES = {
         },
         'simulate': False,
         'interfaces': [
-            {'name': 'alinx', 'iface': 'enp4s0f1', 'slow_control': 'alinx',
-             # TODO-SPS: path to config_alinx_noThresholds.json on the DAQ machine
-             'alinx_config': '/local/p2/vmm_config/config_alinx_noThresholds.json'},
+            {'name': 'alinx', 'iface': 'enp4s0f1', 'slow_control': 'p2basket',
+             # CERN deploy, per TestBenchCERN/README: acquisition is armed with
+             # bare `p2basket-sc --acq-on/--acq-off` (no config file), run from
+             # the TestBenchCERN directory. alinx-sc only exists in the old
+             # December install and is NOT on PATH here — do not switch back.
+             'p2basket_sc': '/local/p2/deploy/bin/p2basket-sc',
+             'sc_cwd': '/local/p2/p2testbench/TestBenchCERN',
+             'sc_config': 'config_base/p2b-config-cern-base.yaml',
+             'alinx_config': None},
             # SRS chain — uncomment to also capture the SRS/FEC interface:
             # {'name': 'srs', 'iface': 'enx0c37968d3d99', 'slow_control': 'none',
             #  'alinx_config': None},

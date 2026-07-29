@@ -6,7 +6,8 @@ VMM DAQ control server (port 2101).
 Replaces dream_daq_control.py from DAQ_Control_Dream_Beam: instead of driving
 the Dream RunCtrl, it captures raw UDP from the VMM front-ends into rotating
 .pcapng files with dumpcap (or a tcpdump loop), with optional ALINX slow
-control (alinx-sc --acq-on/--acq-off) around each sub-run.
+control around each sub-run (alinx-sc with a json config, or the CERN deploy's
+p2basket-sc --acq-on/--acq-off per interfaces[].slow_control).
 
 Protocol (same as the Dream server, spoken by daq_control.py/DAQController.py):
   handshake: receive -> send 'VMM DAQ control connected' -> receive vmm_daq_info JSON
@@ -163,67 +164,90 @@ def _remove_file(path):
 
 
 # ---------------------------------------------------------------------------
-# ALINX slow control
+# Front-end slow control (acquisition arming), per-interface backend:
+#   'alinx'    — legacy alinx-sc with a json config file (Saclay bench)
+#   'p2basket' — the CERN deploy's p2basket-sc CLI, driven exactly as the
+#                TestBenchCERN/README prescribes: bare --acq-on / --acq-off,
+#                no config file (the tool carries the hardware setup itself).
+#                Binary path in the interface entry 'p2basket_sc'; optional
+#                'sc_cwd' to run from (the README runs from TestBenchCERN).
 # ---------------------------------------------------------------------------
 
-def _alinx_interfaces(info):
-    """Interfaces with ALINX slow control and a configured alinx-sc config file."""
+def _sc_interfaces(info):
+    """Interfaces with a usable slow-control backend configured."""
     if info.get('simulate'):
         return []
-    return [i for i in info.get('interfaces', [])
-            if i.get('slow_control') == 'alinx' and i.get('alinx_config')]
+    out = []
+    for i in info.get('interfaces', []):
+        sc = i.get('slow_control')
+        if (sc == 'alinx' and i.get('alinx_config')) or sc == 'p2basket':
+            out.append(i)
+    return out
 
 
-def _run_alinx_sc(alinx_config, action):
-    """Run alinx-sc --config-file <cfg> --<action>; return (ok, output)."""
-    cmd = ['alinx-sc', '--config-file', alinx_config, f'--{action}']
+def _run_sc(iface_info, action):
+    """Run the interface's slow-control command for <action>; return (ok, output)."""
+    if iface_info.get('slow_control') == 'p2basket':
+        # Explicit --config-file: bare p2basket-sc relies on a per-user default
+        # ("No configuration file defined for user ...") — deterministic beats
+        # invisible session state. sc_config is relative to sc_cwd.
+        cmd = [iface_info.get('p2basket_sc', 'p2basket-sc')]
+        if iface_info.get('sc_config'):
+            cmd += ['--config-file', iface_info['sc_config']]
+        cmd.append(f'--{action}')
+        cwd = iface_info.get('sc_cwd')
+    else:
+        cmd = ['alinx-sc', '--config-file', iface_info['alinx_config'], f'--{action}']
+        cwd = None
     print(f'[vmm daq] Running: {" ".join(cmd)}')
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=cwd)
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        logging.error(f'alinx-sc {action} failed to run: {e}')
+        logging.error(f'slow control {action} failed to run: {e}')
         return False, str(e)
     output = (result.stdout or '') + (result.stderr or '')
     for line in output.strip().splitlines():
-        logging.info(f'alinx-sc: {line}')
+        logging.info(f'slow control: {line}')
     return result.returncode == 0, output
 
 
 def alinx_acq_on(info):
-    """Read link status then switch acquisition ON (with retries) for every ALINX interface."""
-    for iface_info in _alinx_interfaces(info):
-        cfg = iface_info['alinx_config']
-        ok, _ = _run_alinx_sc(cfg, 'read-link-status')
-        print(f'[vmm daq] ALINX link status {"OK" if ok else "FAIL"} ({iface_info["iface"]})')
+    """Read link status then switch acquisition ON (with retries) for every SC interface."""
+    for iface_info in _sc_interfaces(info):
+        ok, _ = _run_sc(iface_info, 'read-link-status')
+        print(f'[vmm daq] Front-end link status {"OK" if ok else "FAIL"} ({iface_info["iface"]})')
         retries = info.get('acq_on_retries', 3)
         print(f'[vmm daq] Switching acquisition ON ({iface_info["iface"]})')
         for attempt in range(1, retries + 1):
-            ok, _ = _run_alinx_sc(cfg, 'acq-on')
+            ok, _ = _run_sc(iface_info, 'acq-on')
             if ok:
                 break
-            logging.warning(f'alinx-sc acq-on attempt {attempt}/{retries} failed')
+            logging.warning(f'slow control acq-on attempt {attempt}/{retries} failed')
             time.sleep(2)
         if not ok:
-            print(f'[vmm daq] ALINX ERROR acq-on failed ({iface_info["iface"]})')
+            print(f'[vmm daq] SLOW CONTROL ERROR acq-on failed ({iface_info["iface"]})')
             return False
     return True
 
 
 def alinx_acq_off(info):
-    """Switch acquisition OFF and read back link status for every ALINX interface."""
-    for iface_info in _alinx_interfaces(info):
-        cfg = iface_info['alinx_config']
+    """Switch acquisition OFF and read back link status for every SC interface."""
+    for iface_info in _sc_interfaces(info):
         print(f'[vmm daq] Switching acquisition OFF ({iface_info["iface"]})')
-        ok, _ = _run_alinx_sc(cfg, 'acq-off')
+        ok, _ = _run_sc(iface_info, 'acq-off')
         if not ok:
-            print(f'[vmm daq] ALINX ERROR acq-off failed ({iface_info["iface"]})')
-        _run_alinx_sc(cfg, 'read-link-status')
+            print(f'[vmm daq] SLOW CONTROL ERROR acq-off failed ({iface_info["iface"]})')
+        _run_sc(iface_info, 'read-link-status')
 
 
 def copy_provenance(raw_dir, info):
-    """Copy the alinx-sc config(s) used into the subrun raw dir for provenance."""
-    for iface_info in _alinx_interfaces(info):
-        cfg = iface_info['alinx_config']
+    """Copy the slow-control config file(s) used into the subrun raw dir for
+    provenance. Only the alinx backend has one; for p2basket the chip config
+    (base yaml + selected ext txt) is recorded at run level by daq_control."""
+    for iface_info in _sc_interfaces(info):
+        cfg = iface_info.get('alinx_config')
+        if not cfg:
+            continue
         try:
             shutil.copy(cfg, raw_dir)
         except OSError as e:
