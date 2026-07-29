@@ -91,6 +91,15 @@ Contract:
 - We pass `--config-file` **explicitly**: the bare `p2basket-sc --acq-on` from
   the README relies on a per-user default config, which the DAQ account does
   not have.
+- **Arming never touches chip registers.** `--config-file` is a parameter
+  command (loads the yaml into the tool's memory for addressing only);
+  register writes happen exclusively through the three `config-*-regs`
+  actions, which only the chip-config utility (GUI "Configure chip") runs.
+  A run start/stop can therefore never overwrite an applied configuration.
+- **Session lock**: p2basket-sc holds a per-user session lock. If someone is
+  working with the slow control when a run starts, acq-on fails with a named
+  "Session locked by <user>" error (caught cleanly, sub-run aborts). Shift
+  rule: the lock must be free before Start Run.
 
 ### 3.3 LV power (GUI Hybrids LV Power panel)
 
