@@ -11,8 +11,10 @@ control card added.
 @author: Alexandra Kallitsopoulou (based on Dylan Neff's original)
 """
 
+import os
 import subprocess
 import re
+from datetime import datetime
 
 
 """ Colors:
@@ -117,7 +119,51 @@ def get_hv_control_status():
     return {"status": status, "color": color, "fields": []}
 
 
+def _tdk_lv_status():
+    """LV card from the TDK auto-measure history, when that feed is live.
+
+    At this setup the LV is the TDK-Lambda supplies (no Aim-TTi units): the
+    GUI power panel measures them every ~10 s into logs/tdk_lv_history.csv.
+    A fresh file means the LV that matters is monitored — report it with the
+    live readings instead of parsing the (idle) TTi lv_control pane. Returns
+    None when the feed is absent/stale so the caller falls back."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'logs', 'tdk_lv_history.csv')
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 4096))
+            rows = f.read().decode(errors='replace').splitlines()[-3:]
+    except OSError:
+        return None
+    readings, latest = [], None
+    for r in rows:
+        p = r.strip().split(',')
+        if len(p) >= 5 and p[0] != 'timestamp':
+            latest = p[0]
+            try:
+                readings.append(f'{p[2]}: {float(p[3]):.2f} V / {float(p[4]):.2f} A')
+            except ValueError:
+                continue
+    if not latest or not readings:
+        return None
+    try:
+        age = (datetime.now() - datetime.strptime(latest, '%Y-%m-%d %H:%M:%S')).total_seconds()
+    except ValueError:
+        return None
+    if age > 60:
+        return None  # feed stale — fall back to the TTi pane parse
+    return {
+        "status": "LV OK (TDK)",
+        "color": "success",
+        "fields": [{"label": "Supplies", "value": '  |  '.join(readings)}],
+    }
+
+
 def get_lv_control_status():
+    tdk = _tdk_lv_status()
+    if tdk:
+        return tdk
     try:
         output = subprocess.check_output(
             ["tmux", "capture-pane", "-pS", "-50", "-t", "vmm_lv_control:0.0"],
