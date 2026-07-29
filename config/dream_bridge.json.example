@@ -3,7 +3,7 @@
   "dream_flask_url": "http://128.141.21.144:5001",
   "token": "CHANGE-ME-shared-secret",
   "hv_gate": {
-    "channel_labels": {"1:0": "B_Mesh", "1:1": "B_Drift"},
+    "channel_labels": {"8:0": "IN_Drift", "8:1": "IN_Mesh", "8:2": "MID_Drift", "8:3": "MID_Mesh", "8:4": "OUT_Drift", "8:5": "OUT_Mesh"},
     "tolerance_v": 3.0,
     "poll_s": 5,
     "timeout_s": 900

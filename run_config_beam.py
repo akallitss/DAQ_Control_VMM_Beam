@@ -126,14 +126,25 @@ N_SUBRUNS = 2       # number of identical sub-runs
 SUBRUN_MIN = 2      # run time per sub-run (minutes)
 POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = no pause
 
-# Nominal P2 operating point (cosmic bench long-run values, Ar/Iso 95/5):
-MESH_V = 440    # V, P2 mesh
-DRIFT_V = 600   # V, P2 drift (drift gap = drift - mesh = 160 V)
-
-# P2 HV channels: (card, channel). TODO-SPS: update once the SPS crate is cabled.
+# P2 stations' HV on the SPS CAEN crate (192.168.10.199, banco's DAQ LAN),
+# MIRRORED 2026-07-29 from the Dream DAQ's run_config_beam.py on banco, which
+# has been running these detectors so far. Keep in sync with Dream until the
+# combined-run trigger makes THIS file the single edit point. NOTE: at sps no
+# process on this machine drives the crate — these channels/setpoints are the
+# targets carried in each sub-run ('hvs'), which the Dream-readback shim gates
+# the capture on and the combined-run trigger sends to Dream to ramp.
+# Channels (card, channel) confirmed at the beam 2026-07-22: card 8.
 P2_HV = {
-    'mesh': (1, 0),
-    'drift': (1, 1),
+    'P2_IN':  {'drift': (8, 0), 'mesh': (8, 1)},
+    'P2_MID': {'drift': (8, 2), 'mesh': (8, 3)},
+    'P2_OUT': {'drift': (8, 4), 'mesh': (8, 5)},
+}
+# Operating point of 2026-07-27/28 (mirrored from Dream's OPERATING_HV):
+# P2_IN is the new metallic-mesh chamber, measured slightly lower.
+OPERATING_HV = {
+    'P2_IN':  {'drift': 740, 'mesh': 440},   # gap = 300 V
+    'P2_MID': {'drift': 750, 'mesh': 450},   # gap = 300 V
+    'P2_OUT': {'drift': 750, 'mesh': 450},   # gap = 300 V
 }
 
 # Capture: seconds per pcapng file (dumpcap ring-buffer rotation interval).
@@ -242,58 +253,64 @@ class Config(RunConfigBase):
         }
 
         # ----- Run schedule (built from module constants above) -----
-        self.sub_runs = []
-        mesh_card, mesh_ch = P2_HV['mesh']
-        drift_card, drift_ch = P2_HV['drift']
-        for i in range(N_SUBRUNS):
+        # Each sub-run's 'hvs' carries the targets of ALL P2 stations at the
+        # operating point ({card: {channel: volts}}).
+        def _operating_hvs():
             hvs = {}
-            hvs.setdefault(str(mesh_card), {})[str(mesh_ch)] = MESH_V
-            hvs.setdefault(str(drift_card), {})[str(drift_ch)] = DRIFT_V
+            for det, roles in P2_HV.items():
+                for role, (card, ch) in roles.items():
+                    hvs.setdefault(str(card), {})[str(ch)] = OPERATING_HV[det][role]
+            return hvs
+
+        self.sub_runs = []
+        for i in range(N_SUBRUNS):
             self.sub_runs.append({
-                'sub_run_name': f'mesh_{MESH_V}V_drift_{DRIFT_V}V_{i:02d}',
+                'sub_run_name': f'nominal_{i:02d}',
                 'run_time': SUBRUN_MIN,  # Minutes
                 'post_pause_s': int(round(POST_SUBRUN_PAUSE_MIN * 60)),  # pause after this sub-run (seconds)
-                'hvs': hvs,
+                'hvs': _operating_hvs(),
             })
 
-        # --- HV scan template (uncomment and adapt at the beam) ---
-        # for mesh_v in range(430, 465, 5):
+        # --- HV scan template (uncomment and adapt at the beam): step every
+        # --- station's mesh DOWN from the operating point, drift following so
+        # --- each station's own 300 V gap stays constant (Dream convention).
+        # for j, dv in enumerate(range(0, 60, 5)):
+        #     hvs = {}
+        #     for det, roles in P2_HV.items():
+        #         for role, (card, ch) in roles.items():
+        #             hvs.setdefault(str(card), {})[str(ch)] = OPERATING_HV[det][role] - dv
         #     self.sub_runs.append({
-        #         'sub_run_name': f'mesh_{mesh_v}V_drift_{mesh_v + 160}V',
+        #         'sub_run_name': f'meshscan_m{dv:02d}V',
         #         'run_time': 20,
-        #         'hvs': {str(mesh_card): {str(mesh_ch): mesh_v},
-        #                 str(drift_card): {str(drift_ch): mesh_v + 160}},
+        #         'hvs': hvs,
         #     })
 
-        self.included_detectors = ['P2_1']
+        self.included_detectors = ['P2_IN', 'P2_MID', 'P2_OUT']
 
+        # The three P2 telescope stations, mirrored 2026-07-29 from the Dream
+        # config on banco (names, z positions, HV channels) — same detectors,
+        # now read out by the VMM chain. TODO-SPS: per-station hybrid/VMM split
+        # in vmm_map (ask the p2basket colleagues for the cabling).
+        _P2_Z_MM = {'P2_IN': 320.0, 'P2_MID': 630.0, 'P2_OUT': 940.0}
         self.detectors = [
             {
-                'name': 'P2_1',
-                'description': 'Bulked at 11-6-26 with footprint on the mesh from the frame gluing',
+                'name': det,
+                'description': f'P2 telescope {det.split("_")[1]} '
+                               f'(z={_P2_Z_MM[det]:.0f} mm), VMM readout. '
+                               'HV channels mirrored from the Dream config.',
                 'det_type': 'P2',
                 'resist_type': 'none',
-                'bulked_from': 'Alex+Arnaud',
-                'det_center_coords': {  # Center of detector. TODO-SPS: beam-line survey coordinates
-                    'x': 0,  # mm
-                    'y': 0,  # mm
-                    'z': 0,  # mm
-                },
-                'det_orientation': {
-                    'x': 0,  # deg  Rotation about x axis
-                    'y': 0,  # deg  Rotation about y axis
-                    'z': 0,  # deg  Rotation about z axis
-                },
-                'hv_channels': {
-                    'mesh': P2_HV['mesh'],
-                    'drift': P2_HV['drift'],
-                },
+                'bulked_from': 'Alex+Enzo',
+                'det_center_coords': {'x': 0, 'y': 0, 'z': _P2_Z_MM[det]},  # mm
+                'det_orientation': {'x': 0, 'y': 0, 'z': 0},  # deg
+                'hv_channels': P2_HV[det],
                 # VMM readout cabling (informational; used to label QA plots).
-                # iface -> hybrid/VMM ids seen in the data. TODO-SPS: fill actual map.
+                # iface -> hybrid/VMM ids seen in the data. TODO-SPS: actual split.
                 'vmm_map': {
-                    'enp4s0f1': {'hybrids': 'alinx', 'vmms': list(range(16))},
+                    'enx00249b8724a0': {'hybrids': 'alinx', 'vmms': list(range(16))},
                 },
-            },
+            }
+            for det in ['P2_IN', 'P2_MID', 'P2_OUT']
         ]
 
         if not self.write_all_detectors_to_json:
@@ -318,7 +335,8 @@ if __name__ == '__main__':
     print(f'Site: {SITE}  (simulate={SIMULATE})')
     print(f'Base data dir: {BASE_DATA_DIR}')
     print(f'Gas: {config.gas}')
-    print(f'P2 mesh: {MESH_V} V   drift: {DRIFT_V} V   (gap = {DRIFT_V - MESH_V} V)')
+    for _det, _p in OPERATING_HV.items():
+        print(f'{_det}: mesh {_p["mesh"]} V   drift {_p["drift"]} V   (gap = {_p["drift"] - _p["mesh"]} V)')
     print(f'Capture: {", ".join(ifaces)}  ({config.vmm_daq_info["capture_tool"]}, '
           f'{config.vmm_daq_info["capture_duration_s"]} s/file)')
     print(f'LV units: {", ".join(config.lv_info["units"].keys())}')
