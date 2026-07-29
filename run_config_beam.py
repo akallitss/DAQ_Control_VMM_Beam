@@ -85,11 +85,12 @@ SITES = {
         # CAEN is driven from this machine.
         'hv_ip': 'sim',
         'hv_n_cards': 4,
-        # LV: no Aim-TTi units at this setup — the real LV is the TDK-Lambda
-        # supplies, monitored via the GUI power panel (60 s auto-measure).
+        # Aim-TTi units on the DAQ LAN (same addresses as the previous setup);
+        # the TDK-Lambda hybrid/ALINX supplies are separate, monitored via the
+        # GUI power panel.
         'lv_units': {
-            'tti1': 'sim',
-            'tti2': 'sim',
+            'tti1': '192.168.0.241',
+            'tti2': '192.168.0.242',
         },
         'simulate': False,
         'interfaces': [
