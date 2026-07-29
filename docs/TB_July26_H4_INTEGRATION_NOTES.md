@@ -191,6 +191,29 @@ Agreed design:
   (single-client Server.py made concurrent sharing impossible anyway; that
   fallback remains documented for VMM-only periods without Dream).
 
+## Step 9 — dry-run prep + beam2/Disk Space mirror (2026-07-29)
+
+Preparing the first GUI dry run (NOT yet launched):
+
+- **Dry-run schedule**: 1 sub-run × 10 s in `run_config_beam.py` (restore beam
+  values after). No HV is ramped — the shim passes VMM-only runs instantly.
+- **Per-run LV record**: at run teardown, `daq_control` snapshots the TDK
+  auto-measure rows covering the run into `<run>/tdk_lv_monitor.csv`.
+- **Disk Space tab live**: regenerated `config/backup_config.json` (it was
+  never generated on the shared copy) — tab now shows the TB_July26_H4 disk.
+- **Beam + Beam2 mirrored from the Dream DAQ** (its beam stack evolved after
+  our July port): `beam_bridge.py` (lxplus watcher publishes to EOS
+  `/eos/user/a/akallits/beam_monitor`; the bridge xrdcp-pulls state + CSVs —
+  same files serve both DAQs), new `sps_monitor/` (spill structure, H4 line,
+  TAX barrier proxied from the mx17 DAQ), rewritten Beam tab + new Beam2 tab
+  + Overview beam tile, payload-timestamp staleness logic. Start Beam Watcher
+  now launches the bridge (`SPS_BEAM_MODE=direct` would use NXCALS directly).
+- **Missing runtime prerequisites on this machine** (bridge AND the EOS
+  backup watcher need them): xrootd client tools (`xrdcp`/`xrdfs`, e.g.
+  conda-forge xrootd linked into `~/bin`) and CERN.CH Kerberos
+  (`kinit akallits@CERN.CH`, plus `~/.cern_pass.gpg` for unattended renewal).
+  Until then the Beam/Beam2 tabs honestly report "watcher not running".
+
 ## Git workflow at the beam (decided 2026-07-29)
 
 **The shared repo on the DAQ machine is the source of truth during the beam

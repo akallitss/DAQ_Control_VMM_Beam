@@ -233,6 +233,7 @@ def main():
         vmm_daq.send('Finished')
         if lv_monitoring:
             lv.send('Finished')
+    save_tdk_lv_slice(config.run_out_dir, config.start_time)
     print('donzo')
 
 
@@ -271,6 +272,37 @@ def run_daq_controller(sub_run, sub_out_dir, vmm_daq_client):
             break
         print('Starting DAQ Controller')
         daq_success = daq_controller.run()
+
+
+def save_tdk_lv_slice(run_out_dir, start_time_str):
+    """Save the TDK LV auto-measure rows covering this run into the run
+    directory (tdk_lv_monitor.csv) — per-run record of the supplies'
+    performance. The rolling history stays in logs/tdk_lv_history.csv (the
+    GUI measures every 60 s whether or not a run is going). Best-effort:
+    a missing history never blocks run teardown."""
+    import csv
+    base = os.path.dirname(os.path.abspath(__file__))
+    src = os.path.join(base, 'logs', 'tdk_lv_history.csv')
+    try:
+        with open(src) as f:
+            rows = list(csv.reader(f))
+        if len(rows) < 2:
+            return
+        header, data = rows[0], rows[1:]
+        # Timestamps are 'YYYY-mm-dd HH:MM:SS' — string compare == time compare.
+        keep = [r for r in data if r and r[0] >= start_time_str]
+        if not keep:
+            return
+        out = os.path.join(run_out_dir, 'tdk_lv_monitor.csv')
+        with open(out, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(header)
+            w.writerows(keep)
+        print(f'TDK LV: saved {len(keep)} rows of supply readings to {out}')
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f'TDK LV slice failed (non-fatal): {e}')
 
 
 def dream_bridge_stop():

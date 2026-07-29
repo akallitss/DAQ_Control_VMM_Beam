@@ -243,3 +243,5 @@ config/dream_bridge.json
 config/dream_bridge_state.json
 logs/tdk_lv_history.csv
 logs/daq_events.log
+config/sps_state.json
+beam_monitor/logs/
