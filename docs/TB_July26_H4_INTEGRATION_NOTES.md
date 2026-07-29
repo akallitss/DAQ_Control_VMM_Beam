@@ -191,6 +191,32 @@ Agreed design:
   (single-client Server.py made concurrent sharing impossible anyway; that
   fallback remains documented for VMM-only periods without Dream).
 
+## Git workflow at the beam (decided 2026-07-29)
+
+**The shared repo on the DAQ machine is the source of truth during the beam
+test — commit and push from there**, not from personal laptops with rsync.
+Everything is committed as of 18e43c0 and the shared repo pushes straight to
+GitHub (`git push github main`).
+
+Per person, one-time setup:
+1. Get collaborator (write) access to `github.com/akallitss/DAQ_Control_VMM_Beam`.
+2. ssh into the DAQ machine with **your own account and agent forwarding**
+   (`ssh -A`), so pushes use your own GitHub key.
+3. Set your identity once in your account there:
+   `git config --global user.name "..." && git config --global user.email "..."`
+   (identity is deliberately NOT set in the shared repo's config — otherwise
+   everyone's commits would be attributed to one person).
+
+Rules of the road:
+- Commit at least at the end of your shift / when a feature works. The repo
+  is group-writable — uncommitted work is unprotected.
+- `git push github main` after committing; `git pull github main` before
+  starting changes.
+- **Careful with the GUI "Git Reset" button** — it hard-resets and wipes
+  uncommitted machine edits. Use it only deliberately, never as "sync".
+- Off-beam development on personal machines goes through GitHub (push there,
+  pull on the DAQ machine) — never by copying files onto the shared tree.
+
 ---
 
 ## Decisions
