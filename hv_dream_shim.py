@@ -34,6 +34,7 @@ import os
 import time
 import urllib.request
 import urllib.parse
+from datetime import datetime
 
 from Server import Server
 
@@ -42,7 +43,14 @@ BRIDGE_CONFIG_PATH = os.path.join(BASE_DIR, 'config', 'dream_bridge.json')
 BRIDGE_STATE_PATH = os.path.join(BASE_DIR, 'config', 'dream_bridge_state.json')
 PORT = 2100
 
-GATE_DEFAULTS = {'tolerance_v': 3.0, 'poll_s': 5, 'timeout_s': 900}
+# max_readback_age_s: a readback older than this is STALE and cannot release the
+# gate. See _dream_readback_ok for why a matching-but-stale reading is possible
+# at all. Dream writes an hv_monitor row about once a second, so anything beyond
+# a few seconds means we are not looking at this sub-run. 60 s is deliberately
+# generous: banco's clock ran ~5 s ahead of the VMM box on 2026-07-30, and the
+# comparison is across the two machines.
+GATE_DEFAULTS = {'tolerance_v': 3.0, 'poll_s': 5, 'timeout_s': 900,
+                 'max_readback_age_s': 60}
 
 # How long the FIRST gate of a connection re-checks for the combined-run state
 # file before concluding the run is VMM-only. See _combined_state().
@@ -105,8 +113,37 @@ def _subrun_targets(sub_run):
     return targets
 
 
+def _readback_age_s(data):
+    """Seconds since Dream's last hv_monitor row, or None if it cannot be told."""
+    stamps = data.get('time') or []
+    if not stamps:
+        return None
+    try:
+        last = datetime.strptime(str(stamps[-1]).strip(), '%Y-%m-%d %H:%M:%S')
+    except Exception:
+        return None
+    return (datetime.now() - last).total_seconds()
+
+
 def _dream_readback_ok(bridge, state, sub_run, targets):
-    """(ok, detail): compare Dream's /hv_data last readback to targets."""
+    """(ok, detail): compare Dream's /hv_data last readback to targets.
+
+    THE READBACK MUST BE FRESH, not merely matching. Dream's /hv_data resolves
+    the run directory through _hv_run_dir(), which deliberately falls back to
+    "the most recent run that has HV data" when the requested run has none yet —
+    a GUI convenience so the plot does not go blank at run boundaries. A safety
+    gate consuming that fallback is a different matter: on run_26 (2026-07-30)
+    the first sub-run was meshscan_m100V, a name that also existed in run_25 at
+    the SAME voltages, so the fallback served run_25's finished readback, it
+    matched the targets exactly, and the gate opened on the first poll while the
+    crate was still at 0 V. 87 seconds of beam were recorded during the ramp.
+
+    Matching values can therefore come from a different run entirely. Age is what
+    distinguishes them: Dream writes a row about every second while a sub-run is
+    live, so anything older than max_readback_age_s is not this sub-run. An
+    unreadable or absent timestamp is treated as stale — the gate fails CLOSED,
+    because holding the DAQ costs seconds while opening it early costs data.
+    """
     gate = {**GATE_DEFAULTS, **bridge.get('hv_gate', {})}
     labels = gate.get('channel_labels') or {}
     base = bridge.get('dream_flask_url', '').rstrip('/')
@@ -119,6 +156,16 @@ def _dream_readback_ok(bridge, state, sub_run, targets):
         return False, f'hv_data unreachable: {e}'
     if not data or not data.get('success'):
         return False, 'no hv_data yet for this subrun'
+
+    age = _readback_age_s(data)
+    max_age = gate['max_readback_age_s']
+    if age is None:
+        return False, 'readback has no usable timestamp — treating as stale'
+    if age > max_age:
+        return False, (f'readback is {age:.0f}s old (limit {max_age}s) — STALE, '
+                       f'almost certainly another run served by the /hv_data '
+                       f'previous-run fallback; NOT releasing the gate')
+
     voltages = data.get('voltage', {})
     for chan, v0 in targets.items():
         label = labels.get(chan)
