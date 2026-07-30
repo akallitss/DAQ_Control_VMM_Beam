@@ -165,7 +165,7 @@ POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = n
 #
 # Ceilings (enforced again on the Dream side, which refuses the whole run):
 # mesh <= 450 V, drift <= 900 V. Asserted below so a bad edit fails here.
-RUN_PLAN = 'retake_run25'
+RUN_PLAN = 'config_scan'
 
 # Every point gets the SAME run_time — scan points are only comparable if they
 # are. Do NOT shorten the tail to squeeze the campaign inside a beam window: if
@@ -187,6 +187,47 @@ DRIFT_SCAN_GAPS_V = (150, 200, 250, 300, 350, 400)  # drift = that station's mes
 # repeated. 7 points x SCAN_SUBRUN_MIN ~= 90 min.
 RETAKE_MESH_STEPS_V = (100,)
 RETAKE_DRIFT_GAPS_V = (150, 200, 250, 300, 350, 400)
+
+# ---------------------------------------------------------------------------
+# RUN_PLAN='config_scan': scan the VMM chip configuration at FIXED HV.
+#
+# The chip config cannot be changed inside a run — chip.apply() refuses while a
+# capture is running and a fresh warm reset is needed to re-arm — so each config
+# is its OWN run and this plan generates exactly ONE sub-run. config_scan.py
+# drives the sequence: select -> apply -> warm reset -> run -> next.
+#
+# All three P2 stations sit at the same fixed point (2026-07-30, Alexandra),
+# unlike the HV scan where IN ran 10 V lower; the uRWELL references stay at
+# their operating point as always. Only the chip config varies between runs.
+CONFIG_SCAN_P2_HV = {'mesh': 435, 'drift': 735}      # gap 300
+CONFIG_SCAN_SUBRUN_MIN = 55                          # minutes of data per config
+
+CHIP_STATE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'config', 'chip_config_state.json')
+
+
+def _applied_chip_file():
+    """The chip config actually APPLIED to the VMMs, not merely selected.
+
+    Those differ: the GUI writes selected_ext on selection and last_applied only
+    when apply succeeds, and on 2026-07-30 the state held selected=peaktime100
+    while peaktime200 was what the chips were really running. For a config scan
+    the applied file is the only honest label for the data.
+    """
+    try:
+        with open(CHIP_STATE_PATH) as f:
+            return (json.load(f).get('last_applied') or {}).get('file') or ''
+    except Exception:
+        return ''
+
+
+def _chip_tag(fname):
+    """'p2b-config-cern-ext_gain3.0_peaktime200_opt.txt' -> 'gain3.0_peaktime200_opt'"""
+    tag = os.path.basename(fname or '')
+    for pre in ('p2b-config-cern-ext_',):
+        if tag.startswith(pre):
+            tag = tag[len(pre):]
+    return tag[:-4] if tag.endswith('.txt') else (tag or 'unknown_chip_config')
 
 # Continuation handshake with capture_guard.py. When the guard stops a run
 # because the VMM readout went silent, it writes config/continuation.json:
@@ -471,6 +512,17 @@ class Config(RunConfigBase):
                 'retake_run25':
                     lambda: _mesh_points(RETAKE_MESH_STEPS_V) +
                             _drift_points(RETAKE_DRIFT_GAPS_V),
+                # One sub-run at fixed HV; the variable is the chip config, and
+                # the sub-run is named after the config actually applied so the
+                # data says what it was taken with.
+                'config_scan':
+                    lambda: [{
+                        'sub_run_name': f'cfg_{_chip_tag(_applied_chip_file())}',
+                        'run_time': CONFIG_SCAN_SUBRUN_MIN,
+                        'post_pause_s': 0,
+                        'hvs': _scan_hvs({det: dict(CONFIG_SCAN_P2_HV)
+                                          for det in P2_HV}),
+                    }],
             }
 
             cont = _cont
@@ -502,6 +554,16 @@ class Config(RunConfigBase):
             # can tell which plan a finished run was following without guessing
             # from the current value of RUN_PLAN, which may have moved on.
             self.run_plan = plan
+            if plan == 'config_scan':
+                # The whole point of the run. Recorded explicitly rather than
+                # left implicit in the copied .txt, so a reader does not have to
+                # infer which config produced which run.
+                self.chip_config = _applied_chip_file()
+                if not self.chip_config:
+                    raise SystemExit(
+                        'config_scan: no applied chip config recorded in '
+                        f'{CHIP_STATE_PATH} — apply a config before starting, '
+                        'otherwise the run would be unlabelled')
 
         # --- HV scan template (uncomment and adapt at the beam): step every
         # --- station's mesh DOWN from the operating point, drift following so
