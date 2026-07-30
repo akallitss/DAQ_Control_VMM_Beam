@@ -28,3 +28,13 @@ bash_scripts/start_tmux.sh vmm_flask "$BASE_DIR/flask_app/start_flask.sh" 5000
 # the machine, taking the live DAQ with it. This kills the biggest QA/compute
 # process before that happens — never the DAQ. Tunable via config/mem_guardian.json.
 bash_scripts/start_tmux.sh vmm_mem_guardian "$PY $BASE_DIR/mem_guardian.py" 2000
+# Capture guard: the VMM readout has gone silent mid-run twice (2026-07-30),
+# writing packet-less 272-byte pcapng files while every health indicator kept
+# saying fine — and daq_control marks such sub-runs .subrun_complete anyway, so
+# run_25 banked five empty scan points and lost its whole drift scan. This
+# stops the run on two consecutive empty CLOSED capture files and records the
+# point to restart from. It does NOT trip on a beam outage (no beam => no
+# triggers => empty files are correct); it blames the VMM only when Dream, on
+# the same external trigger, is still recording. Idle and near-free when no run
+# is active, and it re-arms after acting.
+bash_scripts/start_tmux.sh vmm_capture_guard "$PY $BASE_DIR/capture_guard.py" 2000

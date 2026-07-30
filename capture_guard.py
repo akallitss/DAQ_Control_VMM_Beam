@@ -36,13 +36,27 @@ import urllib.request
 
 VMM_FLASK = 'http://localhost:5002'
 DREAM_FLASK = 'http://128.141.21.144:5001'
-RUNS_DIR = '/local/p2/p2data/TB_July26_H4/runs'
 LOG = '/local/p2/capture_guard.log'
+
+# Data tree from the run config, so this follows the SITE switch instead of
+# hardcoding the sps path. Importing run_config_beam is side-effect free — it
+# only defines constants and the Config class outside its __main__ guard.
+try:
+    from run_config_beam import BASE_DATA_DIR
+    RUNS_DIR = os.path.join(BASE_DATA_DIR, 'runs')
+except Exception:
+    RUNS_DIR = '/local/p2/p2data/TB_July26_H4/runs'
 
 POLL_S = 20
 EMPTY_TRIP = 2          # consecutive CLOSED empty files before stopping
 EMPTY_MAX_BYTES = 1024  # a packet-less pcapng is its 272-byte header
-DREAM_GROWTH_GRACE_S = 180   # Dream must have grown within this to blame the VMM
+# Capture must be ACTIVE (a file written this recently) before we judge anything.
+# /live_hits keeps reporting the last run name long after it ended, so without
+# this the guard would evaluate a finished run's leftover empty files the moment
+# it starts and "stop" a run that is not running. It also keeps the guard quiet
+# during the per-subrun HV gate, when no files are written and there is nothing
+# to judge. Comfortably longer than the 44.4 s dumpcap rotation.
+CAPTURE_STALE_S = 180
 
 
 def log(msg):
@@ -100,6 +114,18 @@ def current_subrun(run):
     return best[1] if best else None
 
 
+def capture_active(run, subrun):
+    """Has a capture file been written within CAPTURE_STALE_S? If not, either no
+    run is in progress or we are mid HV-gate — nothing to judge either way."""
+    d = os.path.join(RUNS_DIR, run, subrun, 'raw_daq_data')
+    try:
+        newest = max(os.path.getmtime(os.path.join(d, f))
+                     for f in os.listdir(d) if f.endswith('.pcapng'))
+    except Exception:
+        return False
+    return (time.time() - newest) < CAPTURE_STALE_S
+
+
 def closed_capture_sizes(run, subrun):
     """Sizes of CLOSED pcapng files, oldest first. The newest file is still
     being written, so it is excluded — judging it would trip on every rotation."""
@@ -130,14 +156,21 @@ def dream_recording():
 def main():
     log('capture_guard START — will stop the run on '
         f'{EMPTY_TRIP} consecutive closed empty pcapng files (>{EMPTY_MAX_BYTES} B = healthy)')
-    tripped = False
+    log(f'watching {RUNS_DIR}')
+    # This is a SERVICE started with the rest of the stack, so it must survive a
+    # trip and re-arm for the next run rather than exiting. stopped_run holds the
+    # run it already acted on, so it never fires twice for the same one.
+    stopped_run = None
     while True:
         run = current_run()
         if not run:
             time.sleep(POLL_S)
             continue
+        if run == stopped_run:      # already acted on this one; wait for the next
+            time.sleep(POLL_S)
+            continue
         sub = current_subrun(run)
-        if not sub:
+        if not sub or not capture_active(run, sub):
             time.sleep(POLL_S)
             continue
         sizes = closed_capture_sizes(run, sub)
@@ -148,10 +181,6 @@ def main():
                 log(f'{run}/{sub}: {EMPTY_TRIP} empty files but {why} — not stopping')
                 time.sleep(POLL_S)
                 continue
-            if tripped:
-                time.sleep(POLL_S)
-                continue
-            tripped = True
             log(f'*** TRIP *** {run}/{sub}: last {EMPTY_TRIP} closed capture files '
                 f'are empty ({tail} bytes) while {why}. The VMM readout is dead. '
                 f'Stopping the run.')
@@ -174,11 +203,8 @@ def main():
                 log(f'ALERT could not write {marker}: {e}')
             r = get_json(f'{VMM_FLASK}/stop_run', data={})
             log(f'stop_run response: {r}')
-            log('capture_guard EXIT (run stopped)')
-            return
-        else:
-            if tripped:
-                tripped = False
+            stopped_run = run
+            log(f're-arming for the next run (will not fire again for {run})')
         time.sleep(POLL_S)
 
 

@@ -179,6 +179,14 @@ SCAN_SUBRUN_MIN = 12                              # minutes per scan point
 MESH_SCAN_STEPS_V = tuple(range(0, 101, 10))      # subtracted from mesh AND drift
 DRIFT_SCAN_GAPS_V = (150, 200, 250, 300, 350, 400)  # drift = that station's mesh + gap
 
+# RUN_PLAN='retake_run25': just the points run_25 lost. Its VMM readout went
+# silent at 13:06 on 2026-07-30 and wrote packet-less files for the rest of the
+# run, so meshscan_m100V and the WHOLE drift scan hold no P2 data (the uRWELL
+# data from Dream is good throughout). meshscan_m00V..m90V are fine and are not
+# repeated. 7 points x SCAN_SUBRUN_MIN ~= 90 min.
+RETAKE_MESH_STEPS_V = (100,)
+RETAKE_DRIFT_GAPS_V = (150, 200, 250, 300, 350, 400)
+
 MESH_CEILING_V = 450
 DRIFT_CEILING_V = 900
 
@@ -392,11 +400,11 @@ class Config(RunConfigBase):
                     'post_pause_s': int(round(POST_SUBRUN_PAUSE_MIN * 60)),  # pause after this sub-run (seconds)
                     'hvs': _operating_hvs(),
                 })
-        elif RUN_PLAN == 'mesh_then_drift':
-            # Mesh scan: mesh and drift both step down by dv, so each station's
-            # own drift gap is unchanged. dv=0 is the operating point.
-            for dv in MESH_SCAN_STEPS_V:
-                self.sub_runs.append({
+        else:
+            # Mesh point: mesh and drift both step down by dv, so each station
+            # keeps its own drift gap. dv=0 is the operating point.
+            def _mesh_points(steps):
+                return [{
                     'sub_run_name': f'meshscan_m{dv:02d}V',
                     'run_time': SCAN_SUBRUN_MIN,
                     'post_pause_s': 0,
@@ -404,11 +412,12 @@ class Config(RunConfigBase):
                         det: {role: OPERATING_HV[det][role] - dv for role in roles}
                         for det, roles in P2_HV.items()
                     }),
-                })
-            # Drift scan: mesh pinned at each station's operating value, drift
+                } for dv in steps]
+
+            # Drift point: mesh pinned at each station's operating value, drift
             # set to that mesh plus the scanned gap.
-            for gap in DRIFT_SCAN_GAPS_V:
-                self.sub_runs.append({
+            def _drift_points(gaps):
+                return [{
                     'sub_run_name': f'driftscan_gap{gap:03d}V',
                     'run_time': SCAN_SUBRUN_MIN,
                     'post_pause_s': 0,
@@ -417,9 +426,21 @@ class Config(RunConfigBase):
                               'drift': OPERATING_HV[det]['mesh'] + gap}
                         for det in P2_HV
                     }),
-                })
-        else:
-            raise SystemExit(f'RUN_PLAN {RUN_PLAN!r} not recognised')
+                } for gap in gaps]
+
+            if RUN_PLAN == 'mesh_then_drift':
+                self.sub_runs = _mesh_points(MESH_SCAN_STEPS_V) + \
+                    _drift_points(DRIFT_SCAN_GAPS_V)
+            elif RUN_PLAN == 'retake_run25':
+                # The points run_25 lost when the VMM readout went silent at
+                # 13:06 on 2026-07-30 (see that run's RETAKE_NEEDED.md). Same
+                # sub-run NAMES as the originals, deliberately: they are the same
+                # physics points, just recorded in a later run. The mesh scan
+                # m00V..m90V is already good and is NOT repeated.
+                self.sub_runs = _mesh_points(RETAKE_MESH_STEPS_V) + \
+                    _drift_points(RETAKE_DRIFT_GAPS_V)
+            else:
+                raise SystemExit(f'RUN_PLAN {RUN_PLAN!r} not recognised')
 
         # --- HV scan template (uncomment and adapt at the beam): step every
         # --- station's mesh DOWN from the operating point, drift following so
