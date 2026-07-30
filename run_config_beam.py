@@ -165,7 +165,7 @@ POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = n
 #
 # Ceilings (enforced again on the Dream side, which refuses the whole run):
 # mesh <= 450 V, drift <= 900 V. Asserted below so a bad edit fails here.
-RUN_PLAN = 'config_scan'
+RUN_PLAN = 'trigger_test'
 
 # Every point gets the SAME run_time — scan points are only comparable if they
 # are. Do NOT shorten the tail to squeeze the campaign inside a beam window: if
@@ -202,8 +202,25 @@ RETAKE_DRIFT_GAPS_V = (150, 200, 250, 300, 350, 400)
 CONFIG_SCAN_P2_HV = {'mesh': 435, 'drift': 735}      # gap 300
 CONFIG_SCAN_SUBRUN_MIN = 55                          # minutes of data per config
 
+# RUN_PLAN='trigger_test': one short run to confirm the trigger configuration
+# before committing beam time to a scan. Fixed HV at the ORIGINAL P2 operating
+# point (mesh 450 / drift 750, gap 300) rather than the config-scan point, with
+# the uRWELL references at their usual values. Combined, so Dream ramps the
+# crate; powers off at the end like any normal run.
+TRIGGER_TEST_P2_HV = {'mesh': 450, 'drift': 750}
+TRIGGER_TEST_MIN = 5
+
 CHIP_STATE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'config', 'chip_config_state.json')
+
+# While this file exists, a triggered run asks Dream to leave the crate BIASED
+# at its end instead of powering off. config_scan.py creates it for the length
+# of a scan and removes it before the final config, so the last run of the
+# sequence powers the crate down normally. Nothing else creates it, and its
+# absence restores the safe default, so a crash or a manual run cannot leave HV
+# on by accident.
+HV_HOLD_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'config', 'hv_hold')
 
 
 def _applied_chip_file():
@@ -306,8 +323,17 @@ P2_VMM_CABLING = {
 TRIGGER_VMM = {
     'hybrid': 0,
     'vmms': [0, 1],
-    'trigger_channel': {'vmm': 1, 'channel': 60},
-    'note': 'external trigger digitizer (H0); trigger on VMM 1 ch 60',
+    # MEASURED 2026-07-30 on run_24/nominal_05: VMM 0 ch 44 holds 100.0% of
+    # that VMM's hits, VMM 1 never appears in the data at all, and ch 44
+    # correlates with all three stations at a physical latency (+108 ns for
+    # MID/OUT, +177 ns for IN). The July note below predates the 2026-07-29
+    # recabling and is kept for provenance.
+    # vmm_qa/vmm_efficiency.py keys off this. After any hybrid-0 change,
+    # re-verify with:  vmm_efficiency.py <file.pcapng> --find-trigger
+    'trigger_channel': {'vmm': 0, 'channel': 44},
+    'trigger_channel_july_note': {'vmm': 1, 'channel': 60},
+    'note': 'external trigger digitizer (H0); trigger on VMM 0 ch 44 '
+            '(measured 2026-07-30; July notes said VMM 1 ch 60)',
 }
 
 # Capture: seconds per pcapng file (dumpcap ring-buffer rotation interval).
@@ -322,13 +348,19 @@ class Config(RunConfigBase):
         super().__init__(config_path)
 
     def _set_defaults(self, config_path=None):
-        self.run_name = 'run_26'
+        self.run_name = 'run_29'
         self.base_out_dir = BASE_DATA_DIR
         self.data_out_dir = f'{self.base_out_dir}runs/'
         self.run_out_dir = f'{self.data_out_dir}{self.run_name}/'
         self.raw_daq_inner_dir = 'raw_daq_data'
         self.start_time = None
         self.power_off_hv_at_end = False  # True to power off all CAEN HV at the end of the run.
+        # What DREAM should do with the crate at the end of a triggered run.
+        # Distinct from the line above, which is inert at sps: our HV server is
+        # the Dream-gating shim and drives no crate. Sent in the trigger payload
+        # only when a hold is in force; otherwise Dream keeps its own default of
+        # powering off.
+        self.dream_power_off_hv_at_end = not os.path.exists(HV_HOLD_PATH)
         self.resume = False  # True to resume an existing run: skip sub-runs already marked .subrun_complete.
         self.write_all_detectors_to_json = True  # Only when making run config json template. Maybe do always?
         self.gas = 'Ar/Iso 95/5'  # Gas type for run
@@ -523,6 +555,17 @@ class Config(RunConfigBase):
                         'hvs': _scan_hvs({det: dict(CONFIG_SCAN_P2_HV)
                                           for det in P2_HV}),
                     }],
+                # Short trigger-configuration check at the P2 operating point.
+                # Named after the chip config in force so the check is tied to
+                # the configuration it was checking.
+                'trigger_test':
+                    lambda: [{
+                        'sub_run_name': f'trigtest_{_chip_tag(_applied_chip_file())}',
+                        'run_time': TRIGGER_TEST_MIN,
+                        'post_pause_s': 0,
+                        'hvs': _scan_hvs({det: dict(TRIGGER_TEST_P2_HV)
+                                          for det in P2_HV}),
+                    }],
             }
 
             cont = _cont
@@ -554,7 +597,7 @@ class Config(RunConfigBase):
             # can tell which plan a finished run was following without guessing
             # from the current value of RUN_PLAN, which may have moved on.
             self.run_plan = plan
-            if plan == 'config_scan':
+            if plan in ('config_scan', 'trigger_test'):
                 # The whole point of the run. Recorded explicitly rather than
                 # left implicit in the copied .txt, so a reader does not have to
                 # infer which config produced which run.

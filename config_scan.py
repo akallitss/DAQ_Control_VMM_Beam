@@ -35,6 +35,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
 
@@ -43,14 +44,18 @@ DREAM_FLASK = 'http://128.141.21.144:5001'
 REPO = '/local/p2/DAQ_Control_VMM_Beam'
 LOG = '/local/p2/config_scan.log'
 NO_AUTO_RECOVERY = os.path.join(REPO, 'config', 'no_auto_recovery')
+HV_HOLD = os.path.join(REPO, 'config', 'hv_hold')
 
 STEP_TIMEOUT_S = 300
 WARM_RESET_TRIES = 3
 DREAM_TEARDOWN_TIMEOUT_S = 900
 POLL_S = 10
-# Wall-clock cost of everything around the data: apply, warm reset, HV ramp from
-# 0, teardown and the crate ramping back down. Measured ~8-9 min on 2026-07-30.
-OVERHEAD_MIN = 9
+# Wall-clock cost around the data: apply, warm reset, start, gate, teardown.
+# With the HV hold in force the crate stays biased between runs, so the two
+# expensive parts — ramping down at the end of a run and back up from 0 at the
+# start of the next, ~2 min each — only happen at the START of a window and at
+# its END. Without the hold this was ~9 min; with it, ~4-5.
+OVERHEAD_MIN = 6
 
 
 def log(msg):
@@ -74,6 +79,18 @@ def req(path, payload=None, base=VMM_FLASK, timeout=20):
                 headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(r, timeout=timeout) as resp:
             return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        # Read the BODY. urllib raises on any non-2xx, and these routes put the
+        # actual reason in the json — /run_config_py answers 502 with "Dream
+        # trigger failed - HTTP 422", and 422 is Dream refusing the HV targets.
+        # Reporting only "HTTP Error 502" throws that away and turns a one-line
+        # diagnosis into a hunt.
+        try:
+            body = json.loads(e.read().decode())
+            msg = body.get('message') or str(body)
+        except Exception:
+            msg = f'HTTP {e.code} with no readable body'
+        return {'success': False, 'message': f'HTTP {e.code}: {msg}'}
     except Exception as e:
         return {'success': False, 'message': f'request failed: {e}'}
 
@@ -84,6 +101,69 @@ def sh(cmd):
                               text=True, timeout=20).stdout
     except Exception:
         return ''
+
+
+try:
+    sys.path.insert(0, REPO)
+    from run_config_beam import BASE_DATA_DIR
+    RUNS_DIR = os.path.join(BASE_DATA_DIR, 'runs')
+except Exception:
+    RUNS_DIR = '/local/p2/p2data/TB_July26_H4/runs'
+
+
+def beam_sample():
+    b = req('/beam/status', base=DREAM_FLASK, timeout=8)
+    return bool(b.get('beam_on')), float(b.get('pulses_10min') or 0)
+
+
+def dream_events():
+    """Dream's event counter = the number of external TCM triggers this run.
+
+    THE metric for 'did this config get beam'. Captured BYTES cannot be used:
+    they are what the chip config changes. On 2026-07-30 the first two configs
+    gave 25 GB (gain 3.0) and 145 GB (gain 4.5) with the beam on 100% of samples
+    in both, and a bytes-based rule duly flagged the perfectly good gain-3.0 run
+    as LOW_BEAM and would have had it retaken.
+
+    Dream reads the uRWELLs off the same TCM coincidence and knows nothing about
+    the VMM chip config, so its event count measures the beam and only the beam.
+    That is the same argument quick_scripts/flag_beam_quality.py makes for using
+    event counts across an HV scan; bytes never satisfied it.
+    """
+    d = req('/status', base=DREAM_FLASK, timeout=8)
+    if not isinstance(d, list):
+        return None
+    for s in d:
+        if s.get('name') == 'dream_daq':
+            ev = s.get('run_events')
+            return int(ev) if isinstance(ev, (int, float)) else None
+    return None
+
+
+def run_capture_bytes(run_name):
+    total = files = 0
+    for dp, _, fns in os.walk(os.path.join(RUNS_DIR, run_name)):
+        for f in fns:
+            if f.endswith('.pcapng'):
+                total += os.path.getsize(os.path.join(dp, f))
+                files += 1
+    return total, files
+
+
+def write_beam_quality(run_name, cfg, stats):
+    """Verdict next to the data, not in a log.
+
+    The beam is unstable tonight, so 'did this config actually get beam' has to
+    survive as a fact on disk — whoever analyses this days from now decides what
+    to retake, and they will not have this session. Deliberately follows the
+    convention of quick_scripts/flag_beam_quality.py on the Dream side.
+    """
+    try:
+        p = os.path.join(RUNS_DIR, run_name, 'BEAM_QUALITY.json')
+        with open(p, 'w') as f:
+            json.dump({'run': run_name, 'chip_config': cfg, **stats}, f, indent=2)
+    except Exception as e:
+        log(f'   could not write BEAM_QUALITY.json: {e}')
 
 
 def daq_running():
@@ -219,12 +299,51 @@ def run_one(cfg, minutes, dry_run):
         return None                      # fatal: the setup is not what we think
     log(f'   verified: {detail}')
 
-    # Wait for it to finish. Generous: minutes of data plus ramp and teardown.
+    # Wait for it to finish, sampling the beam as we go. With the beam this
+    # unstable, whether a config actually got beam is as important as whether
+    # the DAQ ran.
     deadline = time.time() + (minutes + 3 * OVERHEAD_MIN) * 60
+    ev0 = dream_events()          # baseline, for the per-run assumption above
+    on = tot = 0
+    pulses = []
+    last_sample = 0.0
     while time.time() < deadline:
+        if time.time() - last_sample >= 60:
+            last_sample = time.time()
+            beam_on, p10 = beam_sample()
+            tot += 1
+            on += 1 if beam_on else 0
+            pulses.append(p10)
         if not daq_running():
-            log(f'   {run_name} finished')
-            return True
+            nbytes, nfiles = run_capture_bytes(run_name)
+            frac = (on / tot) if tot else None
+            # Trigger count, read while Dream still reports this run.
+            # run_events is PER-RUN: it read 1.38M just after a 5-minute run and
+            # 24M during a 3-hour one, so the end value is this run's total.
+            # ev0 (sampled just after the start) is recorded alongside it, so if
+            # that assumption ever breaks the JSON shows it rather than hiding
+            # a wrong number behind a plausible one.
+            events = dream_events()
+            stats = {'beam_on_fraction': round(frac, 3) if frac is not None else None,
+                     'beam_samples': tot,
+                     'mean_pulses_10min': round(sum(pulses) / len(pulses), 1) if pulses else None,
+                     # THE beam metric: triggers, independent of the chip config.
+                     'dream_events': events,
+                     'dream_events_at_start': ev0,
+                     'events_per_min': round(events / minutes, 1) if events else None,
+                     # Informational ONLY — bytes track the chip config, not the
+                     # beam, so they must never drive a retake decision.
+                     'capture_bytes': nbytes, 'capture_files': nfiles,
+                     'minutes_requested': minutes}
+            write_beam_quality(run_name, cfg, stats)
+            log(f'   {run_name} finished — {events:,} triggers'
+                f' ({stats["events_per_min"]}/min), beam on {frac:.0%} of {tot} '
+                f'samples, mean {stats["mean_pulses_10min"]} pulses/10min, '
+                f'{nbytes/1e6:.0f} MB in {nfiles} files'
+                if (frac is not None and events) else
+                f'   {run_name} finished — {nbytes/1e6:.0f} MB in {nfiles} files '
+                f'(NO trigger count from Dream; beam verdict will be unreliable)')
+            return {'cfg': cfg, 'run': run_name, **stats}
         time.sleep(POLL_S)
     log(f'   {run_name} overran its window — leaving it and stopping the scan')
     return None
@@ -284,6 +403,26 @@ def main():
     done, failed = [], []
     try:
         for cfg in configs:
+            # Hold the crate biased between runs — only the chip config changes,
+            # so cycling HV every time is pure cost. Released before the LAST
+            # config so that run powers the crate down normally. Also released
+            # in the finally below, so an abort never leaves HV up on a hold
+            # nobody is watching.
+            last = (cfg == configs[-1])
+            if not a.dry_run:
+                if last:
+                    try:
+                        os.remove(HV_HOLD)
+                        log('   released HV hold — this is the last config, its '
+                            'run will power the crate off')
+                    except FileNotFoundError:
+                        pass
+                elif not os.path.exists(HV_HOLD):
+                    with open(HV_HOLD, 'w') as f:
+                        f.write('config_scan.py: keep the crate biased between '
+                                'runs of this scan; the final run powers off.\n')
+                    log('   HV hold in force — crate stays biased between runs')
+
             left = (until - datetime.now()).total_seconds() / 60
             need = minutes + OVERHEAD_MIN
             if left < need:
@@ -296,8 +435,10 @@ def main():
                 log('FATAL — stopping the scan')
                 failed.append((cfg, 'fatal'))
                 break
-            (done if res else failed).append(
-                cfg if res else (cfg, 'failed'))
+            if res:
+                done.append(res)          # dict of that run's beam stats
+            else:
+                failed.append((cfg, 'failed'))
     finally:
         if not a.dry_run:
             try:
@@ -305,12 +446,53 @@ def main():
                 log('   re-enabled capture_guard auto-recovery')
             except FileNotFoundError:
                 pass
+            # Never leave a hold behind: if the scan aborts mid-sequence the
+            # crate may still be biased, and the next run must power off
+            # normally rather than inherit a hold nobody set.
+            try:
+                os.remove(HV_HOLD)
+                log('   released HV hold (scan over). NOTE: if the scan aborted '
+                    'early the crate may still be BIASED — check it.')
+            except FileNotFoundError:
+                pass
 
     log(f'CONFIG SCAN END: {len(done)} done, {len(failed)} not')
-    for c in done:
-        log(f'   OK   {c}')
+
+    # --- retake list -----------------------------------------------------
+    # Cross-RUN comparison, because a config scan has one sub-run per run and
+    # so has no within-run median to judge against (which is the reference
+    # quick_scripts/flag_beam_quality.py uses). Comparing across runs is sound
+    # here for the same reason it gives: the trigger is the external TCM
+    # coincidence, independent of the chip config, and every run is the same
+    # length — so differences in captured volume are beam differences.
+    stats = [d for d in done if isinstance(d, dict) and d.get('dream_events')]
+    if stats:
+        evs = sorted(d['dream_events'] for d in stats)
+        median = evs[len(evs) // 2]
+        log(f'   median {median:,} triggers over {len(stats)} runs '
+            f'(Dream event count — independent of the chip config)')
+        log('   | config | triggers | % median | beam on | MB (info only) | verdict |')
+        for d in sorted(stats, key=lambda x: x['dream_events']):
+            frac = d['dream_events'] / median if median else 0
+            verdict = ('NO_BEAM — RETAKE' if frac <= 0.10 else
+                       'LOW_BEAM — review' if frac < 0.50 else 'OK')
+            bo = d.get('beam_on_fraction')
+            log(f'   | {d["cfg"]} | {d["dream_events"]:,} | {frac:.0%} | '
+                f'{"?" if bo is None else f"{bo:.0%}"} | '
+                f'{d.get("capture_bytes", 0)/1e6:.0f} | {verdict} |')
+        log('   MB is shown for information only: captured volume tracks the '
+            'chip config (gain/peaktime/thresholds), not the beam, so it must '
+            'never decide a retake.')
+        retake = [d['cfg'] for d in stats if d['dream_events'] / median <= 0.10] if median else []
+        if retake:
+            log('   RETAKE THESE (no usable beam):')
+            for c in retake:
+                log(f'      {c}')
+        else:
+            log('   no config needs retaking on beam grounds')
     for c in failed:
         log(f'   MISS {c}')
+    log('   per-run detail is in each run BEAM_QUALITY.json')
     return 0
 
 

@@ -124,6 +124,15 @@ def _dream_trigger_start(run_name, run_cfg):
         return False, "config/dream_bridge.json missing or incomplete"
     payload = {"token": cfg.get("token", ""), "run_name": run_name,
                "sub_runs": run_cfg.get("sub_runs", []), "source": "vmm_daq"}
+    # Ask Dream to keep the crate biased at the end of this run. Only sent when
+    # the run config explicitly says so (config scans, which change only the
+    # chip config and would otherwise cycle HV between every run). Absent =
+    # Dream keeps its own default, which powers off. NOTE this is deliberately
+    # a DIFFERENT key from this config's own power_off_hv_at_end: that one is
+    # inert here, because at sps the VMM HV server is the Dream-gating shim and
+    # drives no crate at all.
+    if run_cfg.get("dream_power_off_hv_at_end") is not None:
+        payload["power_off_hv_at_end"] = bool(run_cfg["dream_power_off_hv_at_end"])
     try:
         resp = _dream_request("/vmm_trigger/start", payload, timeout=20)
     except Exception as e:
