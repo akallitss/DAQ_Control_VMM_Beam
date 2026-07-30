@@ -24,6 +24,15 @@ uRWELLs off the same external trigger, so if Dream is still writing data while
 the VMM writes nothing, the fault is the VMM's. If neither is recording, that is
 a beam problem and the guard stays quiet.
 
+WHY FILE SIZE ALONE IS NOT ENOUGH TO MAKE THAT CALL. It is tempting to separate
+the two cases by size — a dead VMM gives exactly 272 bytes, a low-beam file a
+few hundred more. That works for LOW beam, and EMPTY_MAX_BYTES is set so a file
+holding even one packet is not called empty. But it cannot work for a FULL beam
+stop: in external-trigger mode the VMM reads out only on a trigger, so no beam
+means no packets means exactly 272 bytes — byte-identical to the failure. Hence
+the size test says "no packets" and the Dream cross-check says "and that is the
+VMM's fault"; neither replaces the other.
+
 Run it alongside a run:
     tmux new-session -d -s vmm_capture_guard \\
         "/local/p2/DAQ_Control_VMM_Beam/.venv/bin/python capture_guard.py"
@@ -49,7 +58,14 @@ except Exception:
 
 POLL_S = 20
 EMPTY_TRIP = 2          # consecutive CLOSED empty files before stopping
-EMPTY_MAX_BYTES = 1024  # a packet-less pcapng is its 272-byte header
+# A packet-less pcapng is just its header: exactly 272 bytes here. Measured over
+# run_24 + run_25 (819 files): 85 files at exactly 272 B, and NOT ONE file
+# between 300 B and 100 kB. So "empty" is sharply defined and the threshold only
+# has to clear the header plus a little slack for a dumpcap/interface change
+# that lengthens it. It must stay BELOW the one-packet floor (~272 + a ~100-byte
+# enhanced-packet block ~= 370) so that a file holding even a single packet is
+# never called empty — that is the low-beam case, which must not trip.
+EMPTY_MAX_BYTES = 320
 # Capture must be ACTIVE (a file written this recently) before we judge anything.
 # /live_hits keeps reporting the last run name long after it ended, so without
 # this the guard would evaluate a finished run's leftover empty files the moment
