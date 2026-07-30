@@ -128,12 +128,20 @@ SIMULATE = _SITE_CFG['simulate']
 #   N_SUBRUNS identical sub-runs of SUBRUN_MIN minutes at the nominal P2
 #   operating point. Short values for local simulation; set beam values at SPS.
 # ---------------------------------------------------------------------------
-# COMMISSIONING (2026-07-29): a single 1-minute sub-run, detectors still
-# UNPOWERED — VMM-only runs ramp nothing (the sps HV server is the
-# Dream-gating shim, instant-OK when no combined run is active).
-# Set beam values here when physics running starts (e.g. 2 x 20 min).
-N_SUBRUNS = 1       # number of identical sub-runs
-SUBRUN_MIN = 1      # run time per sub-run (minutes)
+# OVERNIGHT PHYSICS RUN (2026-07-30): 8 x 52 min = 416 min (6 h 56 min) of
+# data at the nominal operating point, all sub-runs identical. Combined run —
+# the Dream trigger ramps and holds the HV for the whole night and powers the
+# crate off at the natural end (power_off_hv_at_end on the Dream side).
+# 8 chunks rather than one: only 7 acquisition stop/starts (the known
+# non-ready-hybrid failure mode) for ~7x10 s of dead time, while still giving
+# per-chunk hv_monitor.csv / QA units and resume points.
+# Validated first by the 1 x 5 min dry run run_21 (2026-07-30 01:29).
+# SUBRUN_MIN is the knob that lands the end on a wall-clock target: pick it as
+# (minutes until the target - ~5 min for warm reset, HV ramp and boundaries)/8.
+# 52 was chosen for a ~02:04 start to finish at 09:00; run_24 ran it and ended
+# 09:05. Re-derive it for the actual start time rather than reusing 52.
+N_SUBRUNS = 8       # number of identical sub-runs
+SUBRUN_MIN = 52     # run time per sub-run (minutes)
 POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = no pause
 
 # P2 stations' HV on the SPS CAEN crate (192.168.10.199, banco's DAQ LAN),
@@ -193,7 +201,7 @@ TRIGGER_VMM = {
 }
 
 # Capture: seconds per pcapng file (dumpcap ring-buffer rotation interval).
-CAPTURE_DURATION_S = 44
+CAPTURE_DURATION_S = 44.4
 
 
 class Config(RunConfigBase):
@@ -204,7 +212,7 @@ class Config(RunConfigBase):
         super().__init__(config_path)
 
     def _set_defaults(self, config_path=None):
-        self.run_name = 'run_3'
+        self.run_name = 'run_24'
         self.base_out_dir = BASE_DATA_DIR
         self.data_out_dir = f'{self.base_out_dir}runs/'
         self.run_out_dir = f'{self.data_out_dir}{self.run_name}/'
