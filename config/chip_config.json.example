@@ -1,9 +1,11 @@
 {
-  "_comment": "VMM chip config from the GUI — copy to config/chip_config.json (gitignored) and adjust paths for this machine. base_yaml null = auto-detect the single *.yaml in base_subdir. The apply_script is the p2basket slow-control utility (called, never modified); use the TestBenchCERN copy referenced by its README.",
+  "_comment": "VMM chip config from the GUI \u2014 copy to config/chip_config.json (gitignored) and adjust paths for this machine. base_yaml null = auto-detect the single *.yaml in base_subdir. The apply_script is the p2basket slow-control utility (called, never modified); use the TestBenchCERN copy referenced by its README.",
   "conf_dir": "/local/p2/p2testbench/TestBenchCERN",
   "base_subdir": "config_base",
   "ext_subdir": "config_ext",
   "base_yaml": null,
   "apply_script": "/local/p2/p2testbench/TestBenchCERN/p2basket_sc_config.py",
-  "timeout_s": 300
+  "timeout_s": 300,
+  "warm_reset_script": "/local/p2/p2testbench/TestBenchCosmics/p2basket_sc_warm_reset.py",
+  "warm_reset_loop": 3
 }

@@ -245,3 +245,8 @@ logs/tdk_lv_history.csv
 logs/daq_events.log
 config/sps_state.json
 beam_monitor/logs/
+
+# Timestamped hand-backups taken before live edits on the DAQ machine
+# (e.g. run_config_beam.py.bak-longrun-260730). Local safety nets, never
+# shared — and one of them holds an old bridge token.
+*.bak-*
