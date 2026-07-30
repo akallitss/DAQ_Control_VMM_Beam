@@ -40,6 +40,7 @@ Run it alongside a run:
 
 import json
 import os
+import subprocess
 import time
 import urllib.request
 
@@ -100,6 +101,10 @@ CONTINUATION_PATH = '/local/p2/DAQ_Control_VMM_Beam/config/continuation.json'
 RECOVER_SETTLE_S = 20      # let the stopped run finish tearing down
 WARM_RESET_TRIES = 3
 STEP_TIMEOUT_S = 300
+# Dream's teardown powers the crate off and is slow — measured at ~7 min on
+# 2026-07-30. Allow well beyond that before giving up.
+DREAM_TEARDOWN_TIMEOUT_S = 900
+START_TRIES = 2
 
 
 def log(msg):
@@ -207,11 +212,47 @@ def plan_of(run):
         return 'retake_run25'
 
 
+# Dream's own idle states, same list its GUI uses to decide the run is over.
+DREAM_IDLE_STATES = ('WAITING', 'Run Complete', 'ERROR')
+
+
+def dream_idle():
+    """Has the Dream side finished tearing the paired run down?
+
+    Stopping the VMM run stops Dream too (daq_control teardown posts to
+    /vmm_trigger/stop), but Dream's teardown is NOT instant — it powers HV off
+    and can take minutes; on 2026-07-30 it took about seven. Dream refuses a new
+    trigger with 409 while a run is still in progress, so restarting before it
+    is idle just gets the follow-up run rejected and the recovery lost.
+    """
+    d = get_json(f'{DREAM_FLASK}/status')
+    if not isinstance(d, list):
+        return False
+    for s in d:
+        if s.get('name') == 'daq_control':
+            return s.get('status') in DREAM_IDLE_STATES
+    return False
+
+
 def post(path, payload=None):
     return get_json(f'{VMM_FLASK}{path}', data=payload if payload is not None else {})
 
 
+def sh(cmd):
+    try:
+        return subprocess.run(cmd, shell=True, capture_output=True,
+                              text=True, timeout=20).stdout
+    except Exception:
+        return ''
+
+
 def daq_running():
+    """Is the per-RUN daq_control.py alive?
+
+    The [/] bracket does two jobs: it stops the pattern matching the shell
+    running this very check, and the leading slash keeps it from matching
+    vmm_daq_control.py, the persistent VMM DAQ server that runs for weeks.
+    """
     return sh('pgrep -f "[/]daq_control[.]py" || true').strip() != ''
 
 
@@ -272,6 +313,16 @@ def recover(dead_run, dead_subrun, plan_hint):
     log(f'   previous run exited after {waited:.0f}s; settling {RECOVER_SETTLE_S}s')
     time.sleep(RECOVER_SETTLE_S)
 
+    # The VMM being gone is not enough — Dream must have finished too, or it
+    # answers the new trigger with 409 and nothing starts.
+    ok, waited = wait_until(dream_idle, DREAM_TEARDOWN_TIMEOUT_S,
+                            'Dream to finish tearing down')
+    if not ok:
+        log('   Dream is still running; it would refuse the new trigger (409). '
+            'Aborting recovery rather than leaving a half-started state.')
+        return False
+    log(f'   Dream idle after {waited:.0f}s')
+
     beam = get_json(f'{DREAM_FLASK}/beam/status') or {}
     if beam.get('beam_on') is False:
         log('   beam is OFF — not starting a follow-up run into no beam')
@@ -297,11 +348,18 @@ def recover(dead_run, dead_subrun, plan_hint):
             f'attempts — aborting recovery, THIS NEEDS A HUMAN')
         return False
 
-    post('/update_run_config_py')          # iterate to a fresh run number
-    time.sleep(2)
-    r = post('/run_config_py', {'dream': True})   # combined: Dream too
-    started = bool(r and r.get('success'))
-    log(f'   start: {r}')
+    started, r = False, None
+    for attempt in range(1, START_TRIES + 1):
+        post('/update_run_config_py')          # iterate to a fresh run number
+        time.sleep(2)
+        r = post('/run_config_py', {'dream': True})   # combined: Dream too
+        started = bool(r and r.get('success'))
+        log(f'   start attempt {attempt}/{START_TRIES}: {r}')
+        if started:
+            break
+        # Most likely cause is Dream not being quite ready yet; give it a
+        # moment rather than burning the recovery on one bad moment.
+        time.sleep(30)
     if started:
         try:
             os.remove(CONTINUATION_PATH)   # consumed; do not affect later runs
