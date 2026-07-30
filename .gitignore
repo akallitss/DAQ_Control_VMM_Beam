@@ -250,3 +250,8 @@ beam_monitor/logs/
 # (e.g. run_config_beam.py.bak-longrun-260730). Local safety nets, never
 # shared — and one of them holds an old bridge token.
 *.bak-*
+
+# Continuation handshake between capture_guard.py and run_config_beam.py;
+# transient runtime state, machine-specific.
+config/continuation.json
+config/no_auto_recovery

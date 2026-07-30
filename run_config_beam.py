@@ -20,6 +20,7 @@ Site switching: config/site.txt on the machine (fallback: SITE below).
 @author: Alexandra Kallitsopoulou (based on Dylan Neff's nTof config)
 """
 
+import json
 import os
 import sys
 
@@ -186,6 +187,28 @@ DRIFT_SCAN_GAPS_V = (150, 200, 250, 300, 350, 400)  # drift = that station's mes
 # repeated. 7 points x SCAN_SUBRUN_MIN ~= 90 min.
 RETAKE_MESH_STEPS_V = (100,)
 RETAKE_DRIFT_GAPS_V = (150, 200, 250, 300, 350, 400)
+
+# Continuation handshake with capture_guard.py. When the guard stops a run
+# because the VMM readout went silent, it writes config/continuation.json:
+#     {"parent_run": "run_26", "plan": "retake_run25",
+#      "start_at": "driftscan_gap250V", "reason": "..."}
+# The presence of that file OVERRIDES RUN_PLAN for the next generated config:
+# the schedule becomes the remainder of the interrupted plan, starting AT the
+# point that died (it recorded nothing, so it is still owed). The resulting run
+# config carries continues_run / continuation_* so the data records its own
+# provenance. capture_guard removes the file once the follow-up run has started,
+# so an ordinary run afterwards is not silently turned into a continuation.
+CONTINUATION_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'config', 'continuation.json')
+
+
+def _load_continuation():
+    try:
+        with open(CONTINUATION_PATH) as f:
+            c = json.load(f)
+        return c if c.get('start_at') else None
+    except Exception:
+        return None
 
 MESH_CEILING_V = 450
 DRIFT_CEILING_V = 900
@@ -392,7 +415,12 @@ class Config(RunConfigBase):
             return hvs
 
         self.sub_runs = []
-        if RUN_PLAN == 'nominal':
+        # Resolved FIRST: a pending continuation overrides RUN_PLAN entirely,
+        # including 'nominal'. Checking it only inside the scan branch meant a
+        # config left on 'nominal' would quietly take nominal points instead of
+        # the scan points the interrupted run still owed.
+        _cont = _load_continuation()
+        if _cont is None and RUN_PLAN == 'nominal':
             for i in range(N_SUBRUNS):
                 self.sub_runs.append({
                     'sub_run_name': f'nominal_{i:02d}',
@@ -400,6 +428,7 @@ class Config(RunConfigBase):
                     'post_pause_s': int(round(POST_SUBRUN_PAUSE_MIN * 60)),  # pause after this sub-run (seconds)
                     'hvs': _operating_hvs(),
                 })
+            self.run_plan = 'nominal'
         else:
             # Mesh point: mesh and drift both step down by dv, so each station
             # keeps its own drift gap. dv=0 is the operating point.
@@ -428,19 +457,51 @@ class Config(RunConfigBase):
                     }),
                 } for gap in gaps]
 
-            if RUN_PLAN == 'mesh_then_drift':
-                self.sub_runs = _mesh_points(MESH_SCAN_STEPS_V) + \
-                    _drift_points(DRIFT_SCAN_GAPS_V)
-            elif RUN_PLAN == 'retake_run25':
+            # Every scan plan, by name, so a continuation can rebuild the exact
+            # point list its parent run was working through.
+            _PLANS = {
+                'mesh_then_drift':
+                    lambda: _mesh_points(MESH_SCAN_STEPS_V) +
+                            _drift_points(DRIFT_SCAN_GAPS_V),
                 # The points run_25 lost when the VMM readout went silent at
                 # 13:06 on 2026-07-30 (see that run's RETAKE_NEEDED.md). Same
                 # sub-run NAMES as the originals, deliberately: they are the same
                 # physics points, just recorded in a later run. The mesh scan
                 # m00V..m90V is already good and is NOT repeated.
-                self.sub_runs = _mesh_points(RETAKE_MESH_STEPS_V) + \
-                    _drift_points(RETAKE_DRIFT_GAPS_V)
+                'retake_run25':
+                    lambda: _mesh_points(RETAKE_MESH_STEPS_V) +
+                            _drift_points(RETAKE_DRIFT_GAPS_V),
+            }
+
+            cont = _cont
+            plan = (cont or {}).get('plan') or RUN_PLAN
+            if plan not in _PLANS:
+                raise SystemExit(f'RUN_PLAN {plan!r} not recognised')
+            points = _PLANS[plan]()
+
+            if cont:
+                # Continuation: take the interrupted plan from the point that
+                # died, inclusive — that point recorded nothing, so it is owed.
+                names = [p['sub_run_name'] for p in points]
+                start_at = cont.get('start_at')
+                if start_at not in names:
+                    raise SystemExit(
+                        f'continuation start_at {start_at!r} is not in plan {plan!r}')
+                self.sub_runs = points[names.index(start_at):]
+                # These land in the run config json (to_dict dumps __dict__), so
+                # the data itself records what it continues and why.
+                self.continues_run = cont.get('parent_run')
+                self.continuation_plan = plan
+                self.continuation_start_at = start_at
+                self.continuation_reason = cont.get('reason', '')
+                print(f'CONTINUATION of {self.continues_run}: plan {plan!r} '
+                      f'resumed at {start_at} ({len(self.sub_runs)} points left)')
             else:
-                raise SystemExit(f'RUN_PLAN {RUN_PLAN!r} not recognised')
+                self.sub_runs = points
+            # Recorded so a later tool (capture_guard building a continuation)
+            # can tell which plan a finished run was following without guessing
+            # from the current value of RUN_PLAN, which may have moved on.
+            self.run_plan = plan
 
         # --- HV scan template (uncomment and adapt at the beam): step every
         # --- station's mesh DOWN from the operating point, drift following so

@@ -74,6 +74,33 @@ EMPTY_MAX_BYTES = 320
 # to judge. Comfortably longer than the 44.4 s dumpcap rotation.
 CAPTURE_STALE_S = 180
 
+# ---------------------------------------------------------------------------
+# AUTO-RECOVERY. After stopping a dead run the guard can re-apply the chip
+# config, warm reset until the hybrids come back ready, and start a FOLLOW-UP
+# run that continues the interrupted plan from the point that died. That run
+# carries continues_run/continuation_* in its config, so the data records its
+# own provenance.
+#
+# This is the guard driving the detectors on its own, so it is fenced in:
+#   - MAX_RECOVERIES caps how many times it will do this per guard lifetime. A
+#     genuinely broken readout must not become a loop that burns the slot and
+#     leaves a trail of empty runs.
+#   - It refuses to start anything if the beam is off — there would be nothing
+#     to record, and an unattended restart into no beam just ramps HV for
+#     nothing.
+#   - A warm reset that will not reach 0 failed hybrids aborts recovery. We do
+#     not start a run on hybrids we know are not ready.
+#   - Dropping a file named DISABLE_FILE turns the whole thing off without
+#     touching code or restarting the service.
+# ---------------------------------------------------------------------------
+AUTO_RECOVER = True
+MAX_RECOVERIES = 2
+DISABLE_FILE = '/local/p2/DAQ_Control_VMM_Beam/config/no_auto_recovery'
+CONTINUATION_PATH = '/local/p2/DAQ_Control_VMM_Beam/config/continuation.json'
+RECOVER_SETTLE_S = 20      # let the stopped run finish tearing down
+WARM_RESET_TRIES = 3
+STEP_TIMEOUT_S = 300
+
 
 def log(msg):
     line = f'{time.strftime("%Y-%m-%d %H:%M:%S")} | {msg}'
@@ -169,6 +196,124 @@ def dream_recording():
     return True, f'Dream running {d.get("run_name")}, beam_on={b.get("beam_on")}'
 
 
+def plan_of(run):
+    """Which scan plan that run was following, from its own written config.
+    Falls back to the retake plan rather than guessing from the live RUN_PLAN,
+    which may have been edited since the run started."""
+    try:
+        with open(os.path.join(RUNS_DIR, run, 'run_config.json')) as f:
+            return json.load(f).get('run_plan') or 'retake_run25'
+    except Exception:
+        return 'retake_run25'
+
+
+def post(path, payload=None):
+    return get_json(f'{VMM_FLASK}{path}', data=payload if payload is not None else {})
+
+
+def daq_running():
+    return sh('pgrep -f "[/]daq_control[.]py" || true').strip() != ''
+
+
+def wait_until(pred, timeout_s, what):
+    """Poll pred() until true. (ok, seconds_waited)."""
+    t0 = time.time()
+    while time.time() - t0 < timeout_s:
+        if pred():
+            return True, time.time() - t0
+        time.sleep(3)
+    log(f'   TIMEOUT after {timeout_s}s waiting for {what}')
+    return False, time.time() - t0
+
+
+def chip_status():
+    return get_json(f'{VMM_FLASK}/chip_config/status') or {}
+
+
+def apply_chip_config():
+    log('   applying chip config...')
+    post('/chip_config/apply')
+    ok, _ = wait_until(lambda: chip_status().get('running') is False,
+                       STEP_TIMEOUT_S, 'chip config apply')
+    rc = (chip_status().get('last') or {}).get('rc')
+    log(f'   chip config apply rc={rc}')
+    return ok and rc == 0
+
+
+def warm_reset_until_ready():
+    """Warm reset until 0 failed hybrids. Refuses to give a green light on a
+    reset that never gets there — starting a run on non-ready hybrids is how
+    this whole failure mode begins."""
+    for attempt in range(1, WARM_RESET_TRIES + 1):
+        log(f'   warm reset attempt {attempt}/{WARM_RESET_TRIES}...')
+        post('/chip_config/warm_reset')
+        wait_until(lambda: chip_status().get('warm_reset', {}).get('running') is False,
+                   STEP_TIMEOUT_S, 'warm reset')
+        w = chip_status().get('warm_reset', {})
+        failed = (w.get('last') or {}).get('failed')
+        log(f'   warm reset failed={failed} armed={w.get("armed")}')
+        if failed == 0 and w.get('armed'):
+            return True
+    return False
+
+
+def recover(dead_run, dead_subrun, plan_hint):
+    """Stop-to-restart recovery. Returns True if a follow-up run was started."""
+    log(f'--- AUTO-RECOVERY for {dead_run} (died at {dead_subrun}) ---')
+    if os.path.exists(DISABLE_FILE):
+        log(f'   {DISABLE_FILE} present — auto-recovery disabled, not restarting')
+        return False
+
+    ok, waited = wait_until(lambda: not daq_running(), STEP_TIMEOUT_S,
+                            'the stopped run to exit')
+    if not ok:
+        log('   the run did not exit; NOT starting anything on top of it')
+        return False
+    log(f'   previous run exited after {waited:.0f}s; settling {RECOVER_SETTLE_S}s')
+    time.sleep(RECOVER_SETTLE_S)
+
+    beam = get_json(f'{DREAM_FLASK}/beam/status') or {}
+    if beam.get('beam_on') is False:
+        log('   beam is OFF — not starting a follow-up run into no beam')
+        return False
+
+    # Hand the next generated config the remainder of the interrupted plan.
+    cont = {'parent_run': dead_run, 'plan': plan_hint, 'start_at': dead_subrun,
+            'reason': f'VMM readout produced no packets during {dead_subrun} '
+                      f'in {dead_run}; auto-recovered by capture_guard'}
+    try:
+        with open(CONTINUATION_PATH, 'w') as f:
+            json.dump(cont, f, indent=2)
+        log(f'   wrote continuation: plan={plan_hint} start_at={dead_subrun}')
+    except Exception as e:
+        log(f'   could not write {CONTINUATION_PATH}: {e} — aborting recovery')
+        return False
+
+    if not apply_chip_config():
+        log('   chip config apply FAILED — aborting recovery')
+        return False
+    if not warm_reset_until_ready():
+        log(f'   warm reset never reached 0 failed hybrids in {WARM_RESET_TRIES} '
+            f'attempts — aborting recovery, THIS NEEDS A HUMAN')
+        return False
+
+    post('/update_run_config_py')          # iterate to a fresh run number
+    time.sleep(2)
+    r = post('/run_config_py', {'dream': True})   # combined: Dream too
+    started = bool(r and r.get('success'))
+    log(f'   start: {r}')
+    if started:
+        try:
+            os.remove(CONTINUATION_PATH)   # consumed; do not affect later runs
+        except FileNotFoundError:
+            pass
+        log(f'--- AUTO-RECOVERY OK: {r.get("run_name")} continues {dead_run} '
+            f'from {dead_subrun} ---')
+    else:
+        log('--- AUTO-RECOVERY FAILED to start the follow-up run ---')
+    return started
+
+
 def main():
     log('capture_guard START — will stop the run on '
         f'{EMPTY_TRIP} consecutive closed empty pcapng files (>{EMPTY_MAX_BYTES} B = healthy)')
@@ -177,6 +322,7 @@ def main():
     # trip and re-arm for the next run rather than exiting. stopped_run holds the
     # run it already acted on, so it never fires twice for the same one.
     stopped_run = None
+    recoveries = 0
     while True:
         run = current_run()
         if not run:
@@ -220,7 +366,19 @@ def main():
             r = get_json(f'{VMM_FLASK}/stop_run', data={})
             log(f'stop_run response: {r}')
             stopped_run = run
-            log(f're-arming for the next run (will not fire again for {run})')
+
+            if not AUTO_RECOVER:
+                log('auto-recovery disabled in config — stopping here')
+            elif recoveries >= MAX_RECOVERIES:
+                log(f'auto-recovery budget spent ({recoveries}/{MAX_RECOVERIES}) — '
+                    f'NOT restarting again. The readout is failing repeatedly and '
+                    f'THIS NEEDS A HUMAN.')
+            else:
+                recoveries += 1
+                log(f'auto-recovery {recoveries}/{MAX_RECOVERIES}')
+                if recover(run, sub, plan_of(run)):
+                    stopped_run = None      # a new run is live; watch it too
+            log('re-armed')
         time.sleep(POLL_S)
 
 
