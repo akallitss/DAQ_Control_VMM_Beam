@@ -166,8 +166,17 @@ POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = n
 # mesh <= 450 V, drift <= 900 V. Asserted below so a bad edit fails here.
 RUN_PLAN = 'mesh_then_drift'
 
+# Every point gets the SAME run_time — scan points are only comparable if they
+# are. Do NOT shorten the tail to squeeze the campaign inside a beam window: if
+# the beam ends first, the unreached points are simply retaken after the next
+# beam start (2026-07-30, Alexandra).
 SCAN_SUBRUN_MIN = 12                              # minutes per scan point
-MESH_SCAN_STEPS_V = (0, 10, 20, 30, 40, 50)       # subtracted from mesh AND drift
+
+# Mesh scan down to 350 V on the MID/OUT mesh, i.e. 100 V below their operating
+# point, in 10 V steps. Each station steps by the same dv from its own operating
+# mesh, so P2_IN runs 10 V lower throughout and bottoms out at 340 V. Lower mesh
+# is the safe direction (gain and discharge rate both fall).
+MESH_SCAN_STEPS_V = tuple(range(0, 101, 10))      # subtracted from mesh AND drift
 DRIFT_SCAN_GAPS_V = (150, 200, 250, 300, 350, 400)  # drift = that station's mesh + gap
 
 MESH_CEILING_V = 450
