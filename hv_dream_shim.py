@@ -44,6 +44,43 @@ PORT = 2100
 
 GATE_DEFAULTS = {'tolerance_v': 3.0, 'poll_s': 5, 'timeout_s': 900}
 
+# How long the FIRST gate of a connection re-checks for the combined-run state
+# file before concluding the run is VMM-only. See _combined_state().
+STATE_GRACE_S = 30
+
+# Reset for every client connection; only the first gate of a run pays the grace.
+_first_gate = True
+
+
+def _combined_state():
+    """Combined-run state, tolerating a race at the start of a run.
+
+    dream_bridge_state.json is written by the VMM flask immediately BEFORE it
+    launches daq_control, so it should already be on disk by the first gate.
+    On run_24 (2026-07-30) it was not: sub-run nominal_00 read it as absent,
+    took the 'no combined run active' fast path, and acquisition started 1 s
+    after Dream began ramping — ~100 s of beam recorded from 0 V up. Every
+    later sub-run gated correctly, so the state file was there by then.
+
+    Reading it once and failing OPEN is what made that a silent data-quality
+    bug, so the first gate of a connection now re-checks for STATE_GRACE_S
+    before deciding a run is VMM-only. A genuinely VMM-only run pays this once
+    per run, not once per sub-run.
+    """
+    state = _load_json(BRIDGE_STATE_PATH)
+    if state.get('combined') or not _first_gate:
+        return state
+    waited = 0.0
+    while waited < STATE_GRACE_S:
+        time.sleep(1)
+        waited += 1
+        state = _load_json(BRIDGE_STATE_PATH)
+        if state.get('combined'):
+            print(f'[shim] combined-run state appeared after {waited:.0f}s — '
+                  f'gating after all (would have started ungated before)')
+            return state
+    return state
+
 
 def _load_json(path):
     try:
@@ -101,10 +138,18 @@ def _dream_readback_ok(bridge, state, sub_run, targets):
 def gate_start(sub_run):
     """Blocking per-subrun gate. Returns the reply for daq_control — contains
     'HV Set' ONLY when the subrun may start."""
+    global _first_gate
     name = sub_run.get('sub_run_name', '?')
-    state = _load_json(BRIDGE_STATE_PATH)
+    state = _combined_state()
+    first = _first_gate
+    _first_gate = False
     if not state.get('combined'):
-        print(f'[shim] {name}: no combined run active — instant HV Set')
+        # Loud on purpose: for a COMBINED run this line means the sub-run began
+        # while the crate may still have been ramping. Grep it when a sub-run
+        # looks like it recorded at the wrong voltage.
+        print(f'[shim] {name}: NOT GATED — no combined run active after '
+              f'{STATE_GRACE_S if first else 0}s'
+              f' (expected for a VMM-only run; a BUG for a combined one)')
         return f'HV Set {name}'
     bridge = _load_json(BRIDGE_CONFIG_PATH)
     targets = _subrun_targets(sub_run)
@@ -132,6 +177,7 @@ def main():
                 server.send('HV control connected')
                 hv_info = server.receive_json()  # kept for protocol parity; unused
                 print('[shim] client connected (Dream owns the real HV)')
+                globals()['_first_gate'] = True   # new run: re-arm the grace
                 res = server.receive()
                 while 'Finished' not in res:
                     if 'Start' in res:

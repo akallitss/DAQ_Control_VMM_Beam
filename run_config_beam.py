@@ -144,6 +144,35 @@ N_SUBRUNS = 8       # number of identical sub-runs
 SUBRUN_MIN = 52     # run time per sub-run (minutes)
 POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = no pause
 
+# ---------------------------------------------------------------------------
+# RUN_PLAN selects the schedule built below.
+#   'nominal'          : N_SUBRUNS identical sub-runs at the operating point.
+#   'mesh_then_drift'  : the HV scan campaign — a mesh scan, then a drift scan.
+#
+# MESH SCAN. Each station's mesh steps DOWN from ITS OWN operating point and
+# its drift follows by the same amount, so every station keeps its own 300 V
+# drift gap (drift - mesh) throughout — the Dream convention, and what makes
+# the points comparable. Stepping all stations to a COMMON mesh value instead
+# would push P2_IN 10 V above its operating point, which is the wrong direction
+# for it (mesh discharge rate roughly triples per 10 V, and 450 is the ceiling).
+#
+# DRIFT SCAN. Mesh is pinned at each station's operating value (MID/OUT 450,
+# IN 440) and the drift gap is scanned, so this maps the drift-field/
+# transparency axis at the mesh we actually run at. gap 300 repeats the
+# operating point mid-run, which doubles as a stability check against the
+# mesh scan's first point.
+#
+# Ceilings (enforced again on the Dream side, which refuses the whole run):
+# mesh <= 450 V, drift <= 900 V. Asserted below so a bad edit fails here.
+RUN_PLAN = 'mesh_then_drift'
+
+SCAN_SUBRUN_MIN = 12                              # minutes per scan point
+MESH_SCAN_STEPS_V = (0, 10, 20, 30, 40, 50)       # subtracted from mesh AND drift
+DRIFT_SCAN_GAPS_V = (150, 200, 250, 300, 350, 400)  # drift = that station's mesh + gap
+
+MESH_CEILING_V = 450
+DRIFT_CEILING_V = 900
+
 # P2 stations' HV on the SPS CAEN crate (192.168.10.199, banco's DAQ LAN),
 # MIRRORED 2026-07-29 from the Dream DAQ's run_config_beam.py on banco, which
 # has been running these detectors so far. Keep in sync with Dream until the
@@ -325,14 +354,63 @@ class Config(RunConfigBase):
                         hvs.setdefault(str(card), {})[str(ch)] = OPERATING_HV[det][role]
             return hvs
 
+        def _scan_hvs(p2_volts):
+            """Full ten-channel target map for one scan point.
+
+            p2_volts is {det: {role: volts}} for the three P2 stations; the two
+            uRWELL references are always carried at their operating point,
+            because they are the telescope reference and scans never move them.
+            """
+            hvs = {}
+            for det, roles in URWELL_HV.items():
+                for role, (card, ch) in roles.items():
+                    hvs.setdefault(str(card), {})[str(ch)] = OPERATING_HV[det][role]
+            for det, roles in P2_HV.items():
+                for role, (card, ch) in roles.items():
+                    v = p2_volts[det][role]
+                    ceiling = MESH_CEILING_V if role == 'mesh' else DRIFT_CEILING_V
+                    assert 0 <= v <= ceiling, \
+                        f'{det}:{role} = {v} V exceeds the {ceiling} V ceiling'
+                    hvs.setdefault(str(card), {})[str(ch)] = v
+            return hvs
+
         self.sub_runs = []
-        for i in range(N_SUBRUNS):
-            self.sub_runs.append({
-                'sub_run_name': f'nominal_{i:02d}',
-                'run_time': SUBRUN_MIN,  # Minutes
-                'post_pause_s': int(round(POST_SUBRUN_PAUSE_MIN * 60)),  # pause after this sub-run (seconds)
-                'hvs': _operating_hvs(),
-            })
+        if RUN_PLAN == 'nominal':
+            for i in range(N_SUBRUNS):
+                self.sub_runs.append({
+                    'sub_run_name': f'nominal_{i:02d}',
+                    'run_time': SUBRUN_MIN,  # Minutes
+                    'post_pause_s': int(round(POST_SUBRUN_PAUSE_MIN * 60)),  # pause after this sub-run (seconds)
+                    'hvs': _operating_hvs(),
+                })
+        elif RUN_PLAN == 'mesh_then_drift':
+            # Mesh scan: mesh and drift both step down by dv, so each station's
+            # own drift gap is unchanged. dv=0 is the operating point.
+            for dv in MESH_SCAN_STEPS_V:
+                self.sub_runs.append({
+                    'sub_run_name': f'meshscan_m{dv:02d}V',
+                    'run_time': SCAN_SUBRUN_MIN,
+                    'post_pause_s': 0,
+                    'hvs': _scan_hvs({
+                        det: {role: OPERATING_HV[det][role] - dv for role in roles}
+                        for det, roles in P2_HV.items()
+                    }),
+                })
+            # Drift scan: mesh pinned at each station's operating value, drift
+            # set to that mesh plus the scanned gap.
+            for gap in DRIFT_SCAN_GAPS_V:
+                self.sub_runs.append({
+                    'sub_run_name': f'driftscan_gap{gap:03d}V',
+                    'run_time': SCAN_SUBRUN_MIN,
+                    'post_pause_s': 0,
+                    'hvs': _scan_hvs({
+                        det: {'mesh': OPERATING_HV[det]['mesh'],
+                              'drift': OPERATING_HV[det]['mesh'] + gap}
+                        for det in P2_HV
+                    }),
+                })
+        else:
+            raise SystemExit(f'RUN_PLAN {RUN_PLAN!r} not recognised')
 
         # --- HV scan template (uncomment and adapt at the beam): step every
         # --- station's mesh DOWN from the operating point, drift following so
@@ -416,6 +494,11 @@ if __name__ == '__main__':
     print(f'Capture: {", ".join(ifaces)}  ({config.vmm_daq_info["capture_tool"]}, '
           f'{config.vmm_daq_info["capture_duration_s"]} s/file)')
     print(f'LV units: {", ".join(config.lv_info["units"].keys())}')
-    print(f'Sub-runs: {n_sub} x {SUBRUN_MIN} min = {run_min} min (~{total_h:.2f} h + overhead)')
+    # Report the ACTUAL per-sub-run times, not SUBRUN_MIN — under a scan plan
+    # those differ and quoting the constant misreports the schedule.
+    _times = sorted({sr['run_time'] for sr in config.sub_runs})
+    _each = f'{_times[0]}' if len(_times) == 1 else f'{_times[0]}-{_times[-1]}'
+    print(f'RUN PLAN: {RUN_PLAN}')
+    print(f'Sub-runs: {n_sub} x {_each} min = {run_min} min (~{total_h:.2f} h + overhead)')
 
     print('donzo')
