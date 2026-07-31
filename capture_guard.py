@@ -74,6 +74,10 @@ EMPTY_MAX_BYTES = 320
 # during the per-subrun HV gate, when no files are written and there is nothing
 # to judge. Comfortably longer than the 44.4 s dumpcap rotation.
 CAPTURE_STALE_S = 180
+# Gap between the two reads of Dream's trigger counter. Long enough that a real
+# trigger rate moves it unmistakably (thousands of events even on a weak beam),
+# short enough that a genuinely dead readout is still caught inside ~2 min.
+DREAM_EVENT_SAMPLE_S = 30
 
 # ---------------------------------------------------------------------------
 # AUTO-RECOVERY. After stopping a dead run the guard can re-apply the chip
@@ -187,18 +191,57 @@ def closed_capture_sizes(run, subrun):
     return [os.path.getsize(p) for _, p in files[:-1]]
 
 
+def dream_events():
+    """Dream's trigger counter for the current run (external TCM coincidence)."""
+    d = get_json(f'{DREAM_FLASK}/status')
+    if not isinstance(d, list):
+        return None
+    for s in d:
+        if s.get('name') == 'dream_daq':
+            ev = s.get('run_events')
+            return int(ev) if isinstance(ev, (int, float)) else None
+    return None
+
+
 def dream_recording():
-    """Is the Dream side still writing data? If so, a silent VMM is the VMM's
-    fault rather than a beam outage."""
+    """Are triggers ARRIVING RIGHT NOW? Only that separates a dead readout from
+    a beam outage.
+
+    The previous version asked two questions that feel equivalent and are not:
+    does Dream have a run open, and does the beam monitor say beam_on. Both were
+    true on 2026-07-31 at 16:52 while the beam to the North Area was collapsing
+    — FTARGET spills fell 42 -> 8 per 10 min while the SPS went on spilling
+    happily to SPS_DUMP. beam_on tracks SPS extraction with a 300 s off-gap and
+    says nothing about the beam reaching H4, so the guard read "beam is on, the
+    VMM is silent" and stopped and restarted a perfectly healthy run.
+
+    Dream's cumulative data volume is no good either: it is what was recorded
+    BEFORE the beam left, and comparing a running total against an instantaneous
+    emptiness always favours blaming the VMM.
+
+    So: sample Dream's own event counter twice. It is read off the same external
+    TCM coincidence the VMM sees, so growing means triggers are arriving and a
+    silent VMM really is the VMM's fault; flat means nothing is arriving for
+    anyone and this is the beam. Unreadable counts as flat — the guard must fail
+    towards NOT stopping a run, because a false trip costs good beam time.
+    """
     d = get_json(f'{DREAM_FLASK}/get_current_run') or {}
     if not d.get('run_name'):
         return False, 'Dream reports no current run'
-    b = get_json(f'{DREAM_FLASK}/beam/status') or {}
-    # Dream's own event counter is not exposed; use the beam monitor as the
-    # proxy for "triggers should be arriving".
-    if b.get('beam_on') is False:
-        return False, 'beam is OFF — empty capture is expected, not a fault'
-    return True, f'Dream running {d.get("run_name")}, beam_on={b.get("beam_on")}'
+    e0 = dream_events()
+    if e0 is None:
+        return False, 'cannot read Dream event counter — not blaming the VMM'
+    time.sleep(DREAM_EVENT_SAMPLE_S)
+    e1 = dream_events()
+    if e1 is None:
+        return False, 'cannot re-read Dream event counter — not blaming the VMM'
+    if e1 > e0:
+        return True, (f'Dream triggers {e0:,} -> {e1:,} in {DREAM_EVENT_SAMPLE_S}s '
+                      f'(+{e1 - e0:,}): triggers ARE arriving, so a silent VMM is '
+                      f'the VMM')
+    return False, (f'Dream triggers flat at {e1:,} over {DREAM_EVENT_SAMPLE_S}s — '
+                   f'nothing is arriving for anyone, so this is a BEAM outage, '
+                   f'not a readout fault')
 
 
 def plan_of(run):
