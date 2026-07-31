@@ -255,3 +255,4 @@ beam_monitor/logs/
 # transient runtime state, machine-specific.
 config/continuation.json
 config/no_auto_recovery
+logs/flask.log

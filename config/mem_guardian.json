@@ -1,7 +1,9 @@
 {
-  "_comment": "VMM mem_guardian overrides. Created 2026-07-31 after a 5 GB vmm-analysis job took this 7 GB box to 890 MB available. The guardian saw it, but its default killable list is only vmm_pcapng_qa.py, so it logged no killable compute process found - leaving the kernel OOM to act and the kernel then killed the DAQ FLASK and the QA watcher. The guardian protects flask from itself; the kernel does not. Making the offline monitoring job killable means the guardian sheds the right process instead. Delete this file to fall back to the built-in defaults.",
+  "_comment": "VMM mem_guardian overrides. This 7 GB box has no headroom, and offline analysis jobs (a colleague running vmm-analysis, plus pcapng-parsing work) have twice driven MemAvailable under 900 MB. The guardian PROTECTS the flask from itself but the kernel OOM killer does not, so with nothing killable the kernel took the DAQ flask instead - three times on 2026-07-31. Everything under the offline analysis directories is therefore killable; the DAQ services stay covered by the built-in protect list (vmm_daq_control.py, daq_control.py, hv_control.py, lv_control.py, qa_watcher.py, dumpcap, Server.py, start_flask, flask, mem_guardian.py). Killing an analysis job costs a rerun; losing the flask costs beam.",
   "killable": [
     "vmm_pcapng_qa.py",
-    "vmm_hybrid_pcapng_monitoring.py"
+    "vmm_hybrid_pcapng_monitoring.py",
+    "/local/p2/p2soft/",
+    "/local/p2/DAQ_Control_VMM_Beam/vmm_qa/"
   ]
 }

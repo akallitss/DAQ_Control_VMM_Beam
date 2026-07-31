@@ -12,4 +12,13 @@ BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # a stale one at the real (absolute) path — confirmed 2026-07-31.
 cd "$BASE_DIR"
 export FLASK_APP="$BASE_DIR/flask_app/app.py"
-exec "$BASE_DIR/.venv/bin/flask" run --host=0.0.0.0 --port=5002
+
+# Keep the server output in a file, not only in the tmux pane. The flask died
+# four times on 2026-07-31; twice it was the kernel OOM killer, but at 17:53 it
+# went with memory healthy and NOTHING was left to diagnose it with, because
+# when the pane dies its scrollback dies too. A traceback that only exists in a
+# dead tmux session may as well not have happened.
+mkdir -p "$BASE_DIR/logs"
+echo "=== flask start $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$BASE_DIR/logs/flask.log"
+exec "$BASE_DIR/.venv/bin/flask" run --host=0.0.0.0 --port=5002 \
+    2>&1 | tee -a "$BASE_DIR/logs/flask.log"

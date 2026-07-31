@@ -135,8 +135,35 @@ def get_json(url, timeout=8, data=None):
 
 
 def current_run():
+    """Which run is being written, asking the Flask first and the disk second.
+
+    The DAQ does not need the Flask — daq_control runs in its own tmux and keeps
+    recording regardless — so the guard must not need it either. On 2026-07-31
+    the Flask died four times, and each time this returned None, so the guard
+    silently skipped every check and protected nothing while a run was live.
+    Falling back to the run directory holding the most recently written capture
+    file keeps detection working through a Flask outage.
+    """
     d = get_json(f'{VMM_FLASK}/live_hits') or {}
-    return d.get('run')
+    run = d.get('run')
+    if run:
+        return run
+    newest = None
+    try:
+        for r in os.listdir(RUNS_DIR):
+            for dp, _, fns in os.walk(os.path.join(RUNS_DIR, r)):
+                for f in fns:
+                    if f.endswith('.pcapng'):
+                        t = os.path.getmtime(os.path.join(dp, f))
+                        if newest is None or t > newest[0]:
+                            newest = (t, r)
+    except Exception:
+        return None
+    # Only trust it if something was written recently; an old run directory is
+    # not evidence that a run is in progress now.
+    if newest and (time.time() - newest[0]) < CAPTURE_STALE_S:
+        return newest[1]
+    return None
 
 
 def current_subrun(run):

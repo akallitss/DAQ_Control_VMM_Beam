@@ -146,13 +146,27 @@ def _kill(pid, rss_kb, cmd):
         pass
 
 
+DEFAULT_CFG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "config", "mem_guardian.json")
+
+
 def main():
     cfg = dict(DEFAULTS)
-    if len(sys.argv) > 1:
+    # config/mem_guardian.json is read even when no path is given on the command
+    # line. start_servers.sh launches this with no arguments, so an argv-only
+    # config was silently inert: the file existed, looked right, and the
+    # guardian went on running the built-in defaults. That cost the DAQ flask
+    # twice on 2026-07-31 to the kernel OOM killer while the guardian logged
+    # that it had nothing it was allowed to kill.
+    path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CFG_PATH
+    if os.path.exists(path):
         try:
-            cfg.update(json.load(open(sys.argv[1])))
+            cfg.update(json.load(open(path)))
+            _log(f"config {path} loaded")
         except Exception as e:
-            _log(f"could not read config {sys.argv[1]} ({e}); using defaults")
+            _log(f"could not read config {path} ({e}); using defaults")
+    else:
+        _log(f"no config at {path}; using defaults")
 
     _log(f"START kill<{cfg['kill_avail_mb']}MB warn<{cfg['warn_avail_mb']}MB "
          f"poll={cfg['poll_s']}s  (MemAvailable now {mem_available_mb()}MB)")
