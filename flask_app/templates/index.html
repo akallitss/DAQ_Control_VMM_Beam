@@ -55,6 +55,7 @@
           <div class="btn-group-block">
             <span class="group-label">Watchers</span>
             <div class="d-flex flex-wrap gap-2">
+              <button id="proc-toggle" class="btn btn-info btn-sm">Start Processor</button>
               <button id="qa-toggle" class="btn btn-info btn-sm">Start QA</button>
               <button id="backup-toggle" class="btn btn-info btn-sm">Start Backup</button>
               <button id="rerun-qa" class="btn btn-outline-warning btn-sm ms-auto">Rerun QA</button>
@@ -1702,6 +1703,9 @@ function osJoin(...parts) {
 // A watcher's status is "STOPPED" when its tmux session isn't running; the button
 // text/action follow that state, refreshed each /status poll via updateWatcherToggles().
 const WATCHER_TOGGLES = [
+    { name: "vmm_processor", btn: "proc-toggle", label: "Processor",
+      start: "/start_processor", stop: "/stop_processor",
+      confirm: "Stop the processor? Captures will stop being decoded." },
     { name: "vmm_qa_watcher", btn: "qa-toggle", label: "QA",
       start: "/start_qa", stop: "/stop_qa", confirm: "Stop the QA watcher?" },
     { name: "vmm_backup_watcher", btn: "backup-toggle", label: "Backup",

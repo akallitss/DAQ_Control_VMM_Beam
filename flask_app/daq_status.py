@@ -251,6 +251,52 @@ def get_daq_control_status():
     return {"status": "UNKNOWN STATE", "color": "danger", "fields": fields}
 
 
+def get_processor_status():
+    """Status of the decode watcher (pcapng -> hits_store).
+
+    Reads the tmux pane the same way the other watchers do. The processor's
+    launch line is
+        [processor] run_32/meshscan_m60V  enp4s0f1_00002_....pcapng  (12 MB, mem 30%)
+    """
+    try:
+        output = subprocess.check_output(
+            ["tmux", "capture-pane", "-pS", "-50", "-t", "vmm_processor:0.0"],
+            text=True
+        )
+    except subprocess.CalledProcessError:
+        return {"status": "STOPPED", "color": "secondary", "fields": []}
+
+    lines = [l for l in output.splitlines() if l.strip()]
+
+    fields = []
+    for line in reversed(lines):
+        m = re.search(r'\[processor\] (\S+)/(\S+)\s+(\S+\.pcapn?g)\s+\((\S+)\s*MB', line)
+        if m:
+            fields = [
+                {"label": "Run",    "value": m.group(1)},
+                {"label": "Subrun", "value": m.group(2)},
+                {"label": "File",   "value": m.group(3)},
+                {"label": "Size",   "value": f"{m.group(4)} MB"},
+            ]
+            break
+
+    for line in reversed(lines):
+        if "[processor] stale, skipping" in line:
+            continue
+        if re.search(r'\[processor\] \S+/\S+\s+\S+\.pcapn?g', line):
+            return {"status": "Decoding", "color": "success", "fields": fields}
+        if "[processor]" in line and " idle " in line:
+            return {"status": "IDLE", "color": "info", "fields": fields}
+        if "[processor]" in line and "FAILED" in line:
+            return {"status": "DECODE FAILED", "color": "danger", "fields": fields}
+        if "[processor]" in line:
+            return {"status": "RUNNING", "color": "info", "fields": fields}
+
+    if lines:
+        return {"status": "Decoding", "color": "success", "fields": fields}
+    return {"status": "UNKNOWN", "color": "danger", "fields": []}
+
+
 def get_qa_watcher_status():
     try:
         output = subprocess.check_output(

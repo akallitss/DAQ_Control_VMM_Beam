@@ -28,7 +28,8 @@ from flask_socketio import SocketIO, emit
 import space_manager
 from daq_status import (get_vmm_daq_status, get_hv_control_status,
                         get_lv_control_status, get_daq_control_status,
-                        get_qa_watcher_status, get_backup_watcher_status)
+                        get_qa_watcher_status, get_backup_watcher_status,
+                        get_processor_status)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Add parent dir to path
 from run_config_beam import Config, BASE_DATA_DIR
@@ -52,6 +53,9 @@ BASH_DIR = f"{BASE_DIR}/bash_scripts"
 QA_CONFIG_PATH = f"{BASE_DIR}/config/qa_config.json"
 QA_RESET_PATH  = f"{BASE_DIR}/config/qa_reset.json"
 QA_TMUX = "vmm_qa_watcher"
+PROC_CONFIG_PATH = f"{BASE_DIR}/config/processor_config.json"
+PROC_RESET_PATH  = f"{BASE_DIR}/config/processor_reset.json"
+PROC_TMUX = "vmm_processor"
 BACKUP_CONFIG_PATH = f"{BASE_DIR}/config/backup_config.json"
 BACKUP_TMUX = "vmm_backup_watcher"
 # Last run name seen in the daq_control log; persisted so "Current run" survives
@@ -187,7 +191,7 @@ app = Flask(__name__)
 socketio = SocketIO(app)
 
 TMUX_SESSIONS = ["vmm_daq_control", "vmm_daq", "vmm_hv_control", "vmm_lv_control",
-                 "vmm_qa_watcher", "vmm_backup_watcher"]
+                 "vmm_processor", "vmm_qa_watcher", "vmm_backup_watcher"]
 sessions = {}
 
 @app.route("/")
@@ -326,6 +330,8 @@ def status_all():
         elif s == "vmm_daq_control":
             info = get_daq_control_status()
             _save_current_run(_extract_daq_run(info))  # keep Current run in sync
+        elif s == "vmm_processor":
+            info = get_processor_status()
         elif s == "vmm_qa_watcher":
             info = get_qa_watcher_status()
         elif s == "vmm_backup_watcher":
@@ -522,6 +528,41 @@ def git_reset():
     try:
         subprocess.Popen([f"{BASH_DIR}/git_reset.sh"])
         return jsonify({"success": True, "message": "Git now up to date"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/start_processor", methods=["POST"])
+def start_processor():
+    """Launch the decode watcher (pcapng -> hits_store).
+
+    Runs alongside the QA watcher, not instead of it: the processor decodes,
+    qa_watcher plots what the processor produced.
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, f"{BASE_DIR}/vmm_processor_config.py"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            return jsonify({"success": False, "message": f"Config generation failed: {result.stderr}"}), 500
+        subprocess.run(["tmux", "kill-session", "-t", PROC_TMUX], capture_output=True)
+        # sys.executable (flask's venv python), not bare "python": the tmux
+        # login shell resets PATH and drops the venv, so "python" may not resolve.
+        subprocess.Popen([
+            "tmux", "new-session", "-d", "-s", PROC_TMUX,
+            sys.executable, f"{BASE_DIR}/vmm_processor_watcher.py", PROC_CONFIG_PATH
+        ])
+        return jsonify({"success": True, "message": "Processor started"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/stop_processor", methods=["POST"])
+def stop_processor():
+    try:
+        subprocess.run(["tmux", "kill-session", "-t", PROC_TMUX], capture_output=True)
+        return jsonify({"success": True, "message": "Processor stopped"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 

@@ -80,6 +80,16 @@ CLOCK_PERIOD_NS = 22.5  # ns per BCID count (44.44 MHz clock)
 TAC_SLOPE_NS    = 60.0  # ns full-scale of the TDC TAC ramp (default; tunable per VMM)
 TDC_RANGE       = 255   # TDC full-scale bin count (matches vmm-sdat SRSTime::tdc_range)
 
+# matplotlib's default histtype='bar' emits one Rectangle patch per bin, so a
+# 20-VMM x 1024-bin figure builds ~20k artists and takes ~19 s. 'step' draws
+# the identical bin contents as a single line in ~2.5 s.
+#
+# 'stepfilled' keeps the filled look and is still ~6x faster than 'bar', but
+# measured end-to-end it lands at 44.3-44.8 s against the 44.4 s dumpcap
+# rotation, i.e. no margin -- so 'step' is the default. Bin contents are the
+# same for all three; only the rendering differs.
+HIST_TYPE = "step"
+
 
 def gray2bin_np(arr):
     """Convert a numpy array of Gray-coded integers to binary (matches Lua gray2bin32)."""
@@ -386,6 +396,9 @@ _ap.add_argument("--live", action="store_true",
                       "hit-rate-per-channel for each active VMM (no ROOT output)")
 _ap.add_argument("--update-interval", type=float, default=2.0, metavar="SECONDS",
                  help="Plot refresh interval in seconds for --live mode (default: 2.0)")
+_ap.add_argument("--legacy-parser", action="store_true",
+                 help="Use the original in-file scapy/parse_block loop instead of "
+                      "vmm_decode. Slower; kept as a fallback and for A/B checks.")
 _args = _ap.parse_args()
 
 pcap_file      = _args.pcap_file
@@ -402,11 +415,21 @@ else:
     _cal_as = np.ones( (32, 64), dtype=np.float64)
     _has_calibration = False
 
-if not os.path.isfile(pcap_file):
+# The positional argument may be a capture OR a column store already decoded
+# by vmm_processor_watcher. In store mode nothing re-reads the pcapng: the
+# decode happened once, in the processor, and this script only renders. That is
+# the whole point of the split -- qa_watcher never touches raw captures.
+_from_store = (os.path.isdir(pcap_file)
+               and os.path.isfile(os.path.join(pcap_file, 'meta.json')))
+_source_capture = pcap_file    # overwritten from the store's meta below
+
+src_ips = None
+if _from_store:
+    print(f"Reading decoded store: {pcap_file}")
+elif not os.path.isfile(pcap_file):
     print(f"File not found: {pcap_file}")
     sys.exit(1)
-
-if SRC_IP_OVERRIDE:
+elif SRC_IP_OVERRIDE:
     src_ips = {SRC_IP_OVERRIDE}
     print(f"Using forced IP: {SRC_IP_OVERRIDE}")
 else:
@@ -419,7 +442,7 @@ else:
     print(f"Auto-detected FEC IP(s): {', '.join(sorted(src_ips))}")
 
 # ---- Live monitoring mode ------------------------------------------------
-if _args.live:
+if _args.live and not _from_store:
     run_live(pcap_file, src_ips, update_interval=_args.update_interval)
     print("\nProceeding with batch QA analysis on the same file...\n")
     # Switch matplotlib back to the non-interactive batch backend
@@ -427,106 +450,153 @@ if _args.live:
 # --------------------------------------------------------------------------
 
 # Per-VMM marker state: (fec_id, vmm_id) → [srs_ts, trigger_time, trigger_counter]
-markers = {}
+# ---- Parse ---------------------------------------------------------------
+# Fast path: vmm_decode is a vectorised decoder (no scapy, no per-word Python
+# loop) validated to reproduce this script's hits DataFrame bit for bit --
+# every column, every dtype -- across SRS and TRG on the beam campaign data.
+# It is ~5-12x faster and uses less memory.
+#
+# The legacy loop below is kept deliberately: if vmm_decode is missing or
+# raises for any reason, QA degrades to its previous speed instead of failing.
+# --legacy-parser forces it, which is also how to A/B the two.
+hits = None
+if _from_store:
+    import vmm_decode as _vd
+    _t_parse = time.time()
+    hits, _smeta = _vd.load_frame(
+        pcap_file,
+        calibration=((_cal_to, _cal_ts, _cal_ao, _cal_as) if _has_calibration else None))
+    pkt_count = _smeta.get('n_packets', 0)
+    vm3_count = _smeta.get('n_vm3_packets', 0)
+    # the store records which FEC(s) it was decoded from; events.json needs it
+    src_ips = set(_smeta.get('fec_ips') or [])
+    _source_capture = _smeta.get('source') or pcap_file
+    print(f"Loaded {len(hits):,} hits from store  ({time.time() - _t_parse:.1f}s)")
 
-# Memory-efficient typed arrays (no Python object overhead)
-fec_buf      = array.array('B')   # uint8
-vmm_buf      = array.array('B')   # uint8
-time_buf     = array.array('I')   # uint32 — frame counter (SRS header bytes 0-3)
-ch_buf       = array.array('B')   # uint8
-adc_buf      = array.array('H')   # uint16
-ot_buf       = array.array('B')   # uint8 (0/1)
-offset_buf   = array.array('b')   # int8  (-16 to +15, 5-bit signed)
-bcid_buf     = array.array('H')   # uint16 (0-4095)
-tdc_buf      = array.array('B')   # uint8  (0-255)
-srs_ts_buf   = array.array('Q')   # uint64 — 42-bit SRS marker FEC timestamp (25 ns ticks)
-trg_time_buf = array.array('Q')   # uint64 — 42-bit external trigger timestamp (TRG mode)
-trg_ctr_buf  = array.array('H')   # uint16 — trigger counter (TRG mode)
+if hits is None and not _args.legacy_parser:
+    try:
+        import vmm_decode as _vd
+        _t_parse = time.time()
+        print(f"Reading: {pcap_file}  (vmm_decode)")
+        hits, _dmeta = _vd.decode(
+            pcap_file,
+            data_format=data_format,
+            src_ips=src_ips,
+            max_packets=_args.max_packets,
+            calibration=((_cal_to, _cal_ts, _cal_ao, _cal_as)
+                         if _has_calibration else None),
+        )
+        pkt_count = _dmeta["n_packets"]
+        vm3_count = _dmeta["n_vm3_packets"]
+        print(f"Done: {pkt_count} packets | {vm3_count} VM3 packets | "
+              f"{len(hits):,} total hits  ({time.time() - _t_parse:.1f}s)")
+    except Exception as _e:
+        print(f"WARNING: vmm_decode failed ({type(_e).__name__}: {_e}) -- "
+              f"falling back to the legacy parser.")
+        hits = None
 
-print(f"Reading: {pcap_file}")
-pkt_count = 0
-vm3_count = 0
+if hits is None:
 
-with PcapReader(pcap_file) as reader:
-    for pkt in reader:
-        if UDP in pkt and IP in pkt and pkt[IP].src in src_ips:
-            payload = bytes(pkt[UDP].payload)
-            fc     = struct.unpack_from('>I', payload)[0]
-            fec_id = (struct.unpack_from('>I', payload, 4)[0] >> 4) & 0x0F
-            n_before = len(fec_buf)
-            parse_block(payload, fc, fec_id,
-                        markers, data_format,
-                        fec_buf, vmm_buf, time_buf,
-                        ch_buf, adc_buf, ot_buf, offset_buf, bcid_buf, tdc_buf,
-                        srs_ts_buf, trg_time_buf, trg_ctr_buf)
-            if len(fec_buf) > n_before:
-                vm3_count += 1
-        pkt_count += 1
-        if pkt_count % 10000 == 0:
-            print(f"  {pkt_count} packets | {len(fec_buf):,} hits so far...")
-        if _args.max_packets and pkt_count >= _args.max_packets:
-            print(f"  --max-packets={_args.max_packets} reached, stopping read.")
-            break
+    markers = {}
 
-print(f"\nDone: {pkt_count} packets | {vm3_count} VM3 packets | {len(fec_buf):,} total hits")
+    # Memory-efficient typed arrays (no Python object overhead)
+    fec_buf      = array.array('B')   # uint8
+    vmm_buf      = array.array('B')   # uint8
+    time_buf     = array.array('I')   # uint32 — frame counter (SRS header bytes 0-3)
+    ch_buf       = array.array('B')   # uint8
+    adc_buf      = array.array('H')   # uint16
+    ot_buf       = array.array('B')   # uint8 (0/1)
+    offset_buf   = array.array('b')   # int8  (-16 to +15, 5-bit signed)
+    bcid_buf     = array.array('H')   # uint16 (0-4095)
+    tdc_buf      = array.array('B')   # uint8  (0-255)
+    srs_ts_buf   = array.array('Q')   # uint64 — 42-bit SRS marker FEC timestamp (25 ns ticks)
+    trg_time_buf = array.array('Q')   # uint64 — 42-bit external trigger timestamp (TRG mode)
+    trg_ctr_buf  = array.array('H')   # uint16 — trigger counter (TRG mode)
 
-# Build DataFrame with compact dtypes
-_bcid_raw = np.frombuffer(bcid_buf,    dtype=np.uint16).copy()
-_offset   = np.frombuffer(offset_buf,  dtype=np.int8).copy()
-_tdc      = np.frombuffer(tdc_buf,     dtype=np.uint8).copy()
-_adc_raw  = np.frombuffer(adc_buf,     dtype=np.uint16).copy()
-_vmm      = np.frombuffer(vmm_buf,     dtype=np.uint8).copy()
-_ch       = np.frombuffer(ch_buf,      dtype=np.uint8).copy()
-_bcid     = gray2bin_np(_bcid_raw)     # Gray → binary, matching vmm-sdat gray2bin32
+    print(f"Reading: {pcap_file}")
+    pkt_count = 0
+    vm3_count = 0
 
-# Per-hit calibration lookup (vectorised over vmm/ch index pairs)
-_t_off = _cal_to[_vmm.astype(np.intp), _ch.astype(np.intp)]
-_t_slp = _cal_ts[_vmm.astype(np.intp), _ch.astype(np.intp)]
-_a_off = _cal_ao[_vmm.astype(np.intp), _ch.astype(np.intp)]
-_a_slp = _cal_as[_vmm.astype(np.intp), _ch.astype(np.intp)]
+    with PcapReader(pcap_file) as reader:
+        for pkt in reader:
+            if UDP in pkt and IP in pkt and pkt[IP].src in src_ips:
+                payload = bytes(pkt[UDP].payload)
+                fc     = struct.unpack_from('>I', payload)[0]
+                fec_id = (struct.unpack_from('>I', payload, 4)[0] >> 4) & 0x0F
+                n_before = len(fec_buf)
+                parse_block(payload, fc, fec_id,
+                            markers, data_format,
+                            fec_buf, vmm_buf, time_buf,
+                            ch_buf, adc_buf, ot_buf, offset_buf, bcid_buf, tdc_buf,
+                            srs_ts_buf, trg_time_buf, trg_ctr_buf)
+                if len(fec_buf) > n_before:
+                    vm3_count += 1
+            pkt_count += 1
+            if pkt_count % 10000 == 0:
+                print(f"  {pkt_count} packets | {len(fec_buf):,} hits so far...")
+            if _args.max_packets and pkt_count >= _args.max_packets:
+                print(f"  --max-packets={_args.max_packets} reached, stopping read.")
+                break
 
-# chip_time formula matching vmm-sdat SRSTime::chip_time_ns (calibrated):
-#   t_coarse = (offset*4096 + bcid) * bc_factor
-#   t_fine   = (bc_factor - tdc * (tac/255) - time_offset) * time_slope
-#   timestamp_ns = t_coarse + t_fine
-# Without calibration (time_offset=0, time_slope=1):
-#   = (offset*4096 + bcid + 1) * 22.5 - tdc * 60/255
-_t_coarse = (_offset.astype(np.float64) * 4096 + _bcid.astype(np.float64)) * CLOCK_PERIOD_NS
-_t_fine   = (CLOCK_PERIOD_NS - _tdc.astype(np.float64) * TAC_SLOPE_NS / TDC_RANGE - _t_off) * _t_slp
-_timestamp_ns = _t_coarse + _t_fine
+    print(f"\nDone: {pkt_count} packets | {vm3_count} VM3 packets | {len(fec_buf):,} total hits")
 
-_srs_ts   = np.frombuffer(srs_ts_buf,   dtype=np.uint64).copy()
-_trg_time = np.frombuffer(trg_time_buf, dtype=np.uint64).copy()
-_trg_ctr  = np.frombuffer(trg_ctr_buf,  dtype=np.uint16).copy()
-_abs_time_ns = _srs_ts.astype(np.float64) * 25.0 + _timestamp_ns
-_adc_cal  = (_a_slp * _adc_raw.astype(np.float64) + _a_off).astype(np.float32)
+    # Build DataFrame with compact dtypes
+    _bcid_raw = np.frombuffer(bcid_buf,    dtype=np.uint16).copy()
+    _offset   = np.frombuffer(offset_buf,  dtype=np.int8).copy()
+    _tdc      = np.frombuffer(tdc_buf,     dtype=np.uint8).copy()
+    _adc_raw  = np.frombuffer(adc_buf,     dtype=np.uint16).copy()
+    _vmm      = np.frombuffer(vmm_buf,     dtype=np.uint8).copy()
+    _ch       = np.frombuffer(ch_buf,      dtype=np.uint8).copy()
+    _bcid     = gray2bin_np(_bcid_raw)     # Gray → binary, matching vmm-sdat gray2bin32
 
-# Offset validity flag — new SRS format (and TRG) valid range is -1 to +15.
-# Anything with offset < -1 (raw 16-30) is outside the firmware specification
-# and indicates abnormal FEC behaviour. All values are kept in the DataFrame;
-# hit_valid=False lets the user apply or inspect the cut downstream.
-_hit_valid = (_offset >= np.int8(-1))
+    # Per-hit calibration lookup (vectorised over vmm/ch index pairs)
+    _t_off = _cal_to[_vmm.astype(np.intp), _ch.astype(np.intp)]
+    _t_slp = _cal_ts[_vmm.astype(np.intp), _ch.astype(np.intp)]
+    _a_off = _cal_ao[_vmm.astype(np.intp), _ch.astype(np.intp)]
+    _a_slp = _cal_as[_vmm.astype(np.intp), _ch.astype(np.intp)]
 
-hits = pd.DataFrame({
-    'fec':             np.frombuffer(fec_buf,      dtype=np.uint8).copy(),
-    'vmm':             _vmm,
-    'time':            np.frombuffer(time_buf,     dtype=np.uint32).copy(),
-    'ch':              _ch,
-    'adc':             _adc_raw,
-    'adc_calibrated':  _adc_cal,
-    'over_threshold':  np.frombuffer(ot_buf,       dtype=np.uint8).astype(bool).copy(),
-    'offset':          _offset,
-    'bcid':            _bcid,
-    'tdc':             _tdc,
-    'timestamp_ns':    _timestamp_ns,
-    'srs_timestamp':   _srs_ts,
-    'abs_time_ns':     _abs_time_ns,
-    'trigger_time':    _trg_time,
-    'trigger_counter': _trg_ctr,
-    'hit_valid':       _hit_valid,
-})
-del (fec_buf, vmm_buf, time_buf, ch_buf, adc_buf, ot_buf,
-     offset_buf, bcid_buf, tdc_buf, srs_ts_buf, trg_time_buf, trg_ctr_buf)
+    # chip_time formula matching vmm-sdat SRSTime::chip_time_ns (calibrated):
+    #   t_coarse = (offset*4096 + bcid) * bc_factor
+    #   t_fine   = (bc_factor - tdc * (tac/255) - time_offset) * time_slope
+    #   timestamp_ns = t_coarse + t_fine
+    # Without calibration (time_offset=0, time_slope=1):
+    #   = (offset*4096 + bcid + 1) * 22.5 - tdc * 60/255
+    _t_coarse = (_offset.astype(np.float64) * 4096 + _bcid.astype(np.float64)) * CLOCK_PERIOD_NS
+    _t_fine   = (CLOCK_PERIOD_NS - _tdc.astype(np.float64) * TAC_SLOPE_NS / TDC_RANGE - _t_off) * _t_slp
+    _timestamp_ns = _t_coarse + _t_fine
+
+    _srs_ts   = np.frombuffer(srs_ts_buf,   dtype=np.uint64).copy()
+    _trg_time = np.frombuffer(trg_time_buf, dtype=np.uint64).copy()
+    _trg_ctr  = np.frombuffer(trg_ctr_buf,  dtype=np.uint16).copy()
+    _abs_time_ns = _srs_ts.astype(np.float64) * 25.0 + _timestamp_ns
+    _adc_cal  = (_a_slp * _adc_raw.astype(np.float64) + _a_off).astype(np.float32)
+
+    # Offset validity flag — new SRS format (and TRG) valid range is -1 to +15.
+    # Anything with offset < -1 (raw 16-30) is outside the firmware specification
+    # and indicates abnormal FEC behaviour. All values are kept in the DataFrame;
+    # hit_valid=False lets the user apply or inspect the cut downstream.
+    _hit_valid = (_offset >= np.int8(-1))
+
+    hits = pd.DataFrame({
+        'fec':             np.frombuffer(fec_buf,      dtype=np.uint8).copy(),
+        'vmm':             _vmm,
+        'time':            np.frombuffer(time_buf,     dtype=np.uint32).copy(),
+        'ch':              _ch,
+        'adc':             _adc_raw,
+        'adc_calibrated':  _adc_cal,
+        'over_threshold':  np.frombuffer(ot_buf,       dtype=np.uint8).astype(bool).copy(),
+        'offset':          _offset,
+        'bcid':            _bcid,
+        'tdc':             _tdc,
+        'timestamp_ns':    _timestamp_ns,
+        'srs_timestamp':   _srs_ts,
+        'abs_time_ns':     _abs_time_ns,
+        'trigger_time':    _trg_time,
+        'trigger_counter': _trg_ctr,
+        'hit_valid':       _hit_valid,
+    })
+    del (fec_buf, vmm_buf, time_buf, ch_buf, adc_buf, ot_buf,
+         offset_buf, bcid_buf, tdc_buf, srs_ts_buf, trg_time_buf, trg_ctr_buf)
 
 mem_mb = hits.memory_usage(deep=True).sum() / 1e6
 print(f"DataFrame memory: {mem_mb:.1f} MB")
@@ -576,7 +646,7 @@ fig_adc.suptitle("ADC distributions per VMM", fontsize=14)
 for idx, v in enumerate(vmm_ids):
     ax   = axes_adc[idx // ncols][idx % ncols]
     data = hits.loc[hits.vmm == v, 'adc']
-    ax.hist(data, bins=ADC_BINS, range=(ADC_MIN, ADC_MAX), color='steelblue', alpha=0.8)
+    ax.hist(data, bins=ADC_BINS, range=(ADC_MIN, ADC_MAX), color='steelblue', alpha=0.8, histtype=HIST_TYPE)
     ax.set_title(f"VMM {v}  ({len(data):,} hits)")
     ax.set_xlabel("ADC")
     ax.set_ylabel("Counts")
@@ -592,8 +662,8 @@ for idx, v in enumerate(vmm_ids):
     vmm_hit = hits.loc[hits.vmm == v]
     adc_off = vmm_hit.loc[~vmm_hit.over_threshold, 'adc']
     adc_on  = vmm_hit.loc[ vmm_hit.over_threshold, 'adc']
-    ax.hist(adc_off, bins=ADC_BINS, range=(ADC_MIN, ADC_MAX), color='steelblue', alpha=0.6, label=f'Not OT ({len(adc_off):,})')
-    ax.hist(adc_on,  bins=ADC_BINS, range=(ADC_MIN, ADC_MAX), color='tomato',    alpha=0.6, label=f'OT ({len(adc_on):,})')
+    ax.hist(adc_off, bins=ADC_BINS, range=(ADC_MIN, ADC_MAX), color='steelblue', alpha=0.6, label=f'Not OT ({len(adc_off):,})', histtype=HIST_TYPE)
+    ax.hist(adc_on,  bins=ADC_BINS, range=(ADC_MIN, ADC_MAX), color='tomato',    alpha=0.6, label=f'OT ({len(adc_on):,})', histtype=HIST_TYPE)
     ax.set_title(f"VMM {v}")
     ax.set_xlabel("ADC")
     ax.set_ylabel("Counts")
@@ -625,7 +695,7 @@ fig_ch.suptitle("Channel occupancy per VMM", fontsize=14)
 for idx, v in enumerate(vmm_ids):
     ax   = axes_ch[idx // ncols][idx % ncols]
     data = hits.loc[hits.vmm == v, 'ch']
-    ax.hist(data, bins=CH_BINS, range=(CH_MIN, CH_MAX), color='tomato', alpha=0.8)
+    ax.hist(data, bins=CH_BINS, range=(CH_MIN, CH_MAX), color='tomato', alpha=0.8, histtype=HIST_TYPE)
     ax.set_title(f"VMM {v}  ({len(data):,} hits)")
     ax.set_xlabel("Channel")
     ax.set_ylabel("Counts")
@@ -691,7 +761,7 @@ fig_bcid.suptitle("BCID distribution per VMM", fontsize=14)
 for idx, v in enumerate(vmm_ids):
     ax   = axes_bcid[idx // ncols][idx % ncols]
     data = hits.loc[hits.vmm == v, 'bcid']
-    ax.hist(data, bins=BCID_BINS, range=(BCID_MIN, BCID_MAX), color='teal', alpha=0.8)
+    ax.hist(data, bins=BCID_BINS, range=(BCID_MIN, BCID_MAX), color='teal', alpha=0.8, histtype=HIST_TYPE)
     ax.set_title(f"VMM {v}  ({len(data):,} hits)")
     ax.set_xlabel("BCID")
     ax.set_ylabel("Counts")
@@ -706,7 +776,7 @@ fig_tdc.suptitle("TDC distribution per VMM", fontsize=14)
 for idx, v in enumerate(vmm_ids):
     ax   = axes_tdc[idx // ncols][idx % ncols]
     data = hits.loc[hits.vmm == v, 'tdc']
-    ax.hist(data, bins=TDC_BINS, range=(TDC_MIN, TDC_MAX), color='darkcyan', alpha=0.8)
+    ax.hist(data, bins=TDC_BINS, range=(TDC_MIN, TDC_MAX), color='darkcyan', alpha=0.8, histtype=HIST_TYPE)
     ax.set_title(f"VMM {v}  ({len(data):,} hits)")
     ax.set_xlabel("TDC")
     ax.set_ylabel("Counts")
@@ -725,10 +795,10 @@ for idx, v in enumerate(vmm_ids):
     valid   = hits.loc[vmm_sel &  hits['hit_valid'], 'offset']
     bad     = hits.loc[vmm_sel & ~hits['hit_valid'], 'offset']
     ax.hist(valid, bins=OFFSET_BINS, range=(OFFSET_MIN, OFFSET_MAX),
-            color='saddlebrown', alpha=0.8, label=f'valid ({len(valid):,})')
+            color='saddlebrown', alpha=0.8, label=f'valid ({len(valid):,})', histtype=HIST_TYPE)
     if len(bad):
         ax.hist(bad, bins=OFFSET_BINS, range=(OFFSET_MIN, OFFSET_MAX),
-                color='red', alpha=0.9, label=f'anomalous ({len(bad):,})')
+                color='red', alpha=0.9, label=f'anomalous ({len(bad):,})', histtype=HIST_TYPE)
         ax.legend(fontsize=7)
     ax.set_title(f"VMM {v}  ({len(valid)+len(bad):,} hits)")
     ax.set_xlabel("Offset (signed)")
@@ -747,7 +817,7 @@ fig_ts.suptitle("Hit timestamp distribution per VMM (ns)", fontsize=14)
 for idx, v in enumerate(vmm_ids):
     ax   = axes_ts[idx // ncols][idx % ncols]
     data = hits.loc[hits.vmm == v, 'timestamp_ns']
-    ax.hist(data, bins=TS_BINS, range=(ts_min_ns, ts_max_ns), color='darkviolet', alpha=0.8)
+    ax.hist(data, bins=TS_BINS, range=(ts_min_ns, ts_max_ns), color='darkviolet', alpha=0.8, histtype=HIST_TYPE)
     ax.set_title(f"VMM {v}  ({len(data):,} hits)")
     ax.set_xlabel("Timestamp (ns)")
     ax.set_ylabel("Counts")
@@ -764,7 +834,7 @@ fig_abs.suptitle("Absolute hit time per VMM (SRS marker + chip_time, ns)", fonts
 for idx, v in enumerate(vmm_ids):
     ax   = axes_abs[idx // ncols][idx % ncols]
     data = hits.loc[hits.vmm == v, 'abs_time_ns']
-    ax.hist(data, bins=TS_BINS, range=(abs_min_ns, abs_max_ns), color='mediumseagreen', alpha=0.8)
+    ax.hist(data, bins=TS_BINS, range=(abs_min_ns, abs_max_ns), color='mediumseagreen', alpha=0.8, histtype=HIST_TYPE)
     ax.set_title(f"VMM {v}  ({len(data):,} hits)")
     ax.set_xlabel("Absolute time (ns)")
     ax.set_ylabel("Counts")
@@ -783,7 +853,7 @@ if srs_max > srs_min:
         ax   = axes_srs[idx // ncols][idx % ncols]
         data = hits.loc[hits.vmm == v, 'srs_timestamp']
         ax.hist(data.astype(np.float64), bins=200, range=(srs_min, srs_max),
-                color='cadetblue', alpha=0.8)
+                color='cadetblue', alpha=0.8, histtype=HIST_TYPE)
         ax.set_title(f"VMM {v}  ({len(data):,} hits)")
         ax.set_xlabel("SRS timestamp (25 ns ticks)")
         ax.set_ylabel("Counts")
@@ -801,7 +871,7 @@ if _has_calibration:
     for idx, v in enumerate(vmm_ids):
         ax   = axes_adccal[idx // ncols][idx % ncols]
         data = hits.loc[hits.vmm == v, 'adc_calibrated']
-        ax.hist(data, bins=ADC_BINS, range=(adc_cal_min, adc_cal_max), color='darkorange', alpha=0.8)
+        ax.hist(data, bins=ADC_BINS, range=(adc_cal_min, adc_cal_max), color='darkorange', alpha=0.8, histtype=HIST_TYPE)
         ax.set_title(f"VMM {v}  ({len(data):,} hits)")
         ax.set_xlabel("Calibrated ADC")
         ax.set_ylabel("Counts")
@@ -820,7 +890,7 @@ if data_format == 'TRG' and hits['trigger_counter'].max() > 0:
         ax   = axes_tc[idx // ncols][idx % ncols]
         data = hits.loc[hits.vmm == v, 'trigger_counter']
         ax.hist(data, bins=min(200, tc_max - tc_min + 1), range=(tc_min, tc_max + 1),
-                color='firebrick', alpha=0.8)
+                color='firebrick', alpha=0.8, histtype=HIST_TYPE)
         ax.set_title(f"VMM {v}  ({len(data):,} hits)")
         ax.set_xlabel("Trigger counter")
         ax.set_ylabel("Counts")
@@ -838,7 +908,7 @@ if data_format == 'TRG' and hits['trigger_counter'].max() > 0:
             ax   = axes_tt[idx // ncols][idx % ncols]
             data = hits.loc[hits.vmm == v, 'trigger_time']
             ax.hist(data.astype(np.float64), bins=200, range=(tt_min, tt_max),
-                    color='tomato', alpha=0.8)
+                    color='tomato', alpha=0.8, histtype=HIST_TYPE)
             ax.set_title(f"VMM {v}  ({len(data):,} hits)")
             ax.set_xlabel("Trigger time (25 ns ticks)")
             ax.set_ylabel("Counts")
@@ -852,7 +922,7 @@ t_min, t_max = int(hits.time.min()), int(hits.time.max())
 for v in vmm_ids:
     fig_t, ax_t = plt.subplots(figsize=(12, 5))
     data = hits.loc[hits.vmm == v, 'time']
-    ax_t.hist(data, bins=TIME_BINS, range=(t_min, t_max), color='darkorange', alpha=0.8)
+    ax_t.hist(data, bins=TIME_BINS, range=(t_min, t_max), color='darkorange', alpha=0.8, histtype=HIST_TYPE)
     ax_t.set_title(f"Hit rate over time — VMM {v}  ({len(data):,} hits)")
     ax_t.set_xlabel("Frame counter (proxy for time)")
     ax_t.set_ylabel("Hits per bin")
@@ -925,14 +995,17 @@ if _args.events_json:
     try:
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from common_functions import parse_pcapng_name
-        _parsed = parse_pcapng_name(pcap_file)
+        # In store mode the positional is a directory whose name has no
+        # .pcapng suffix, so parse the original capture path the store
+        # recorded when it was decoded.
+        _parsed = parse_pcapng_name(_source_capture)
         if _parsed:
             _iface, _seq, _ = _parsed
     except ImportError:
         pass
 
     events = {
-        'pcap_file':       os.path.abspath(pcap_file),
+        'pcap_file':       os.path.abspath(_source_capture),
         'iface':           _iface,
         'seq':             _seq,
         'n_packets':       int(pkt_count),
@@ -942,7 +1015,7 @@ if _args.events_json:
         'hits_per_vmm':    {str(v): int((hits.vmm == v).sum()) for v in vmm_ids},
         't_first_ns':      float(hits['abs_time_ns'].min()) if len(hits) else None,
         't_last_ns':       float(hits['abs_time_ns'].max()) if len(hits) else None,
-        'fec_ips':         sorted(src_ips),
+        'fec_ips':         sorted(src_ips or []),
         'data_format':     data_format,
         'processed_at':    datetime.datetime.now().isoformat(timespec='seconds'),
     }

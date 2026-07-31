@@ -20,28 +20,42 @@ CONFIG = {
     # Top-level directory containing all run_N/ subdirectories
     'runs_dir': f'{BASE_DATA}runs/',
 
-    # Repository containing the QA script and the venv to run it with.
-    # qa_script_rel_path / qa_python_rel_path are relative to analysis_dir.
-    'analysis_dir': DAQ_REPO_DIR,
-    'qa_script_rel_path': 'vmm_qa/vmm_pcapng_qa.py',
-    'qa_python_rel_path': '.venv/bin/python',
+    # Scripts and the venv to run them with. Absolute so a tmux login shell,
+    # which resets PATH and drops the venv, still resolves them.
+    'qa_python':    f'{DAQ_REPO_DIR}/.venv/bin/python',
+    'qa_script':    f'{DAQ_REPO_DIR}/vmm_qa/vmm_pcapng_qa.py',
+    'trend_script': f'{DAQ_REPO_DIR}/vmm_qa/vmm_trend.py',
 
-    # Subdirectory of each subrun holding the capture files
-    'raw_inner_dir': 'raw_daq_data',
+    # Subdirectory of each subrun holding the DECODED STORES. qa_watcher no
+    # longer reads pcapng at all -- vmm_processor_watcher decodes each capture
+    # into hits_store/<capture>/ and renames it into place atomically, so a
+    # store that exists is complete and the two watchers never race.
+    'store_inner_dir': 'hits_store',
 
-    # QA outputs land in <qa_out_base>/<run>/<subrun>/<pcap_basename>/
-    # (PNGs + events.json — the flask Online QA gallery and the events
-    # counter both read this tree).
+    # QA outputs land in <qa_out_base>/<run>/<subrun>/<capture>/ (PNGs +
+    # events.json), with the trend dashboards at <run>/_trend.png and
+    # <run>/<subrun>/_trend.png. The flask Online QA gallery reads this tree.
     'qa_out_base': f'{BASE_DATA}analysis/',
-
-    # dumpcap rotation interval; files with no higher-seq sibling and no
-    # .capture_done marker finalize after 2x this (see qa_watcher docstring).
-    'capture_duration_s': CAPTURE_DURATION_S,
 
     # Passed through to vmm_pcapng_qa.py
     'data_format': 'SRS',   # 'SRS' (continuous) or 'TRG' (external trigger markers)
     'calibration': None,    # vmm-sdat calibration JSON path; None = no calibration
-    'max_packets': None,    # optional packet cap per file; None = read whole file
+
+    # How often to render the full 36-PNG QA set:
+    #   'subrun' - first store of each sub-run (default). Those plots are how the
+    #              mapping and offset problems were found, and a sub-run boundary
+    #              is exactly where conditions change (each scan point is one),
+    #              but at ~43 s each they cannot run on every capture.
+    #   'always' - every store. Only with headroom to spare.
+    #   'never'  - trend dashboard only.
+    # Any capture can still be rendered on demand:
+    #   vmm_qa/vmm_pcapng_qa.py <store_dir> --out-dir <dir>
+    'plot_policy': 'subrun',
+
+    # Trend dashboard: the scalars of every capture plotted against time. This
+    # is what answers "is something drifting" -- per-file PNGs cannot.
+    'do_trend': True,
+    'trend_scope': 'both',  # 'subrun' | 'run' | 'both'
 
     # Run filtering
     'include_runs': ['run_32'],  # e.g. ['run_1', 'run_2'] — only process these; None = all

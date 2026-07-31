@@ -46,6 +46,9 @@ DEFAULTS = {
     # the one memory-hungry offline job in the VMM stack; qa_watcher re-runs it.
     "killable": [
         "vmm_pcapng_qa.py",
+        # The decode worker is the other heavy, restartable job: the processor
+        # re-queues a killed file on the next poll, exactly as qa_watcher does.
+        "vmm_reduce.py",
     ],
     # Safety veto: never kill the live DAQ, its watchers, or the guardian itself,
     # even if a substring above happened to match part of their command line.
@@ -54,7 +57,8 @@ DEFAULTS = {
     # wrongly veto the kill.
     "protect": [
         "vmm_daq_control.py", "daq_control.py", "hv_control.py", "lv_control.py",
-        "qa_watcher.py", "backup_watcher.py", "beam_watcher.py", "dumpcap",
+        "qa_watcher.py", "vmm_processor_watcher.py",
+        "backup_watcher.py", "beam_watcher.py", "dumpcap",
         "Server.py", "start_flask", "flask", "mem_guardian.py",
     ],
 }
