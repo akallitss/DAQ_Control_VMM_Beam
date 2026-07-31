@@ -210,6 +210,22 @@ CONFIG_SCAN_SUBRUN_MIN = 55                          # minutes of data per confi
 TRIGGER_TEST_P2_HV = {'mesh': 450, 'drift': 750}
 TRIGGER_TEST_MIN = 5
 
+# RUN_PLAN='operating_long': a long physics run with everything at the operating
+# point and nothing scanned. All three P2 stations together at mesh 450 /
+# drift 750 (gap 300) — note this is NOT the same as OPERATING_HV above, which
+# runs P2_IN 10 V lower; here all three are identical, as asked on 2026-07-31.
+# The uRWELL references sit at their usual 620 drift / 420 resist.
+#
+# Split into a few sub-runs rather than one long one. Each boundary is an
+# acquisition stop/start, which is the known non-ready-hybrid risk, so fewer is
+# safer — but the readout has died mid-run twice in 24 h, and a death costs the
+# sub-run in progress. capture_guard catches it in ~90 s and continues from the
+# point that died, so the chunk length is what bounds the loss: 50 min rather
+# than the whole run.
+OPERATING_LONG_P2_HV = {'mesh': 450, 'drift': 750}
+OPERATING_LONG_N_SUBRUNS = 3
+OPERATING_LONG_SUBRUN_MIN = 50
+
 CHIP_STATE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'config', 'chip_config_state.json')
 
@@ -566,6 +582,15 @@ class Config(RunConfigBase):
                         'hvs': _scan_hvs({det: dict(TRIGGER_TEST_P2_HV)
                                           for det in P2_HV}),
                     }],
+                # Long physics run, everything at the operating point.
+                'operating_long':
+                    lambda: [{
+                        'sub_run_name': f'operating_{i:02d}',
+                        'run_time': OPERATING_LONG_SUBRUN_MIN,
+                        'post_pause_s': 0,
+                        'hvs': _scan_hvs({det: dict(OPERATING_LONG_P2_HV)
+                                          for det in P2_HV}),
+                    } for i in range(OPERATING_LONG_N_SUBRUNS)],
             }
 
             cont = _cont
@@ -597,7 +622,7 @@ class Config(RunConfigBase):
             # can tell which plan a finished run was following without guessing
             # from the current value of RUN_PLAN, which may have moved on.
             self.run_plan = plan
-            if plan in ('config_scan', 'trigger_test'):
+            if plan in ('config_scan', 'trigger_test', 'operating_long'):
                 # The whole point of the run. Recorded explicitly rather than
                 # left implicit in the copied .txt, so a reader does not have to
                 # infer which config produced which run.
