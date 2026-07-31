@@ -100,8 +100,9 @@ DREAM_EVENT_SAMPLE_S = 30
 # ---------------------------------------------------------------------------
 AUTO_RECOVER = True
 MAX_RECOVERIES = 2
-DISABLE_FILE = '/local/p2/DAQ_Control_VMM_Beam/config/no_auto_recovery'
-CONTINUATION_PATH = '/local/p2/DAQ_Control_VMM_Beam/config/continuation.json'
+REPO = os.path.dirname(os.path.abspath(__file__))
+DISABLE_FILE = os.path.join(REPO, 'config', 'no_auto_recovery')
+CONTINUATION_PATH = os.path.join(REPO, 'config', 'continuation.json')
 RECOVER_SETTLE_S = 20      # let the stopped run finish tearing down
 WARM_RESET_TRIES = 3
 STEP_TIMEOUT_S = 300
@@ -316,6 +317,36 @@ def sh(cmd):
         return ''
 
 
+def stop_the_run():
+    """Stop the run, via the Flask if it is up and directly if it is not.
+
+    The Flask route is preferred because it records the stop in daq_events.log
+    with attribution. But the guard exists to stop a run that is recording
+    nothing, and the flask died four times on 2026-07-31 — a guard that can only
+    act while a web server happens to be alive is not protection. stop_run.sh is
+    exactly what that route runs, so falling back to it loses the attribution
+    and nothing else; we write the event line ourselves to keep even that.
+    """
+    r = get_json(f'{VMM_FLASK}/stop_run', data={})
+    if r and r.get('success'):
+        return f'via flask: {r.get("message")}'
+
+    log(f'   flask stop unavailable ({r}) — running stop_run.sh directly')
+    try:
+        with open(os.path.join(REPO, 'logs', 'daq_events.log'), 'a') as f:
+            f.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} | STOP_RUN       | '
+                    f'capture_guard | flask down, stop_run.sh invoked directly\n')
+    except Exception as e:
+        log(f'   could not write the event line: {e}')
+    try:
+        subprocess.Popen([os.path.join(REPO, 'bash_scripts', 'stop_run.sh')],
+                         cwd=REPO, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+        return 'via stop_run.sh directly (flask was down)'
+    except Exception as e:
+        return f'FAILED to stop the run at all: {e}'
+
+
 def daq_running():
     """Is the per-RUN daq_control.py alive?
 
@@ -469,7 +500,13 @@ def main():
     # run it already acted on, so it never fires twice for the same one.
     stopped_run = None
     recoveries = 0
+    consecutive_errors = 0
     while True:
+      # One bad iteration must not end the service. Anything unexpected — a
+      # half-written file, a flask dying mid-request, a transient OSError — is
+      # logged once and the loop carries on, because a guard that exits on the
+      # first surprise stops protecting exactly when things are going wrong.
+      try:
         run = current_run()
         if not run:
             time.sleep(POLL_S)
@@ -509,8 +546,8 @@ def main():
                 log(f'wrote {marker}')
             except Exception as e:
                 log(f'ALERT could not write {marker}: {e}')
-            r = get_json(f'{VMM_FLASK}/stop_run', data={})
-            log(f'stop_run response: {r}')
+            r = stop_the_run()
+            log(f'stop: {r}')
             stopped_run = run
 
             if not AUTO_RECOVER:
@@ -525,6 +562,18 @@ def main():
                 if recover(run, sub, plan_of(run)):
                     stopped_run = None      # a new run is live; watch it too
             log('re-armed')
+        time.sleep(POLL_S)
+        consecutive_errors = 0
+      except Exception as e:
+        consecutive_errors += 1
+        # Log the first few, then go quiet so a persistent fault cannot fill the
+        # disk with the same line. The guard keeps running either way.
+        if consecutive_errors <= 3:
+            log(f'ALERT | iteration failed ({consecutive_errors}): '
+                f'{type(e).__name__}: {e} — continuing to watch')
+        elif consecutive_errors % 100 == 0:
+            log(f'ALERT | still failing after {consecutive_errors} iterations: '
+                f'{type(e).__name__}: {e}')
         time.sleep(POLL_S)
 
 
