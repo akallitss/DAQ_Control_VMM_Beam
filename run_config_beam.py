@@ -165,7 +165,7 @@ POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = n
 #
 # Ceilings (enforced again on the Dream side, which refuses the whole run):
 # mesh <= 450 V, drift <= 900 V. Asserted below so a bad edit fails here.
-RUN_PLAN = 'trigger_test'
+RUN_PLAN = 'mesh_then_drift'
 
 # Every point gets the SAME run_time — scan points are only comparable if they
 # are. Do NOT shorten the tail to squeeze the campaign inside a beam window: if
@@ -348,7 +348,7 @@ class Config(RunConfigBase):
         super().__init__(config_path)
 
     def _set_defaults(self, config_path=None):
-        self.run_name = 'run_29'
+        self.run_name = 'run_33'
         self.base_out_dir = BASE_DATA_DIR
         self.data_out_dir = f'{self.base_out_dir}runs/'
         self.run_out_dir = f'{self.data_out_dir}{self.run_name}/'
