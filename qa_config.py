@@ -58,7 +58,7 @@ CONFIG = {
     'trend_scope': 'both',  # 'subrun' | 'run' | 'both'
 
     # Run filtering
-    'include_runs': ['run_32'],  # e.g. ['run_1', 'run_2'] — only process these; None = all
+    'include_runs': None,  # e.g. ['run_1', 'run_2'] — only process these; None = all
     'exclude_runs': None,  # e.g. ['run_0']          — skip these
 
     # Watcher behavior
