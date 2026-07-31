@@ -271,30 +271,45 @@ def chip_status():
     return get_json(f'{VMM_FLASK}/chip_config/status') or {}
 
 
-def apply_chip_config():
-    log('   applying chip config...')
-    post('/chip_config/apply')
-    ok, _ = wait_until(lambda: chip_status().get('running') is False,
-                       STEP_TIMEOUT_S, 'chip config apply')
-    rc = (chip_status().get('last') or {}).get('rc')
-    log(f'   chip config apply rc={rc}')
-    return ok and rc == 0
+# THE ORDER IS: warm reset -> config apply -> acq-on, and it is not
+# interchangeable. A standalone warm reset AFTER an apply can revert the
+# registers the apply just set, so the chips run something other than what the
+# data is labelled with. chip_config.run_armed() enforces it by refusing to arm
+# unless the last successful apply is NEWER than the last successful warm reset,
+# so the wrong order also leaves the run unarmed and /run_config_py answers 409.
 
 
 def warm_reset_until_ready():
-    """Warm reset until 0 failed hybrids. Refuses to give a green light on a
-    reset that never gets there — starting a run on non-ready hybrids is how
-    this whole failure mode begins."""
+    """Step 1. 0 failed hybrids. Does NOT require 'armed' — arming cannot
+    happen until the apply, which comes after this."""
     for attempt in range(1, WARM_RESET_TRIES + 1):
         log(f'   warm reset attempt {attempt}/{WARM_RESET_TRIES}...')
         post('/chip_config/warm_reset')
         wait_until(lambda: chip_status().get('warm_reset', {}).get('running') is False,
                    STEP_TIMEOUT_S, 'warm reset')
-        w = chip_status().get('warm_reset', {})
-        failed = (w.get('last') or {}).get('failed')
-        log(f'   warm reset failed={failed} armed={w.get("armed")}')
-        if failed == 0 and w.get('armed'):
+        failed = (chip_status().get('warm_reset', {}).get('last') or {}).get('failed')
+        log(f'   warm reset failed={failed}')
+        if failed == 0:
             return True
+    return False
+
+
+def apply_chip_config():
+    """Step 2. Retried: the apply does its own warm reset first and aborts if
+    the hybrids have drifted back to unready ('10 hybrid(s) not ready - config
+    NOT applied'), which happens on this setup. Green light requires 'armed',
+    which is the state machine confirming apply-after-warm-reset."""
+    for attempt in range(1, WARM_RESET_TRIES + 1):
+        log(f'   applying chip config, attempt {attempt}/{WARM_RESET_TRIES}...')
+        post('/chip_config/apply')
+        ok, _ = wait_until(lambda: chip_status().get('running') is False,
+                           STEP_TIMEOUT_S, 'chip config apply')
+        rc = (chip_status().get('last') or {}).get('rc')
+        armed = chip_status().get('warm_reset', {}).get('armed')
+        log(f'   apply rc={rc} armed={armed}')
+        if ok and rc == 0 and armed:
+            return True
+        time.sleep(5)
     return False
 
 
@@ -340,12 +355,15 @@ def recover(dead_run, dead_subrun, plan_hint):
         log(f'   could not write {CONTINUATION_PATH}: {e} — aborting recovery')
         return False
 
-    if not apply_chip_config():
-        log('   chip config apply FAILED — aborting recovery')
-        return False
+    # warm reset -> config apply -> (start = acq-on). See the note above.
     if not warm_reset_until_ready():
         log(f'   warm reset never reached 0 failed hybrids in {WARM_RESET_TRIES} '
             f'attempts — aborting recovery, THIS NEEDS A HUMAN')
+        return False
+    if not apply_chip_config():
+        log('   chip config apply failed or left the run unarmed — aborting '
+            'recovery rather than recording data at chip settings we cannot '
+            'vouch for')
         return False
 
     started, r = False, None

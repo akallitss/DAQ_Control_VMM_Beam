@@ -234,31 +234,56 @@ def wait_until(pred, timeout_s, what):
     return False
 
 
-def select_and_apply(cfg):
-    r = req('/chip_config/select', {'file': cfg})
-    if not r.get('success'):
-        log(f'   select failed: {r.get("message")}')
-        return False
-    req('/chip_config/apply', {})
-    if not wait_until(lambda: chip_status().get('running') is False,
-                      STEP_TIMEOUT_S, 'chip apply'):
-        return False
-    last = chip_status().get('last') or {}
-    log(f'   applied {last.get("file")} rc={last.get("rc")}')
-    return last.get('rc') == 0 and last.get('file') == cfg
+# THE ORDER IS: warm reset -> config apply -> acq-on. It is not interchangeable.
+#
+# A standalone warm reset AFTER an apply can revert the registers the apply just
+# set, so the chips end up running something other than what the run is labelled
+# with. chip_config.run_armed() enforces this: it refuses to arm unless the last
+# successful apply is NEWER than the last successful warm reset. Doing it the
+# other way round therefore both mis-configures the chips and leaves the run
+# unarmed, and /run_config_py answers 409.
+#
+# Apply already performs its own warm-reset-then-apply, but a separate warm
+# reset first is still worth doing: the apply's internal one fails outright when
+# the hybrids come up unready ("10 hybrid(s) not ready - config NOT applied"),
+# which is common on this setup and cost two apply attempts on 2026-07-31.
 
 
 def warm_reset_until_ready():
+    """Step 1. Returns True on 0 failed hybrids. Does NOT check 'armed' — the
+    run is not expected to be armed yet, because the apply has not happened."""
     for attempt in range(1, WARM_RESET_TRIES + 1):
         req('/chip_config/warm_reset', {})
         wait_until(lambda: chip_status().get('warm_reset', {}).get('running') is False,
                    STEP_TIMEOUT_S, 'warm reset')
         w = chip_status().get('warm_reset', {})
         failed = (w.get('last') or {}).get('failed')
-        log(f'   warm reset {attempt}/{WARM_RESET_TRIES}: failed={failed} '
-            f'armed={w.get("armed")}')
-        if failed == 0 and w.get('armed'):
+        log(f'   warm reset {attempt}/{WARM_RESET_TRIES}: failed={failed}')
+        if failed == 0:
             return True
+    return False
+
+
+def select_and_apply(cfg):
+    """Step 2. Retries: the apply aborts if the hybrids drift back to unready
+    between the warm reset and the apply, which does happen here."""
+    r = req('/chip_config/select', {'file': cfg})
+    if not r.get('success'):
+        log(f'   select failed: {r.get("message")}')
+        return False
+    for attempt in range(1, WARM_RESET_TRIES + 1):
+        req('/chip_config/apply', {})
+        if not wait_until(lambda: chip_status().get('running') is False,
+                          STEP_TIMEOUT_S, 'chip apply'):
+            return False
+        last = chip_status().get('last') or {}
+        log(f'   apply {attempt}/{WARM_RESET_TRIES}: {last.get("file")} '
+            f'rc={last.get("rc")}')
+        if last.get('rc') == 0 and last.get('file') == cfg:
+            armed = chip_status().get('warm_reset', {}).get('armed')
+            log(f'   armed={armed}')
+            return bool(armed)
+        time.sleep(5)
     return False
 
 
@@ -274,13 +299,15 @@ def run_one(cfg, minutes, dry_run):
     if not wait_until(dream_idle, DREAM_TEARDOWN_TIMEOUT_S, 'Dream to be idle'):
         log('   Dream never went idle; it would answer the trigger with 409')
         return False
-    if not select_and_apply(cfg):
-        log('   apply failed — skipping this config')
-        return False
+    # warm reset -> config apply -> (start = acq-on). See the note above.
     if not warm_reset_until_ready():
         log('   warm reset never reached 0 failed hybrids — ABORTING THE SCAN, '
             'this needs a human')
         return None                      # None = fatal, stop everything
+    if not select_and_apply(cfg):
+        log('   apply failed or left the run unarmed — skipping this config '
+            'rather than recording data at chip settings we cannot vouch for')
+        return False
 
     req('/update_run_config_py', {})
     time.sleep(2)
