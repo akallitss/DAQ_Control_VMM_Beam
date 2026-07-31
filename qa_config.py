@@ -44,7 +44,7 @@ CONFIG = {
     'max_packets': None,    # optional packet cap per file; None = read whole file
 
     # Run filtering
-    'include_runs': None,  # e.g. ['run_1', 'run_2'] — only process these; None = all
+    'include_runs': ['run_32'],  # e.g. ['run_1', 'run_2'] — only process these; None = all
     'exclude_runs': None,  # e.g. ['run_0']          — skip these
 
     # Watcher behavior

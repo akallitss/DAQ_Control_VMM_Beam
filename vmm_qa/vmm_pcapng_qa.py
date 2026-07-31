@@ -187,7 +187,15 @@ def parse_block(block: bytes, frame_counter: int, fec_id: int,
             trg_ctr_buf.append(m[2])
         else:                    # marker word: MSB of d2 clear
             vmmid_marker = (d2 >> 10) & 0x1F
-            if vmmid_marker < 16:
+            # `vmmid_marker < 16` comes from vmm-sdat's ParserSRS, where a FEC
+            # hosts at most 16 VMMs and ids >= 16 encode TRG trigger words.
+            # THIS FEC HOSTS 20 (hybrids 0-9), so in SRS mode that test threw
+            # away every marker for VMMs 16-19: they had srs_timestamp = 0 for
+            # every hit, hence a meaningless abs_time_ns and zero trigger
+            # coincidences (4 of P2_OUT's 6 VMMs, 37% of detector hits).
+            # In SRS mode there are no TRG markers, so take the id at face
+            # value. TRG mode keeps the original behaviour untouched.
+            if vmmid_marker < 16 or data_format == 'SRS':
                 # Normal VMM marker — 42-bit SRS FEC timestamp (25 ns ticks)
                 srs_ts = (d1 << 10) | (d2 & 0x3FF)
                 key = (fec_id, vmmid_marker)
@@ -368,6 +376,11 @@ _ap.add_argument("--calibration", metavar="JSON",
 _ap.add_argument("--format", choices=["SRS", "TRG"], default="SRS",
                  help="SRS data format: SRS (continuous readout, default) or "
                       "TRG (external trigger — parses trigger_counter and trigger_time from marker words)")
+_ap.add_argument("--no-efficiency", action="store_true",
+                 help="Skip the trigger-referenced efficiency stage")
+_ap.add_argument("--eff-window", type=float, default=1000.0, metavar="NS",
+                 help="Delta-t histogram half-width for the efficiency stage "
+                      "(default 1000 ns)")
 _ap.add_argument("--live", action="store_true",
                  help="Live monitoring mode: follow a growing pcapng and display "
                       "hit-rate-per-channel for each active VMM (no ROOT output)")
@@ -851,6 +864,58 @@ for name in saved:
     print(f"  {name}")
 
 #########################################
+# TRIGGER-REFERENCED EFFICIENCY (vmm_efficiency.py)
+#########################################
+# Runs on the `hits` DataFrame already built above -- the pcapng is NOT parsed
+# a second time. Products land in the same out_dir, so the flask Online QA
+# gallery and Analysis browser pick them up with no GUI change.
+#
+# Wrapped in a broad try/except on purpose: QA is the beam-time monitoring tool
+# and must keep producing its plots even if the efficiency stage fails.
+_eff_summary = None
+_prof = None
+if not _args.no_efficiency:
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import vmm_efficiency as _ve
+        print('\nTrigger-referenced efficiency...')
+        _eff_summary, _eff_res = _ve.analyse(hits, window_ns=_args.eff_window)
+        if _eff_summary['stations']:
+            _ve.plot_dt(_eff_res, base, out_dir, _args.eff_window)
+            _ve.plot_efficiency(_eff_res, base, out_dir)
+            for _n, _s in _eff_summary['stations'].items():
+                print(f"  {_n:8s} mu={_s['mu_ns']:+7.1f} ns  "
+                      f"sigma={_s['sigma_ns']:6.1f} ns  "
+                      f"eff={_s['efficiency']:.4f}")
+            saved.append(f'{base}_trigger_dt.png')
+            saved.append(f'{base}_trigger_efficiency.png')
+
+            # Pad hit maps + beam profiles, in real geometry. Reuses the
+            # coincidence windows just fitted, so the "beam" panels are the
+            # in-time hits only.
+            try:
+                import vmm_beam_profile as _vbp
+                _fits = {_n: _r['fit'] for _n, _r in _eff_res.items()}
+                _paths, _prof = _vbp.make(hits, _fits, base, out_dir)
+                for _p in _paths:
+                    saved.append(os.path.basename(_p))
+                for _n, _v in _prof.items():
+                    if 'x_mean_mm' in _v:
+                        print(f"  {_n:8s} beam x={_v['x_mean_mm']:7.1f} +/- "
+                              f"{_v['x_rms_mm']:5.1f} mm   "
+                              f"y={_v['y_mean_mm']:7.1f} +/- {_v['y_rms_mm']:5.1f} mm")
+            except Exception as _exc2:
+                print(f'  beam-profile stage failed '
+                      f'({_exc2.__class__.__name__}: {_exc2})')
+                _prof = None
+        else:
+            print('  no station coincidence found — check the trigger channel')
+    except Exception as _exc:
+        print(f'  efficiency stage failed ({_exc.__class__.__name__}: {_exc}) '
+              f'— QA plots are unaffected')
+        _eff_summary = None
+
+#########################################
 # EVENTS SUMMARY (events.json)
 #########################################
 if _args.events_json:
@@ -881,6 +946,20 @@ if _args.events_json:
         'data_format':     data_format,
         'processed_at':    datetime.datetime.now().isoformat(timespec='seconds'),
     }
+    # Per-file efficiency scalars, so sub-run/run aggregation (efficiency vs HV)
+    # is a cheap JSON scan instead of a re-parse.
+    if _eff_summary and _eff_summary.get('stations'):
+        events['n_triggers_dedup'] = _eff_summary['n_triggers']
+        events['n_masked_hits'] = _eff_summary['n_masked_hits']
+        events['efficiency'] = {
+            _n: {k: _s[k] for k in ('efficiency', 'efficiency_lo',
+                                    'efficiency_hi', 'raw_efficiency',
+                                    'accidental_efficiency', 'mu_ns',
+                                    'sigma_ns', 'contrast')}
+            for _n, _s in _eff_summary['stations'].items()
+        }
+    if _prof:
+        events['beam_profile'] = _prof
     events_path = os.path.join(out_dir, 'events.json')
     with open(events_path, 'w') as f:
         json.dump(events, f, indent=2)

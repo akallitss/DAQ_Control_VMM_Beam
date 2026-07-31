@@ -25,6 +25,18 @@ file persists in config/chip_config_state.json, where daq_control.py picks it
 up to copy into each run directory for provenance. No config file -> the GUI
 hides the panel. Apply refuses while a capture (dumpcap/tcpdump) is running —
 never reconfigure the chip mid-acquisition.
+
+Ordering (2026-07-31 offset=-16 investigation): a warm reset must happen
+IMMEDIATELY BEFORE the config that will actually be used for acquisition,
+never after. Applying base+ext and only then warm-resetting silently reverts
+the trigger hybrid's registers, breaking SRS marker generation for the whole
+run — every VMM's offset pegs at the invalid -16 value (confirmed on runs 27,
+29, 30; fixed and reproduced clean on run 31). So apply() always runs a fresh
+warm reset first and only then applies base+ext, atomically — a single Apply
+click is safe no matter what happened before it. run_armed() additionally
+requires the last successful apply to be newer than the last successful warm
+reset, so a standalone Warm Reset click made *after* an apply un-arms the run
+again until Apply is re-run (which redoes both, in order).
 """
 
 import glob
@@ -138,6 +150,22 @@ class ChipConfig:
 
     def _run(self, base, sel):
         cfg = self.config
+        # Warm reset FIRST, always — see module docstring. Skipped only for
+        # sites with no warm_reset_script configured (never gated elsewhere
+        # either, in that case).
+        if cfg.get("warm_reset_script"):
+            ok, failed = self._do_warm_reset(base)
+            if not ok:
+                with self._lock:
+                    self.last = {"file": sel, "base_yaml": base, "rc": -1,
+                                 "output": f"Warm reset before apply failed "
+                                           f"({failed} hybrid(s) not ready) — "
+                                           f"config NOT applied. Retry Apply.",
+                                 "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                    self.running = False
+                self._write_state(last_applied=self.last)
+                return
+
         cmd = [cfg["apply_script"],
                "-c", cfg["conf_dir"],
                "-b", os.path.join(cfg.get("base_subdir", "config_base"), base),
@@ -166,13 +194,20 @@ class ChipConfig:
     # mode is hybrids coming up non-ready after acquisition start/stops.
 
     def run_armed(self):
-        """False when a warm reset is required before the next run. Sites
-        without a warm_reset_script configured are never gated."""
+        """False when a warm reset is required before the next run, OR when
+        the last successful apply predates the last successful warm reset —
+        i.e. a standalone Warm Reset happened after Apply and may have
+        reverted the chip's registers (see module docstring). Re-running
+        Apply clears this, since it always does warm-reset-then-apply itself.
+        Sites without a warm_reset_script configured are never gated."""
         if not self.configured or not self.config.get("warm_reset_script"):
             return True
         st = self._read_state()
         last = st.get("warm_reset_last")
         if not last or last.get("failed") != 0:
+            return False
+        applied = st.get("last_applied")
+        if not applied or applied.get("rc") != 0 or applied["ts"] < last["ts"]:
             return False
         consumed = st.get("warm_reset_consumed_ts")
         return not consumed or last["ts"] > consumed
@@ -183,7 +218,8 @@ class ChipConfig:
 
     def warm_reset(self):
         """Run the p2basket warm-reset utility (force + retry loop) in a
-        worker thread. (ok, message)."""
+        worker thread, standalone. (ok, message). Note: this alone no longer
+        arms a run if it happens after the last Apply — see run_armed()."""
         if not self.configured:
             return False, "Chip config not configured (config/chip_config.json)."
         script = self.config.get("warm_reset_script")
@@ -203,6 +239,14 @@ class ChipConfig:
         return True, "Warm reset started — bringing hybrids to the ready state…"
 
     def _warm_run(self, base):
+        self._do_warm_reset(base)
+        with self._lock:
+            self.reset_running = False
+
+    def _do_warm_reset(self, base):
+        """Run the warm-reset utility (force + retry loop); record
+        warm_reset_last. Returns (ok, failed_count). Shared by the standalone
+        Warm Reset action and by apply()'s internal pre-apply reset."""
         cfg = self.config
         cmd = [cfg["warm_reset_script"],
                "-c", cfg["conf_dir"],
@@ -220,9 +264,8 @@ class ChipConfig:
         last = {"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "failed": failed,   # exit code = non-ready hybrid count; -1 = error
                 "output": output[-2000:]}
-        with self._lock:
-            self.reset_running = False
         self._write_state(warm_reset_last=last)
+        return failed == 0, failed
 
     def status(self):
         st = self._read_state()
