@@ -150,6 +150,9 @@ POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = n
 # RUN_PLAN selects the schedule built below.
 #   'nominal'          : N_SUBRUNS identical sub-runs at the operating point.
 #   'mesh_then_drift'  : the HV scan campaign — a mesh scan, then a drift scan.
+#   'mesh_then_drift_common' : the same campaign, but all three P2 stations on
+#                        ONE common base point instead of each station's own.
+#                        See SCAN_COMMON_P2_HV.
 #
 # MESH SCAN. Each station's mesh steps DOWN from ITS OWN operating point and
 # its drift follows by the same amount, so every station keeps its own 300 V
@@ -166,7 +169,7 @@ POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = n
 #
 # Ceilings (enforced again on the Dream side, which refuses the whole run):
 # mesh <= 450 V, drift <= 900 V. Asserted below so a bad edit fails here.
-RUN_PLAN = 'config_scan'
+RUN_PLAN = 'mesh_then_drift_common'
 
 # Every point gets the SAME run_time — scan points are only comparable if they
 # are. Do NOT shorten the tail to squeeze the campaign inside a beam window: if
@@ -180,6 +183,27 @@ SCAN_SUBRUN_MIN = 12                              # minutes per scan point
 # is the safe direction (gain and discharge rate both fall).
 MESH_SCAN_STEPS_V = tuple(range(0, 101, 10))      # subtracted from mesh AND drift
 DRIFT_SCAN_GAPS_V = (150, 200, 250, 300, 350, 400)  # drift = that station's mesh + gap
+
+# RUN_PLAN='mesh_then_drift_common': ONE base point for all three P2 stations,
+# P2_IN included, instead of each stepping from its own operating point.
+#
+# Why (2026-08-01, Alexandra): the scan and the efficiency run have to be the
+# same measurement at the top. 'mesh_then_drift' stepped each station down from
+# OPERATING_HV, which runs P2_IN 10 V lower (440/740), while 'operating_long'
+# put all three at 450/750 — so the scan's top point and the efficiency point
+# disagreed by 10 V on P2_IN and were not comparable. Sharing one base removes
+# that discrepancy by construction; OPERATING_LONG_P2_HV below is derived from
+# this constant rather than repeating it, so the two cannot drift apart again.
+#
+# NOTE this runs P2_IN AT its 450 V ceiling rather than its measured 440 V
+# operating point. The original 'mesh_then_drift' comment above argues against
+# exactly this — mesh discharge rate rises steeply with mesh voltage and P2_IN
+# is the new metallic-mesh chamber — so P2_IN sits less comfortably here than
+# it does at 440. Asked for deliberately to make the scan and the efficiency
+# run one dataset; 450 is the enforced MESH_CEILING_V and is never exceeded.
+# P2_IN is above its operating point only at m00V and in the drift scan (which
+# pins mesh at the base), not through the body of the mesh scan.
+SCAN_COMMON_P2_HV = {'mesh': 450, 'drift': 750}   # gap 300, all three stations
 
 # RUN_PLAN='retake_run25': just the points run_25 lost. Its VMM readout went
 # silent at 13:06 on 2026-07-30 and wrote packet-less files for the rest of the
@@ -243,9 +267,13 @@ TRIGGER_TEST_MIN = 5
 # sub-run in progress. capture_guard catches it in ~90 s and continues from the
 # point that died, so the chunk length is what bounds the loss: 50 min rather
 # than the whole run.
-OPERATING_LONG_P2_HV = {'mesh': 450, 'drift': 750}
-OPERATING_LONG_N_SUBRUNS = 3
-OPERATING_LONG_SUBRUN_MIN = 52   # set 2026-07-31 18:16 to land the end on 21:00
+# Derived from SCAN_COMMON_P2_HV rather than repeated as a literal: this run IS
+# the efficiency measurement at the top of the scan, so if the scan's base point
+# ever moves this must move with it. Two independent literals is exactly how the
+# 10 V P2_IN discrepancy got in.
+OPERATING_LONG_P2_HV = dict(SCAN_COMMON_P2_HV)
+OPERATING_LONG_N_SUBRUNS = 2
+OPERATING_LONG_SUBRUN_MIN = 30   # 2026-08-01: 2 x 30 = the 1 h efficiency run
 
 CHIP_STATE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'config', 'chip_config_state.json')
@@ -457,7 +485,7 @@ class Config(RunConfigBase):
         super().__init__(config_path)
 
     def _set_defaults(self, config_path=None):
-        self.run_name = 'run_51'
+        self.run_name = 'run_56'
         self.base_out_dir = BASE_DATA_DIR
         self.data_out_dir = f'{self.base_out_dir}runs/'
         self.run_out_dir = f'{self.data_out_dir}{self.run_name}/'
@@ -639,12 +667,53 @@ class Config(RunConfigBase):
                     }),
                 } for gap in gaps]
 
+            # Common-base variants. Identical in shape to the two above, but
+            # every station takes its mesh/drift from ONE base point rather than
+            # from its own operating point, so all three step together and the
+            # top of the scan is the same point the efficiency run uses. Kept as
+            # separate builders rather than a flag on the originals so that
+            # 'mesh_then_drift' and 'retake_run25' keep reproducing exactly the
+            # points run_25 took — those are a fixed historical dataset.
+            def _mesh_points_common(steps, base):
+                return [{
+                    'sub_run_name': f'meshscan_m{dv:02d}V',
+                    'run_time': SCAN_SUBRUN_MIN,
+                    'post_pause_s': 0,
+                    'hvs': _scan_hvs({
+                        det: {'mesh': base['mesh'] - dv,
+                              'drift': base['drift'] - dv}
+                        for det in P2_HV
+                    }),
+                } for dv in steps]
+
+            def _drift_points_common(gaps, base):
+                return [{
+                    'sub_run_name': f'driftscan_gap{gap:03d}V',
+                    'run_time': SCAN_SUBRUN_MIN,
+                    'post_pause_s': 0,
+                    'hvs': _scan_hvs({
+                        det: {'mesh': base['mesh'],
+                              'drift': base['mesh'] + gap}
+                        for det in P2_HV
+                    }),
+                } for gap in gaps]
+
             # Every scan plan, by name, so a continuation can rebuild the exact
             # point list its parent run was working through.
             _PLANS = {
                 'mesh_then_drift':
                     lambda: _mesh_points(MESH_SCAN_STEPS_V) +
                             _drift_points(DRIFT_SCAN_GAPS_V),
+                # Same campaign on one common base point (SCAN_COMMON_P2_HV),
+                # so the top of the mesh scan IS the efficiency run's point.
+                # Sub-run names match 'mesh_then_drift' — they are the same
+                # physics axes — so run_plan in the run config is what tells
+                # the two apart. It is recorded in every run.
+                'mesh_then_drift_common':
+                    lambda: _mesh_points_common(MESH_SCAN_STEPS_V,
+                                                SCAN_COMMON_P2_HV) +
+                            _drift_points_common(DRIFT_SCAN_GAPS_V,
+                                                 SCAN_COMMON_P2_HV),
                 # The points run_25 lost when the VMM readout went silent at
                 # 13:06 on 2026-07-30 (see that run's RETAKE_NEEDED.md). Same
                 # sub-run NAMES as the originals, deliberately: they are the same
@@ -715,14 +784,21 @@ class Config(RunConfigBase):
             # can tell which plan a finished run was following without guessing
             # from the current value of RUN_PLAN, which may have moved on.
             self.run_plan = plan
-            if plan in ('config_scan', 'trigger_test', 'operating_long'):
+            if plan in ('config_scan', 'trigger_test', 'operating_long',
+                        'mesh_then_drift', 'mesh_then_drift_common'):
                 # The whole point of the run. Recorded explicitly rather than
                 # left implicit in the copied .txt, so a reader does not have to
                 # infer which config produced which run.
+                #
+                # The mesh/drift plans were added here on 2026-08-01: an HV scan
+                # is taken AT a chip config, and the 2026-08-01 campaign is
+                # comparing gain and cable type, so a scan whose config json did
+                # not say which gain it ran at would be unreadable later. run_25
+                # has exactly that gap.
                 self.chip_config = _applied_chip_file()
                 if not self.chip_config:
                     raise SystemExit(
-                        'config_scan: no applied chip config recorded in '
+                        f'{plan}: no applied chip config recorded in '
                         f'{CHIP_STATE_PATH} — apply a config before starting, '
                         'otherwise the run would be unlabelled')
 

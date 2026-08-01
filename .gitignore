@@ -257,6 +257,11 @@ config/continuation.json
 config/no_auto_recovery
 logs/flask.log
 
+# nohup stdout from the detached run-control scripts (stop_run_at.sh and
+# friends). The scripts log what matters to their own .log; this is just
+# whatever leaked to stdout on the machine that launched them.
+logs/*.out
+
 # More transient run state, same reasoning. hv_hold especially MUST NOT be
 # tracked: while it exists a triggered run asks Dream to leave the crate
 # BIASED at the end, so a checkout that shipped one would leave HV up on a
