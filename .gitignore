@@ -256,3 +256,20 @@ beam_monitor/logs/
 config/continuation.json
 config/no_auto_recovery
 logs/flask.log
+
+# More transient run state, same reasoning. hv_hold especially MUST NOT be
+# tracked: while it exists a triggered run asks Dream to leave the crate
+# BIASED at the end, so a checkout that shipped one would leave HV up on a
+# hold nobody set. scan_subrun_min is whatever length config_scan.py last
+# scheduled; the *_state.json files are written by the watchers.
+config/hv_hold
+config/scan_subrun_min
+config/backup_state.json
+config/processor_state.json
+
+# Machine wiring for the processor watcher, like power_config.json above:
+# paths that exist only on this DAQ box.
+config/processor_config.json
+
+# Hand-renamed leftovers of the files above (config/continuation.json.stale-*)
+config/*.stale-*
