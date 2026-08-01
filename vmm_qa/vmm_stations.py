@@ -542,25 +542,27 @@ def auto_hot_pads(hits, tab, ratio=HOT_PAD_RATIO, min_hits=50):
     are flagged too -- a lone firing pad in a dead neighbourhood is not usable
     for tracking either way -- but the caller should log what was masked.
     """
-    h = attach_pads(hits, tab)
-    h = h[h['mapped'].astype(bool)]
+    # Occupancy per (vmm, ch), counted once on the raw arrays. The pad geometry
+    # is only ever needed per PAD, so joining it onto every hit is waste: on a
+    # 5.5 M hit capture attach_pads() materialised ~1.5 GB (17 pad columns x
+    # every hit) and was the single largest allocation in the whole reduce.
+    # There are at most 32*64 keys, so the per-station work below indexes a
+    # small histogram instead. The station/mapped filters that used to be
+    # applied to the hits are redundant — `sub` already contains only mapped
+    # pads of one station, so a key absent from it is simply never looked up.
+    hk = hits['vmm'].to_numpy().astype(np.int64) * 64 + hits['ch'].to_numpy()
+    uk, uc = np.unique(hk, return_counts=True)
+    occ = dict(zip(uk.tolist(), uc.tolist()))
+
     found = {}
     for st in STATIONS:
         sub = tab[(tab['station'] == st) & tab['mapped'].astype(bool)].reset_index(drop=True)
         if len(sub) < 20:
             continue
         key = sub['vmm'].to_numpy().astype(np.int64) * 64 + sub['ch'].to_numpy()
-        lut = {int(k): i for i, k in enumerate(key)}
-        n = np.zeros(len(sub))
-        hs = h[h['station'] == st]
-        if not len(hs):
+        n = np.array([occ.get(int(k), 0) for k in key], dtype=float)
+        if not n.any():
             continue
-        hk = hs['vmm'].to_numpy().astype(np.int64) * 64 + hs['ch'].to_numpy()
-        uk, uc = np.unique(hk, return_counts=True)
-        for k, c in zip(uk, uc):
-            i = lut.get(int(k))
-            if i is not None:
-                n[i] = c
         nb = _neighbours(sub['pad_cx'].to_numpy(float), sub['pad_cy'].to_numpy(float))
         med = np.median(n[nb], axis=1)
         hot = np.flatnonzero((n >= min_hits) & (n > ratio * np.maximum(med, 1.0)))

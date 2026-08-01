@@ -214,6 +214,16 @@ def station_vmms():
 # worker entry point
 # ---------------------------------------------------------------------------
 
+# Every column the efficiency stage actually reads, traced through
+# vmm_efficiency.analyse -> build_groups/group_dt (vmm, ch, srs_timestamp,
+# timestamp_ns), vmm_stations (abs_time_ns) and add_station_scalars (adc).
+# Loading the full 16-column table instead costs 53 B/hit against 28 B/hit here,
+# and pandas consolidates the dict into resident blocks, so the extra ten
+# columns are copied out of the mmap and never read. At ~161k hits per MB of
+# capture that is the difference between fitting in RAM and being memory-killed.
+EFF_COLUMNS = ["vmm", "ch", "adc", "srs_timestamp", "timestamp_ns", "abs_time_ns"]
+
+
 def process_file(pcap, store_dir, data_format="SRS", calibration=None,
                  do_efficiency=True, keep_store=True, eff_window=1000.0):
     """pcapng -> column store + counts.npz + scalars.json.
@@ -246,12 +256,16 @@ def process_file(pcap, store_dir, data_format="SRS", calibration=None,
     scal["mtime"] = os.path.getmtime(pcap)
     scal["decode_s"] = round(t_decode, 2)
 
+    # Done with the raw column mmaps; drop them before the efficiency stage
+    # allocates, so their pages are reclaimable under memory pressure.
+    del cols
+
     if do_efficiency:
         try:
             import vmm_efficiency as ve
-            full, _ = vd.load_hits(partial)
+            full, _ = vd.load_hits(partial, columns=EFF_COLUMNS)
             import pandas as pd
-            hits = pd.DataFrame({c: np.asarray(full[c]) for c in vd.COLUMNS})
+            hits = pd.DataFrame({c: np.asarray(full[c]) for c in EFF_COLUMNS})
             # 1000 ns matches vmm_pcapng_qa.py's --eff-window default; analyse()
             # itself defaults to 2000, which would put a different number on the
             # trend than the QA plots show for the same file.

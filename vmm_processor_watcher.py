@@ -121,6 +121,15 @@ def run_watcher(config: dict):
     done_files, fail_counts = wc.load_state(state_path)
     last_sizes = {}
     checked_stale = set()
+    # Files memory-killed once, to be retried without the efficiency stage.
+    # Retrying a memory kill with identical parameters cannot succeed — the file
+    # is the same size and the box is the same size — so a plain retry just
+    # re-does the decode and throws it away. The efficiency stage is what does
+    # not fit (it builds a resident hits table); dropping it keeps the decode,
+    # counts and scalars, which are the products the trend dashboard reads.
+    # Deliberately not persisted: after a restart one full attempt is cheap, and
+    # the box may genuinely have more headroom than it did last time.
+    mem_degraded = set()
     idle_ticks = 0
     idle_line = False
 
@@ -139,6 +148,7 @@ def run_watcher(config: dict):
             if reset is None:
                 done_files, fail_counts = {}, {}
                 checked_stale.clear()
+                mem_degraded.clear()
                 print("\n[processor] reset: all runs re-queued")
             else:
                 for key in list(done_files):
@@ -146,6 +156,9 @@ def run_watcher(config: dict):
                         done_files.pop(key, None)
                         fail_counts.pop(key, None)
                 checked_stale.difference_update(reset)
+                # a reset asks for a clean full attempt, efficiency included
+                mem_degraded.difference_update(
+                    {k for k in mem_degraded if k[0] in reset})
                 print(f"\n[processor] reset: {sorted(reset)}")
             wc.save_state(state_path, done_files, fail_counts)
 
@@ -199,7 +212,9 @@ def run_watcher(config: dict):
                            '--store-dir', str(store_dir),
                            '--format', data_format,
                            '--eff-window', str(eff_window)]
-                    if not do_efficiency:
+                    mem_key = (run_dir.name, subrun.name, pcap.name)
+                    degraded = mem_key in mem_degraded
+                    if not do_efficiency or degraded:
                         cmd.append('--no-efficiency')
                     if not keep_columns:
                         cmd.append('--drop-columns')
@@ -234,6 +249,21 @@ def run_watcher(config: dict):
                     else:
                         # a partial store must never be mistaken for a real one
                         shutil.rmtree(str(store_dir) + '.partial', ignore_errors=True)
+
+                        # First memory kill costs no attempt: the next pass runs
+                        # the same file without the efficiency stage, which is a
+                        # genuinely different (and much smaller) job. A second
+                        # memory kill means even the decode does not fit, and
+                        # falls through to the normal attempt counting below.
+                        if reason == 'memory' and not degraded:
+                            mem_degraded.add(mem_key)
+                            print(f"[processor]   memory-killed after {dt:.1f}s "
+                                  f"— re-queued without the efficiency stage")
+                            log('DECODE_DEGRADE', run=run_dir.name, subrun=subrun.name,
+                                file=pcap.name, retry_as='--no-efficiency')
+                            wc.save_state(state_path, done_files, fail_counts)
+                            return True
+
                         n = fails.get(pcap.name, 0) + 1
                         fails[pcap.name] = n
                         print(f"[processor]   FAILED ({reason}) after {dt:.1f}s "
