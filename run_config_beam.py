@@ -22,6 +22,7 @@ Site switching: config/site.txt on the machine (fallback: SITE below).
 
 import json
 import os
+import subprocess
 import sys
 
 from run_config_base import RunConfigBase
@@ -257,6 +258,55 @@ CHIP_STATE_PATH = os.path.join(
 # on by accident.
 HV_HOLD_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'config', 'hv_hold')
+
+
+def _daq_code_version():
+    """Which version of THIS code generated the run — recorded in every
+    run_config.json.
+
+    The file already says what the run was: schedule, HV targets, cabling, chip
+    config. It did not say what the DAQ was, and during this beam test the DAQ
+    changed several times a day — the capture guard, the QA split, the scan
+    sequencer all landed mid-campaign. So 'why does run_20 behave unlike run_45'
+    was answerable only from memory of which afternoon a fix went in.
+
+    'dirty' and 'dirty_files' matter as much as the commit here. Editing live on
+    the DAQ box between runs is normal at a beam test, so a bare commit hash can
+    be a lie; these say whether the tree really matched it, and where it did not.
+
+    Best-effort by construction: git missing, a stripped deployment or a slow
+    filesystem must never stop a run from starting, so every failure yields
+    None and the run config simply carries no version.
+    """
+    repo = os.path.dirname(os.path.abspath(__file__))
+
+    def _git(*args):
+        r = subprocess.run(['git', '-C', repo, *args],
+                           capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() if r.returncode == 0 else None
+
+    try:
+        commit = _git('rev-parse', 'HEAD')
+        if not commit:
+            return None
+        # Tracked files only: untracked scratch on a DAQ machine is normal and
+        # says nothing about which code ran. --name-only rather than parsing
+        # --porcelain, whose leading status column does not survive the strip()
+        # in _git() and silently ate the first letter of every filename.
+        dirty_files = sorted(
+            f for f in (_git('diff', '--name-only', 'HEAD') or '').splitlines() if f)
+        return {
+            'commit': commit,
+            'commit_short': commit[:7],
+            'described': _git('describe', '--always', '--dirty'),
+            'subject': _git('log', '-1', '--format=%s'),
+            'committed_at': _git('log', '-1', '--format=%cI'),
+            'dirty': bool(dirty_files),
+            'dirty_files': dirty_files,
+            'repo': repo,
+        }
+    except Exception:
+        return None
 
 
 def _applied_chip_file():
@@ -700,6 +750,9 @@ class Config(RunConfigBase):
         # types live).
         self.cabling_note = CABLING_NOTE
 
+        # Which DAQ code took this run (see _daq_code_version).
+        self.daq_code_version = _daq_code_version()
+
         # The three P2 telescope stations, mirrored from the Dream config on
         # banco (names, z positions, HV channels) — same detectors, now read
         # out by the VMM chain, with the per-station cabling of 2026-07-29
@@ -768,6 +821,12 @@ if __name__ == '__main__':
     # those differ and quoting the constant misreports the schedule.
     _times = sorted({sr['run_time'] for sr in config.sub_runs})
     _each = f'{_times[0]}' if len(_times) == 1 else f'{_times[0]}-{_times[-1]}'
+    _v = config.daq_code_version
+    if _v:
+        print(f'DAQ code: {_v["described"]} ({_v["subject"]})'
+              + (f'  UNCOMMITTED: {", ".join(_v["dirty_files"])}' if _v['dirty'] else ''))
+    else:
+        print('DAQ code: version unknown (git unavailable)')
     print(f'Cabling: {CABLING_NOTE}')
     print(f'Detectors: {", ".join(config.included_detectors)}')
     print(f'RUN PLAN: {RUN_PLAN}')
