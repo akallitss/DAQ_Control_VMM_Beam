@@ -165,7 +165,7 @@ POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = n
 #
 # Ceilings (enforced again on the Dream side, which refuses the whole run):
 # mesh <= 450 V, drift <= 900 V. Asserted below so a bad edit fails here.
-RUN_PLAN = 'mesh_then_drift'
+RUN_PLAN = 'config_scan'
 
 # Every point gets the SAME run_time — scan points are only comparable if they
 # are. Do NOT shorten the tail to squeeze the campaign inside a beam window: if
@@ -199,8 +199,28 @@ RETAKE_DRIFT_GAPS_V = (150, 200, 250, 300, 350, 400)
 # All three P2 stations sit at the same fixed point (2026-07-30, Alexandra),
 # unlike the HV scan where IN ran 10 V lower; the uRWELL references stay at
 # their operating point as always. Only the chip config varies between runs.
-CONFIG_SCAN_P2_HV = {'mesh': 435, 'drift': 735}      # gap 300
+CONFIG_SCAN_P2_HV = {'mesh': 450, 'drift': 750}      # gap 300
+# 2026-07-31: moved from 435/735 to the operating point 450/750, so the
+# overnight config scan sits where run_36 ran and the configs are compared
+# at the voltages we actually operate at. run_27/run_28 were taken at
+# 435/735, so they are NOT directly comparable with anything taken after.
 CONFIG_SCAN_SUBRUN_MIN = 55                          # minutes of data per config
+
+# config_scan.py writes the length it actually scheduled into config/
+# scan_subrun_min and this overrides the constant above. Without it the two
+# disagree silently: the sequencer sizes the night with --minutes while every
+# generated run still uses the constant. On 2026-07-31 that produced a schedule
+# planned at 38 min per config where each run was really 55, which would have
+# overrun 08:00 by more than three hours.
+_SCAN_MIN_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'config', 'scan_subrun_min')
+try:
+    with open(_SCAN_MIN_PATH) as _f:
+        _v = int(_f.read().strip())
+    if _v > 0:
+        CONFIG_SCAN_SUBRUN_MIN = _v
+except Exception:
+    pass
 
 # RUN_PLAN='trigger_test': one short run to confirm the trigger configuration
 # before committing beam time to a scan. Fixed HV at the ORIGINAL P2 operating
@@ -224,7 +244,7 @@ TRIGGER_TEST_MIN = 5
 # than the whole run.
 OPERATING_LONG_P2_HV = {'mesh': 450, 'drift': 750}
 OPERATING_LONG_N_SUBRUNS = 3
-OPERATING_LONG_SUBRUN_MIN = 50
+OPERATING_LONG_SUBRUN_MIN = 52   # set 2026-07-31 18:16 to land the end on 21:00
 
 CHIP_STATE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'config', 'chip_config_state.json')
@@ -330,6 +350,29 @@ P2_VMM_CABLING = {
     'P2_OUT': {'c4': (7, 14, 15), 'c5': (8, 16, 17), 'c6': (9, 18, 19)},
 }
 
+# Which cable hangs off each connector. The hybrid/VMM numbering above does not
+# change when a cable is swapped, so without this a cable change leaves NO trace
+# in the data: two runs at the same chip config and the same HV would look
+# identical in run_config.json while being different measurements. Recorded
+# per connector so the QA/analysis can group by cable, station and half.
+#
+# 2026-08-01 (Alexandra): P2_MID c4 and c6 rebuilt with SAMPTEC 2 m in place of
+# the HITACHI 2 m. Everything else is untouched, so P2_MID c5 is the in-station
+# control (same detector, same chip config, old cable) and P2_IN / P2_OUT are
+# the two reference stations. The config scan of runs 38-48 (2026-07-31/08-01)
+# is the matching HITACHI dataset for every config listed here.
+DEFAULT_VMM_CABLE = 'HITACHI 2m'
+P2_VMM_CABLES = {
+    'P2_MID': {'c4': 'SAMPTEC 2m', 'c6': 'SAMPTEC 2m'},
+}
+CABLING_NOTE = ('2026-08-01: P2_MID c4 + c6 HITACHI 2m -> SAMPTEC 2m; all other '
+                'connectors unchanged (HITACHI 2m). P2_MID c5 is the in-station '
+                'control. HITACHI reference dataset: runs 38-48.')
+
+
+def _cable(det, connector):
+    return P2_VMM_CABLES.get(det, {}).get(connector, DEFAULT_VMM_CABLE)
+
 # External trigger digitizer: hybrid 0 (VMM 0 bottom / VMM 1 top) receives the
 # external trigger — not on any P2 station. Recorded here purely as metadata
 # (lands in every run's run_config.json): the capture needs nothing special
@@ -364,7 +407,7 @@ class Config(RunConfigBase):
         super().__init__(config_path)
 
     def _set_defaults(self, config_path=None):
-        self.run_name = 'run_35'
+        self.run_name = 'run_51'
         self.base_out_dir = BASE_DATA_DIR
         self.data_out_dir = f'{self.base_out_dir}runs/'
         self.run_out_dir = f'{self.data_out_dir}{self.run_name}/'
@@ -652,6 +695,11 @@ class Config(RunConfigBase):
         # Trigger digitizer metadata — provenance in every run_config.json.
         self.trigger_vmm = TRIGGER_VMM
 
+        # Top-level so the most recent hardware change is visible without
+        # digging through detectors[].vmm_map (where the per-connector cable
+        # types live).
+        self.cabling_note = CABLING_NOTE
+
         # The three P2 telescope stations, mirrored from the Dream config on
         # banco (names, z positions, HV channels) — same detectors, now read
         # out by the VMM chain, with the per-station cabling of 2026-07-29
@@ -678,7 +726,8 @@ class Config(RunConfigBase):
                         'vmms': sorted(v for _, b, t in P2_VMM_CABLING[det].values()
                                        for v in (b, t)),
                         'connectors': {
-                            c: {'hybrid': h, 'bot_vmm': b, 'top_vmm': t}
+                            c: {'hybrid': h, 'bot_vmm': b, 'top_vmm': t,
+                                'cable': _cable(det, c)}
                             for c, (h, b, t) in P2_VMM_CABLING[det].items()},
                     },
                 },
@@ -719,6 +768,8 @@ if __name__ == '__main__':
     # those differ and quoting the constant misreports the schedule.
     _times = sorted({sr['run_time'] for sr in config.sub_runs})
     _each = f'{_times[0]}' if len(_times) == 1 else f'{_times[0]}-{_times[-1]}'
+    print(f'Cabling: {CABLING_NOTE}')
+    print(f'Detectors: {", ".join(config.included_detectors)}')
     print(f'RUN PLAN: {RUN_PLAN}')
     print(f'Sub-runs: {n_sub} x {_each} min = {run_min} min (~{total_h:.2f} h + overhead)')
 
