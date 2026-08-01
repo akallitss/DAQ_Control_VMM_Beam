@@ -57,6 +57,16 @@ POLL_S = 10
 # its END. Without the hold this was ~9 min; with it, ~4-5.
 OVERHEAD_MIN = 6
 
+# Refuse to START a config with less than this free, and abandon the scan if a
+# config ENDS below it. Nothing on the VMM box is backed up anywhere, so filling
+# the disk does not just stop the night, it risks the data already taken and the
+# DAQ writing into a full filesystem. The rates make this a real possibility
+# rather than a formality: measured 23 MB/min for gain3.0_peaktime200 against
+# 2507 MB/min for gain4.5_peaktime25, a 109x spread, and most of the twelve
+# configs have never been measured at all — so the estimate that sized this
+# night could be wrong in the expensive direction.
+MIN_FREE_GB = 60
+
 
 def log(msg):
     line = f'{time.strftime("%Y-%m-%d %H:%M:%S")} | {msg}'
@@ -109,6 +119,14 @@ try:
     RUNS_DIR = os.path.join(BASE_DATA_DIR, 'runs')
 except Exception:
     RUNS_DIR = '/local/p2/p2data/TB_July26_H4/runs'
+
+
+def free_gb(path=RUNS_DIR):
+    try:
+        st = os.statvfs(path)
+        return st.f_bavail * st.f_frsize / 1e9
+    except Exception:
+        return -1.0
 
 
 def beam_sample():
@@ -201,7 +219,7 @@ def active_run_plan():
     return None
 
 
-def verify_started_run(cfg):
+def verify_started_run(cfg, expect_min):
     """The run that just started must be a config_scan run for THIS config.
 
     Checked against the config actually written for the run, so a stale
@@ -220,8 +238,12 @@ def verify_started_run(cfg):
                        f'step is {cfg!r}')
     if len(d.get('sub_runs', [])) != 1:
         return False, f'expected 1 sub-run, got {len(d.get("sub_runs", []))}'
-    return True, (f'{d["sub_runs"][0]["sub_run_name"]} '
-                  f'{d["sub_runs"][0]["run_time"]} min')
+    got = d['sub_runs'][0]['run_time']
+    if got != expect_min:
+        return False, (f'run is {got} min but this scan is scheduled at '
+                       f'{expect_min} min — the schedule and the run config '
+                       f'disagree, so the night would not land where planned')
+    return True, f'{d["sub_runs"][0]["sub_run_name"]} {got} min'
 
 
 def wait_until(pred, timeout_s, what):
@@ -296,6 +318,13 @@ def run_one(cfg, minutes, dry_run):
     if daq_running():
         log('   a run is already active; refusing to start another')
         return False
+    fg = free_gb()
+    if 0 <= fg < MIN_FREE_GB:
+        log(f'   ONLY {fg:.0f} GB FREE (floor {MIN_FREE_GB} GB) — refusing to start '
+            f'this config. Nothing here is backed up; filling the disk would put '
+            f'the data already taken at risk. STOPPING THE SCAN.')
+        return None                      # fatal: no point trying later configs
+    log(f'   {fg:.0f} GB free')
     if not wait_until(dream_idle, DREAM_TEARDOWN_TIMEOUT_S, 'Dream to be idle'):
         log('   Dream never went idle; it would answer the trigger with 409')
         return False
@@ -318,7 +347,18 @@ def run_one(cfg, minutes, dry_run):
     run_name = r.get('run_name')
     log(f'   started {run_name}')
 
-    ok, detail = verify_started_run(cfg)
+    # WAIT for daq_control to actually exist before watching for it to vanish.
+    # start_run.sh only types the command into a tmux pane, so the process
+    # appears a few seconds later. Checking "has it finished?" immediately made
+    # the sequencer declare a run complete in 0 s and race to the next config —
+    # it did exactly that on 2026-07-31 23:20, logging "finished ... 0 MB in 0
+    # files" while run_37 was in fact starting normally.
+    if not wait_until(daq_running, 120, 'daq_control to appear'):
+        log('   the run never appeared after start — treating as failed')
+        return False
+    log('   daq_control is up')
+
+    ok, detail = verify_started_run(cfg, minutes)
     if not ok:
         log(f'   WRONG RUN STARTED: {detail} — stopping it rather than recording '
             f'mislabelled data')
@@ -413,6 +453,14 @@ def main():
             f'\'config_scan\'. Every run would take that plan schedule and '
             f'voltages instead of a fixed-HV config point. Set it and re-run.')
         return 2
+
+    # Hand the scheduled length to run_config_beam. Without this the sequencer
+    # plans the night at --minutes while every run is generated at the module
+    # constant, and the two silently disagree.
+    if not a.dry_run:
+        with open(os.path.join(REPO, 'config', 'scan_subrun_min'), 'w') as f:
+            f.write(str(minutes))
+        log(f'   wrote config/scan_subrun_min = {minutes}')
 
     log(f'CONFIG SCAN START: {len(configs)} configs x {minutes} min, '
         f'until {until:%H:%M} ({avail:.0f} min available, ~{OVERHEAD_MIN} min '
