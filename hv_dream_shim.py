@@ -274,6 +274,12 @@ class RemoteHVLogger:
         self.stop()   # never two loggers on one file
         if not self.cfg.get('hv_live_url'):
             return False
+        if not run_out_dir:
+            # No run directory in hv_info means no honest place for the file;
+            # writing it relative to the shim's cwd would hide a run's HV
+            # record inside the repo.
+            print('[shim] HV log: hv_info carries no run_out_dir — not logging')
+            return False
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run, args=(run_out_dir, sub_run_name, self._stop),
@@ -313,9 +319,13 @@ class RemoteHVLogger:
                     if writer is None:
                         # First good reading fixes the column set for the file.
                         os.makedirs(os.path.dirname(path), exist_ok=True)
-                        channels = sorted(data['channels'],
-                                          key=lambda c: [int(x) if x.isdigit() else x
-                                                         for x in str(c).split(':')])
+                        # Numeric where the parts are numeric ("8:10" after
+                        # "8:9"), lexicographic otherwise, and never a mix of
+                        # int and str in one comparison — that raises, and in
+                        # here a raise means the run logs no HV at all.
+                        channels = sorted(data['channels'], key=lambda c: tuple(
+                            (0, int(x), '') if str(x).isdigit() else (1, 0, str(x))
+                            for x in str(c).split(':')))
                         f = open(path, 'w', newline='')
                         writer = csv.writer(f)
                         writer.writerow(['timestamp', 'remote_timestamp'] + [
