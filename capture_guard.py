@@ -313,14 +313,20 @@ def blame_the_vmm():
 
 
 def plan_of(run):
-    """Which scan plan that run was following, from its own written config.
-    Falls back to the retake plan rather than guessing from the live RUN_PLAN,
-    which may have been edited since the run started."""
+    """Which plan that run was following, from its own written config.
+
+    Falls back to a plan rather than guessing from the live RUN_PLAN, which may
+    have been edited since the run started. The fallback is site-specific: the
+    beam's retake plan steps HV, so at a lab site it would not merely be the
+    wrong plan — run_config_beam refuses to build it at all and the recovery
+    run would never start.
+    """
+    default = 'retake_run25' if IS_BEAM_SITE else 'lab_source'
     try:
         with open(os.path.join(RUNS_DIR, run, 'run_config.json')) as f:
-            return json.load(f).get('run_plan') or 'retake_run25'
+            return json.load(f).get('run_plan') or default
     except Exception:
-        return 'retake_run25'
+        return default
 
 
 # Dream's own idle states, same list its GUI uses to decide the run is over.
