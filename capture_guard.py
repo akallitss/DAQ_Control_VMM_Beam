@@ -45,17 +45,27 @@ import time
 import urllib.request
 
 VMM_FLASK = 'http://localhost:5002'
+# Dream's flask. The beam-test address is the fallback; config/dream_bridge.json
+# is authoritative where it exists, so moving between banco at CERN and banco in
+# the lab is a config edit rather than a code edit.
 DREAM_FLASK = 'http://128.141.21.144:5001'
+try:
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           'config', 'dream_bridge.json')) as _f:
+        DREAM_FLASK = json.load(_f).get('dream_flask_url', DREAM_FLASK).rstrip('/')
+except Exception:
+    pass
 LOG = '/local/p2/capture_guard.log'
 
 # Data tree from the run config, so this follows the SITE switch instead of
 # hardcoding the sps path. Importing run_config_beam is side-effect free — it
 # only defines constants and the Config class outside its __main__ guard.
 try:
-    from run_config_beam import BASE_DATA_DIR
+    from run_config_beam import BASE_DATA_DIR, IS_BEAM_SITE
     RUNS_DIR = os.path.join(BASE_DATA_DIR, 'runs')
 except Exception:
     RUNS_DIR = '/local/p2/p2data/TB_July26_H4/runs'
+    IS_BEAM_SITE = True
 
 POLL_S = 20
 EMPTY_TRIP = 2          # consecutive CLOSED empty files before stopping
@@ -272,6 +282,36 @@ def dream_recording():
                    f'not a readout fault')
 
 
+def blame_the_vmm():
+    """May we stop the run on empty capture files? (bool, why)
+
+    THE WHOLE QUESTION IS WHETHER THERE WAS ANYTHING TO RECORD, and the answer
+    comes from somewhere different at each site:
+
+      beam site : from Dream. No beam means no triggers means correctly empty
+                  files, and stopping then would be wrong — see dream_recording.
+      lab       : from the source. An Fe55 source does not stop; it emits at the
+                  same rate at 04:00 as it did at 20:00, so two consecutive
+                  closed capture files holding not one packet is the readout,
+                  full stop. There is no outage to confuse it with, and there is
+                  also no Dream run to ask — at the beam test's discriminator
+                  the lab would answer "cannot read Dream event counter" every
+                  time and the guard would never fire at all. That is the whole
+                  reason this function exists: an unmodified guard is silently
+                  disarmed in the lab, which is exactly where runs are left
+                  unattended overnight.
+
+    For a genuinely low-rate setup (cosmics with a tight external trigger and no
+    noise hits) raise EMPTY_TRIP or the capture duration instead of weakening
+    the test: what must stay true is that the trip window is longer than the
+    longest gap the physics can produce.
+    """
+    if not IS_BEAM_SITE:
+        return True, ('no beam to wait for at this site — a source/cosmics rate '
+                      'does not stop, so empty capture files are the readout')
+    return dream_recording()
+
+
 def plan_of(run):
     """Which scan plan that run was following, from its own written config.
     Falls back to the retake plan rather than guessing from the live RUN_PLAN,
@@ -429,20 +469,24 @@ def recover(dead_run, dead_subrun, plan_hint):
     log(f'   previous run exited after {waited:.0f}s; settling {RECOVER_SETTLE_S}s')
     time.sleep(RECOVER_SETTLE_S)
 
-    # The VMM being gone is not enough — Dream must have finished too, or it
-    # answers the new trigger with 409 and nothing starts.
-    ok, waited = wait_until(dream_idle, DREAM_TEARDOWN_TIMEOUT_S,
-                            'Dream to finish tearing down')
-    if not ok:
-        log('   Dream is still running; it would refuse the new trigger (409). '
-            'Aborting recovery rather than leaving a half-started state.')
-        return False
-    log(f'   Dream idle after {waited:.0f}s')
+    # Both of the next two checks are about the beam site's second DAQ. In the
+    # lab nothing is paired with this run and there is no beam to be off, so
+    # they are skipped rather than asked of a machine that is not there.
+    if IS_BEAM_SITE:
+        # The VMM being gone is not enough — Dream must have finished too, or it
+        # answers the new trigger with 409 and nothing starts.
+        ok, waited = wait_until(dream_idle, DREAM_TEARDOWN_TIMEOUT_S,
+                                'Dream to finish tearing down')
+        if not ok:
+            log('   Dream is still running; it would refuse the new trigger (409). '
+                'Aborting recovery rather than leaving a half-started state.')
+            return False
+        log(f'   Dream idle after {waited:.0f}s')
 
-    beam = get_json(f'{DREAM_FLASK}/beam/status') or {}
-    if beam.get('beam_on') is False:
-        log('   beam is OFF — not starting a follow-up run into no beam')
-        return False
+        beam = get_json(f'{DREAM_FLASK}/beam/status') or {}
+        if beam.get('beam_on') is False:
+            log('   beam is OFF — not starting a follow-up run into no beam')
+            return False
 
     # Hand the next generated config the remainder of the interrupted plan.
     cont = {'parent_run': dead_run, 'plan': plan_hint, 'start_at': dead_subrun,
@@ -471,7 +515,9 @@ def recover(dead_run, dead_subrun, plan_hint):
     for attempt in range(1, START_TRIES + 1):
         post('/update_run_config_py')          # iterate to a fresh run number
         time.sleep(2)
-        r = post('/run_config_py', {'dream': True})   # combined: Dream too
+        # Combined only where combined runs exist; at a lab site the flask
+        # route refuses a Dream run outright, which would fail the restart.
+        r = post('/run_config_py', {'dream': bool(IS_BEAM_SITE)})
         started = bool(r and r.get('success'))
         log(f'   start attempt {attempt}/{START_TRIES}: {r}')
         if started:
@@ -521,7 +567,7 @@ def main():
         sizes = closed_capture_sizes(run, sub)
         tail = sizes[-EMPTY_TRIP:]
         if len(tail) == EMPTY_TRIP and all(s < EMPTY_MAX_BYTES for s in tail):
-            blame_vmm, why = dream_recording()
+            blame_vmm, why = blame_the_vmm()
             if not blame_vmm:
                 log(f'{run}/{sub}: {EMPTY_TRIP} empty files but {why} — not stopping')
                 time.sleep(POLL_S)

@@ -16,6 +16,10 @@ Site switching: config/site.txt on the machine (fallback: SITE below).
   'bench' — Saclay VMM test bench: real ALINX capture, fake HV/LV.
   'sps'   — real hardware at the SPS beam line. Fields marked TODO-SPS must be
             filled in once the beam-area network / crate details are known.
+  'lab'   — Saclay lab measurements (Fe55 source, cosmics) on the SAME machine
+            and readout as 'sps', with the beam machinery switched off: no beam
+            monitor, no combined Dream DAQ run, HV owned and read back by banco
+            (hv_dream_shim logs it into our own run tree).
 
 @author: Alexandra Kallitsopoulou (based on Dylan Neff's nTof config)
 """
@@ -31,7 +35,7 @@ from run_config_base import RunConfigBase
 # Site configuration — the ONE place to switch local test <-> bench <-> SPS
 # ---------------------------------------------------------------------------
 # Default site; each deployed machine pins its own via the gitignored
-# config/site.txt (one word: local | bench | sps) so switching site never
+# config/site.txt (one word: local | bench | sps | lab) so switching site never
 # means editing tracked code on a DAQ machine.
 SITE = 'local'
 _site_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', 'site.txt')
@@ -119,11 +123,73 @@ SITES = {
             #  'alinx_config': None},
         ],
     },
+    'lab': {
+        # Saclay lab measurements (Fe55 source, cosmics) on the same box and the
+        # same readout chain as 'sps', with the beam machinery off. This is the
+        # GUI equivalent of TestBenchCosmics/daq_control.sh: p2basket-sc acq-on ->
+        # dumpcap loop on enp4s0f1 -> acq-off, which is exactly what
+        # vmm_daq_control.py already does.
+        #
+        # Data tree: the GUI owns runs/ + analysis/ under this directory. Kept
+        # separate from the hand-driven daq_control.sh output dirs
+        # (source_tests/, am241_tests/, ...) so a GUI run never lands in the
+        # middle of a directory another script is rotating files into. Point it
+        # at the campaign being taken.
+        'base_data_dir': '/local/p2/p2data/lab_vmm/',
+        'daq_host': '127.0.0.1',
+        # HV lives on banco (CAEN crate on the 192.168.10.x cosmic-bench LAN,
+        # unreachable from this machine — verified 2026-09-09). Port 2100 is
+        # served by hv_dream_shim.py, which at this site drives nothing and
+        # gates nothing, but LOGS banco's readback into each sub-run's
+        # hv_monitor.csv (config/dream_bridge.json -> hv_live_url).
+        'hv_ip': 'sim',
+        'hv_n_cards': 4,
+        # No Aim-TTi units here either: hybrid/ALINX LV is the TDK-Lambda
+        # supplies on 192.168.0.247-249, driven from the GUI power panel.
+        'lv_monitoring': False,
+        'lv_units': {},
+        'simulate': False,
+        # Not a beam site: hides the beam monitor / Beam tabs / "+ Dream"
+        # toggle in the GUI, disables the beam alert rules, and switches the
+        # capture guard to its no-beam discriminator (see capture_guard.py).
+        'beam': False,
+        # No HV channel map on this machine: banco owns the crate and we do not
+        # know (and must not invent) its card/channel numbering, so sub-runs
+        # carry no HV targets and nothing here claims to set a voltage. Fill
+        # 'hv_channels'/'hv_operating' below the day the lab crate mapping is
+        # known and HV targets come back automatically.
+        'hv_targets': False,
+        # 120 s per pcapng rather than the 600 s of loop_daq.sh: online QA
+        # latency and the capture guard's empty-file trip both scale with this,
+        # so a 10-minute file means a dead readout goes unnoticed for 20 min.
+        'capture_duration_s': 120,
+        'interfaces': [
+            # Same data NIC as at the beam test (enp4s0f1, 192.168.1.16 in the
+            # lab). Slow control is the TestBenchCosmics install with its
+            # explicit --config-file, exactly as daq_control.sh calls it.
+            {'name': 'alinx', 'iface': 'enp4s0f1', 'slow_control': 'p2basket',
+             'p2basket_sc': '/local/p2/deploy/bin/p2basket-sc',
+             'sc_cwd': '/local/p2/p2testbench/TestBenchCosmics',
+             'sc_config': 'config/config_alinx_noThresholds_hyb2.json',
+             'alinx_config': None},
+        ],
+    },
 }
 
 _SITE_CFG = SITES[SITE]
 BASE_DATA_DIR = _SITE_CFG['base_data_dir']
 SIMULATE = _SITE_CFG['simulate']
+# Is this a beam site? False switches off everything that only makes sense with
+# a beam: the GUI's beam monitor and Beam tabs, the beam alert rules, the
+# combined-Dream-run toggle, and the capture guard's "was Dream recording?"
+# discriminator. Read by flask, monitor.py and capture_guard.py through this
+# module, so the site file stays the single switch.
+IS_BEAM_SITE = _SITE_CFG.get('beam', True)
+# Does this machine know the HV card/channel map? When False, sub-runs carry an
+# empty 'hvs' and the detectors carry no hv_channels: the crate is somebody
+# else's (banco's) and inventing channel numbers would put fiction in every
+# run_config.json. HV is still MONITORED — hv_dream_shim logs banco's readback.
+HV_TARGETS = _SITE_CFG.get('hv_targets', True)
 
 # ---------------------------------------------------------------------------
 # Run schedule
@@ -274,6 +340,24 @@ TRIGGER_TEST_MIN = 5
 OPERATING_LONG_P2_HV = dict(SCAN_COMMON_P2_HV)
 OPERATING_LONG_N_SUBRUNS = 2
 OPERATING_LONG_SUBRUN_MIN = 30   # 2026-08-01: 2 x 30 = the 1 h efficiency run
+
+# ---------------------------------------------------------------------------
+# RUN_PLAN='lab_source': the lab measurement. N identical sub-runs at whatever
+# the HV is (banco holds it; see HV_TARGETS), named after what is being measured
+# so the run tree says what it is without opening the config.
+#
+# Split into sub-runs rather than one long capture for the same reason the beam
+# runs are: each sub-run is a QA unit, a resume point and its own hv_monitor.csv,
+# and a lost sub-run costs LAB_SUBRUN_MIN, not the night. Sub-run boundaries are
+# acquisition stop/starts (the known non-ready-hybrid risk), so do not make them
+# short for no reason — 30-60 min is the sensible range for an overnight run.
+LAB_MEASUREMENT = 'fe55'       # labels the sub-runs: fe55_00, fe55_01, ...
+LAB_N_SUBRUNS = 8
+LAB_SUBRUN_MIN = 30
+# What is actually in front of the detector — recorded in every run config.
+# Keep it in step with LAB_MEASUREMENT; it is what an analysis reads.
+LAB_SOURCE = {'fe55': 'Fe55 source', 'am241': 'Am241 source',
+              'cosmics': 'cosmic muons', 'pulser': 'pulser', 'noise': 'none'}
 
 CHIP_STATE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'config', 'chip_config_state.json')
@@ -474,7 +558,9 @@ TRIGGER_VMM = {
 }
 
 # Capture: seconds per pcapng file (dumpcap ring-buffer rotation interval).
-CAPTURE_DURATION_S = 44.4
+# Site-overridable ('capture_duration_s'): the lab runs longer files than the
+# beam does. QA latency and the capture guard's trip time both scale with it.
+CAPTURE_DURATION_S = _SITE_CFG.get('capture_duration_s', 44.4)
 
 
 class Config(RunConfigBase):
@@ -502,10 +588,13 @@ class Config(RunConfigBase):
         self.write_all_detectors_to_json = True  # Only when making run config json template. Maybe do always?
         self.gas = 'Ar/Iso 95/5'  # Gas type for run
         # self.gas = 'Ar/CO2/Iso 93/5/2'
-        self.beam_type = 'sps_beam'
-        # self.beam_type = 'cosmics'
-        self.target_type = 'none'
-        self.trigger = 'self-triggered VMM readout'  # TODO-SPS: describe actual trigger formation
+        # What produced the hits — 'sps_beam' at the beam, the lab measurement
+        # (fe55 / cosmics / pulser) in the lab. Both land in run_config.json and
+        # are what an analysis reads to know what a run is.
+        self.beam_type = LAB_MEASUREMENT if not IS_BEAM_SITE else 'sps_beam'
+        self.target_type = (LAB_SOURCE.get(LAB_MEASUREMENT, LAB_MEASUREMENT)
+                            if not IS_BEAM_SITE else 'none')
+        self.trigger = 'self-triggered VMM readout'
 
         self.vmm_daq_info = {
             'ip': _SITE_CFG['daq_host'],
@@ -556,7 +645,7 @@ class Config(RunConfigBase):
         else:
             self.hv_info['username'] = 'admin'
             self.hv_info['password'] = 'admin'
-            if not SIMULATE:
+            if not SIMULATE and HV_TARGETS:
                 # stderr, NOT stdout: get_config_py.py's stdout is parsed as
                 # JSON by the GUI — a warning line there breaks Start Run.
                 print(f'WARNING: {creds_path} not found — using default admin/admin HV credentials.',
@@ -597,6 +686,8 @@ class Config(RunConfigBase):
         # P2 stations AND the uRWELL references — as {card: {channel: volts}}.
         # Scans modify only the P2 station entries; the references stay put.
         def _operating_hvs():
+            if not HV_TARGETS:
+                return {}   # banco owns the crate; see HV_TARGETS
             hvs = {}
             for group in (P2_HV, URWELL_HV):
                 for det, roles in group.items():
@@ -610,7 +701,12 @@ class Config(RunConfigBase):
             p2_volts is {det: {role: volts}} for the three P2 stations; the two
             uRWELL references are always carried at their operating point,
             because they are the telescope reference and scans never move them.
+
+            At a site with no HV channel map (HV_TARGETS False) this is empty:
+            the run sets no voltages and its config says so.
             """
+            if not HV_TARGETS:
+                return {}
             hvs = {}
             for det, roles in URWELL_HV.items():
                 for role, (card, ch) in roles.items():
@@ -744,6 +840,16 @@ class Config(RunConfigBase):
                         'hvs': _scan_hvs({det: dict(TRIGGER_TEST_P2_HV)
                                           for det in P2_HV}),
                     }],
+                # Lab measurement (Fe55 / cosmics): N identical sub-runs at
+                # whatever HV banco is holding. Named after the source so the
+                # run tree reads as the measurement it is.
+                'lab_source':
+                    lambda: [{
+                        'sub_run_name': f'{LAB_MEASUREMENT}_{i:02d}',
+                        'run_time': LAB_SUBRUN_MIN,
+                        'post_pause_s': 0,
+                        'hvs': _operating_hvs(),
+                    } for i in range(LAB_N_SUBRUNS)],
                 # Long physics run, everything at the operating point.
                 'operating_long':
                     lambda: [{
@@ -759,6 +865,20 @@ class Config(RunConfigBase):
             plan = (cont or {}).get('plan') or RUN_PLAN
             if plan not in _PLANS:
                 raise SystemExit(f'RUN_PLAN {plan!r} not recognised')
+            # An HV scan is defined by the voltages it steps through. At a site
+            # that sets no voltages (lab: banco owns the crate) such a plan would
+            # silently become N identical sub-runs with scan names on them —
+            # data labelled meshscan_m50V that was never taken at that voltage.
+            # Refuse loudly instead; 'lab_source' or 'config_scan' is what a
+            # no-crate site wants.
+            if not HV_TARGETS and plan in ('mesh_then_drift',
+                                           'mesh_then_drift_common',
+                                           'retake_run25'):
+                raise SystemExit(
+                    f"RUN_PLAN {plan!r} steps HV, but site {SITE!r} sets no HV "
+                    f"(hv_targets False — the crate is not on this machine). "
+                    f"Use 'lab_source' for a source/cosmics run or 'config_scan' "
+                    f"for a chip-config scan, and set the voltages on banco.")
             points = _PLANS[plan]()
 
             if cont:
@@ -847,7 +967,10 @@ class Config(RunConfigBase):
                 'bulked_from': 'Alex+Enzo',
                 'det_center_coords': {'x': 0, 'y': 0, 'z': _P2_Z_MM[det]},  # mm
                 'det_orientation': {'x': 0, 'y': 0, 'z': 0},  # deg
-                'hv_channels': P2_HV[det],
+                # Empty where the crate is not ours (HV_TARGETS False): the
+                # GUI's HV plot then labels banco's traces by their raw
+                # slot:channel instead of claiming a mapping we did not verify.
+                'hv_channels': P2_HV[det] if HV_TARGETS else {},
                 # VMM readout cabling (informational; labels QA plots).
                 'vmm_map': {
                     'enp4s0f1': {
@@ -883,13 +1006,21 @@ if __name__ == '__main__':
     n_sub = len(config.sub_runs)
     total_h = run_min / 60
     ifaces = [f"{i['name']}({i['iface']})" for i in config.vmm_daq_info['interfaces']]
-    print(f'Site: {SITE}  (simulate={SIMULATE})')
+    print(f'Site: {SITE}  (simulate={SIMULATE}, beam={IS_BEAM_SITE})')
     print(f'Base data dir: {BASE_DATA_DIR}')
     print(f'Gas: {config.gas}')
-    for _det, _p in OPERATING_HV.items():
-        _roles = '   '.join(f'{r} {v} V' for r, v in _p.items())
-        _gap = f'   (gap = {_p["drift"] - _p["mesh"]} V)' if 'mesh' in _p else '   (Dream-read reference)'
-        print(f'{_det}: {_roles}{_gap}')
+    if not IS_BEAM_SITE:
+        print(f'Measuring: {config.beam_type} ({config.target_type})')
+    if HV_TARGETS:
+        for _det, _p in OPERATING_HV.items():
+            _roles = '   '.join(f'{r} {v} V' for r, v in _p.items())
+            _gap = f'   (gap = {_p["drift"] - _p["mesh"]} V)' if 'mesh' in _p else '   (Dream-read reference)'
+            print(f'{_det}: {_roles}{_gap}')
+    else:
+        # Not a silent omission: this site sets no voltages at all, and that is
+        # the single most surprising thing about it.
+        print('HV: set and held on banco — this run sets no voltages; the shim '
+              'logs banco\'s readback into each sub-run\'s hv_monitor.csv')
     print(f'Capture: {", ".join(ifaces)}  ({config.vmm_daq_info["capture_tool"]}, '
           f'{config.vmm_daq_info["capture_duration_s"]} s/file)')
     print(f'LV units: {", ".join(config.lv_info["units"].keys())}')

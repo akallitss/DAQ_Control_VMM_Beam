@@ -32,7 +32,7 @@ from daq_status import (get_vmm_daq_status, get_hv_control_status,
                         get_processor_status)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Add parent dir to path
-from run_config_beam import Config, BASE_DATA_DIR
+from run_config_beam import Config, BASE_DATA_DIR, SITE, IS_BEAM_SITE
 from get_run_events import get_total_events_for_run
 from monitor import DaqMonitor, fetch_chat_id, get_bot_username
 # NXCALS SPS beam-intensity watcher constants (the watcher process owns the Spark
@@ -75,14 +75,28 @@ LOG_FILE = f"{LOG_DIR}/daq_events.log"
 MONITOR_CONFIG_PATH = f"{BASE_DIR}/config/monitor_config.json"
 monitor = DaqMonitor(MONITOR_CONFIG_PATH)
 
+def site_config_path(name):
+    """config/<name>.<site>.json if it exists, else config/<name>.json.
+
+    The machine-specific files (which TestBench directory the power and chip
+    scripts live in, which TDK config to measure) are gitignored per-machine
+    state, and this box now has TWO valid sets of them: the CERN/beam install
+    and the lab one. Keeping both and letting site.txt choose means switching
+    between beam and lab is one word in one file, not an edit of every
+    machine config — and neither set is lost when the other is in use.
+    """
+    per_site = f"{BASE_DIR}/config/{name}.{SITE}.json"
+    return per_site if os.path.isfile(per_site) else f"{BASE_DIR}/config/{name}.json"
+
+
 from power_control import PowerControl
-power = PowerControl(f"{BASE_DIR}/config/power_config.json")
+power = PowerControl(site_config_path("power_config"))
 
 # VMM chip configuration (base yaml + config_ext exception file, applied by the
 # TestBenchCosmics p2basket utility as a subprocess). Selected file persists in
 # chip_config_state.json — daq_control.py copies it into each run directory.
 from chip_config import ChipConfig
-chip = ChipConfig(f"{BASE_DIR}/config/chip_config.json",
+chip = ChipConfig(site_config_path("chip_config"),
                   f"{BASE_DIR}/config/chip_config_state.json")
 
 # ---------------------------------------------------------------------------
@@ -197,7 +211,8 @@ sessions = {}
 @app.route("/")
 def index():
     configs = [f for f in os.listdir(CONFIG_RUN_DIR) if f.endswith(".json")]
-    return render_template("index.html", screens=TMUX_SESSIONS, run_configs=configs)
+    return render_template("index.html", screens=TMUX_SESSIONS, run_configs=configs,
+                           site=SITE, beam_site=bool(IS_BEAM_SITE))
 
 
 # --- Current run tracking (from daq_control log, with persistence) ---
@@ -466,6 +481,12 @@ def run_config_py():
     try:
         data = request.get_json(silent=True) or {}
         with_dream = bool(data.get("dream"))
+        if with_dream and not IS_BEAM_SITE:
+            # Belt and braces behind the hidden toggle: a stale browser tab from
+            # the beam test must not fire a Dream run in the lab.
+            return jsonify({"success": False,
+                            "message": f"combined Dream runs are not available "
+                                       f"at site {SITE!r}"})
 
         # Pre-run readiness gate: every run start must be preceded by a warm
         # reset that brought ALL hybrids to ready (the known failure mode is
@@ -1061,12 +1082,28 @@ def power_lv_history():
     return jsonify({"success": True, "supplies": supplies})
 
 
+@app.route("/site")
+def site_info():
+    """Which site this DAQ is deployed at, and whether it is a beam site.
+
+    The GUI asks once at load: at a non-beam site (lab) the beam monitor strip,
+    the Beam/Beam2 tabs and the "+ Dream" toggle are hidden and their pollers
+    never start — panels that could only ever show CERN beam data have no place
+    in a lab shift, and the pollers would hammer an unreachable Vistar."""
+    return jsonify({"site": SITE, "beam": bool(IS_BEAM_SITE)})
+
+
 @app.route("/dream/status")
 def dream_status():
     """For the GUI chip: bridge configured? Dream reachable? its current run?
     plus the local combined-run state if one is active."""
     cfg = _dream_cfg()
-    out = {"configured": bool(cfg), "reachable": False, "dream_run": None}
+    # "configured" drives the "+ Dream" toggle. In the lab config/dream_bridge
+    # .json exists (it carries hv_live_url, which is how HV gets recorded), but
+    # a combined VMM+Dream run is not a thing there — Dream takes no run at all
+    # — so the toggle must stay hidden however complete the bridge config is.
+    out = {"configured": bool(cfg) and bool(IS_BEAM_SITE),
+           "reachable": False, "dream_run": None, "beam_site": bool(IS_BEAM_SITE)}
     try:
         with open(DREAM_BRIDGE_STATE) as f:
             out["combined"] = json.load(f)

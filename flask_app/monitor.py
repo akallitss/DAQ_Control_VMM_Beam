@@ -32,6 +32,13 @@ from daq_status import (get_vmm_daq_status, get_hv_control_status,
                         get_lv_control_status, get_daq_control_status,
                         get_qa_watcher_status)
 
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from run_config_beam import IS_BEAM_SITE
+except Exception:      # a monitor that cannot import the site must still run
+    IS_BEAM_SITE = True
+
 TELEGRAM_URL = "https://api.telegram.org/bot{token}/{method}"
 
 
@@ -207,7 +214,15 @@ class DaqMonitor:
     def resend_interval(self):
         return self.config.get("resend_interval_minutes", 30) * 60
 
+    # Rules that only mean something with a beam. At a lab site they are not
+    # merely uninteresting: rule_beam_state_unknown would fire within five
+    # minutes of every start (no Vistar to reach from Saclay) and then alert
+    # forever, which is how people learn to ignore the alert channel.
+    BEAM_ONLY_RULES = ("rule_beam_off", "rule_beam_state_unknown")
+
     def rule_enabled(self, name):
+        if name in self.BEAM_ONLY_RULES and not IS_BEAM_SITE:
+            return False
         return self.config.get("rules", {}).get(name, True)
 
     def _rule_min_duration(self, name):

@@ -1,5 +1,5 @@
 {
-  "_comment": "Combined VMM+Dream runs \u2014 copy to config/dream_bridge.json (gitignored) and adjust. dream_flask_url = Dream's Flask on banco. token must match the Dream-side trigger route (see docs/dream_side/). hv_gate.channel_labels maps VMM HV channels 'slot:ch' to the Dream /hv_data trace labels for the SAME physical channels (set when the P2 basket entry is added to Dream's HV config). The shim gates each subrun's start on Dream's readback being within tolerance_v of that subrun's targets.",
+  "_comment": "Wiring to banco. Copy to config/dream_bridge.json (gitignored). TWO independent uses, either or both may be configured: (1) COMBINED RUNS at a beam site \u2014 dream_flask_url + token fire the paired Dream run (docs/dream_side/vmm_trigger.py) and hv_gate.channel_labels map VMM HV channels 'slot:ch' to Dream /hv_data trace labels, so hv_dream_shim gates each subrun on Dream's readback reaching that subrun's targets. (2) HV LOGGING, which is how a LAB run records the voltage it was taken at \u2014 hv_live_url points at the read-only snapshot service on banco (docs/dream_side/hv_live.py) and hv_dream_shim writes each sub-run's own hv_monitor.csv from it. A lab deployment normally sets hv_live_url only.",
   "dream_flask_url": "http://128.141.21.144:5001",
   "token": "CHANGE-ME-shared-secret",
   "hv_gate": {
@@ -18,5 +18,13 @@
     "tolerance_v": 3.0,
     "poll_s": 5,
     "timeout_s": 900
+  },
+  "hv_live_url": "http://192.168.x.x:5001/hv_live",
+  "hv_live_token": "CHANGE-ME-same-secret-as-bancos-config/hv_live.json",
+  "hv_log": {
+    "_comment": "interval_s: seconds between logged rows (5 = plenty for a run that lasts hours). max_age_s: a snapshot older than this is NOT written \u2014 a frozen service must not draw a steady voltage that was never measured.",
+    "interval_s": 5,
+    "timeout_s": 5,
+    "max_age_s": 60
   }
 }

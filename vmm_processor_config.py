@@ -17,7 +17,7 @@ vmm_processor_watcher.py for the handoff contract (atomic rename).
 import json
 import os
 
-from run_config_beam import BASE_DATA_DIR, CAPTURE_DURATION_S
+from run_config_beam import BASE_DATA_DIR, CAPTURE_DURATION_S, IS_BEAM_SITE
 
 BASE_DATA = BASE_DATA_DIR
 DAQ_REPO_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -47,7 +47,12 @@ CONFIG = {
     # Fold trigger-referenced efficiency into scalars.json. ~3.3 s per file and
     # it is the most useful single number on the trend dashboard, so it is on by
     # default; the stage is wrapped so a failure never loses the decode.
-    'do_efficiency': True,
+    # Beam sites only: the measurement is referenced to the external trigger
+    # digitised on hybrid 0, and a self-triggered lab run (Fe55) has no such
+    # trigger — the stage would spend its 3.3 s per file computing efficiency
+    # against nothing. Set it True by hand for a lab run that DOES have a
+    # scintillator trigger on hybrid 0.
+    'do_efficiency': bool(IS_BEAM_SITE),
     'eff_window': 1000.0,   # ns; matches vmm_pcapng_qa.py's --eff-window default
 
     # --- what is kept on disk -------------------------------------------------

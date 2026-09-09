@@ -1,7 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Remote-HV shim for combined VMM + Dream runs at the SPS.
+Remote-HV shim: HV that belongs to another machine (banco).
+
+Two sites use it, for the same underlying reason — the CAEN crate is not on
+this machine and cannot be reached from it:
+
+  sps : combined VMM + Dream runs. Dream ramps and owns all HV; this shim gates
+        each sub-run on Dream's readback so the capture never starts at the
+        wrong voltage.
+  lab : Fe55 / cosmics runs. Nobody is taking a Dream run at all, so there is
+        no gate and no combined state — but the HV still has to be RECORDED
+        with the data. The shim polls banco's read-only hv_live service and
+        writes each sub-run's own hv_monitor.csv in exactly the format
+        hv_control.py would have written, so the GUI's HV panel, the per-run
+        provenance and vmm_qa/vmm_scan_curves all work unchanged.
+
+Without that logging a VMM-only run keeps no record of the voltage it was taken
+at: at the beam test the record lived in Dream's run tree, and in the lab Dream
+has no run tree.
 
 Speaks the exact hv_control.py wire protocol on port 2100, so daq_control
 needs no changes — but drives no CAEN hardware. At this site the crate hangs
@@ -29,8 +46,10 @@ Wiring in gitignored config/dream_bridge.json (see .example):
   hv_gate.tolerance_v / poll_s / timeout_s.
 """
 
+import csv
 import json
 import os
+import threading
 import time
 import urllib.request
 import urllib.parse
@@ -55,6 +74,15 @@ GATE_DEFAULTS = {'tolerance_v': 3.0, 'poll_s': 5, 'timeout_s': 900,
 # How long the FIRST gate of a connection re-checks for the combined-run state
 # file before concluding the run is VMM-only. See _combined_state().
 STATE_GRACE_S = 30
+
+# Remote HV logging (config/dream_bridge.json -> hv_live_url + hv_log).
+#   interval_s : seconds between rows. 5 s, not hv_control's 1 s: this is an
+#                HTTP round trip to another machine, and a lab run is hours long.
+#   max_age_s  : a snapshot older than this is not written. A frozen service
+#                repeating its last reading would otherwise draw a rock-steady
+#                voltage that was never measured — the same failure mode the
+#                gate's staleness check exists for.
+HV_LOG_DEFAULTS = {'interval_s': 5, 'timeout_s': 5, 'max_age_s': 60}
 
 # Reset for every client connection; only the first gate of a run pays the grace.
 _first_gate = True
@@ -182,6 +210,146 @@ def _dream_readback_ok(bridge, state, sub_run, targets):
     return True, 'all channels at target'
 
 
+# ---------------------------------------------------------------------------
+# Remote HV logging — banco's readback, written into OUR run tree.
+# ---------------------------------------------------------------------------
+def _hv_snapshot(cfg):
+    """One reading from banco's read-only hv_live service.
+
+    Shape (see docs/dream_side/hv_live_service.py):
+        {"time": "YYYY-mm-dd HH:MM:SS",
+         "channels": {"8:0": {"power": 1, "v0": 750.0, "vmon": 749.8,
+                              "imon": 0.12}, ...}}
+    """
+    url = cfg['hv_live_url']
+    token = cfg.get('hv_live_token') or cfg.get('token')
+    if token:
+        url += ('&' if '?' in url else '?') + urllib.parse.urlencode({'token': token})
+    opts = {**HV_LOG_DEFAULTS, **cfg.get('hv_log', {})}
+    with urllib.request.urlopen(url, timeout=opts['timeout_s']) as r:
+        data = json.loads(r.read().decode())
+    if not data.get('channels'):
+        raise ValueError(f'hv_live returned no channels: {str(data)[:200]}')
+    return data
+
+
+def _snapshot_age_s(data):
+    """Seconds since the service took the reading, or None if it cannot be told.
+
+    Across two machines, so it is only ever approximate — banco's clock ran ~5 s
+    ahead of this box during the beam test. max_age_s is set well beyond that.
+    """
+    try:
+        return (datetime.now() -
+                datetime.strptime(str(data.get('time', '')).strip(),
+                                  '%Y-%m-%d %H:%M:%S')).total_seconds()
+    except Exception:
+        return None
+
+
+class RemoteHVLogger:
+    """Writes <run_out_dir>/<sub_run>/hv_monitor.csv from banco's readback.
+
+    Byte-compatible with hv_control.monitor_hvs: 'timestamp' then, per channel,
+    '<slot:ch> power/v0/vmon/imon'. That is what flask's /hv_data parses and
+    what every downstream tool already reads, so nothing else needs to know the
+    numbers came off another machine.
+
+    The v0 column is banco's OWN setpoint, not a target from our run config —
+    at this site we set nothing, so the setpoint is a thing we can only learn by
+    asking, and it is precisely what the run record was missing.
+
+    Deliberately writes NO FILE until the first good snapshot: an empty
+    hv_monitor.csv would make every consumer believe the run has HV data and
+    then plot nothing, which is worse than a run that plainly has none.
+    """
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.opts = {**HV_LOG_DEFAULTS, **cfg.get('hv_log', {})}
+        self._stop = None
+        self._thread = None
+
+    def start(self, run_out_dir, sub_run_name):
+        self.stop()   # never two loggers on one file
+        if not self.cfg.get('hv_live_url'):
+            return False
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, args=(run_out_dir, sub_run_name, self._stop),
+            daemon=True)   # daemon: a hung HTTP read must never hold up teardown
+        self._thread.start()
+        return True
+
+    def stop(self):
+        if self._thread is None:
+            return
+        self._stop.set()
+        self._thread.join(timeout=10)
+        if self._thread.is_alive():
+            print('[shim] WARNING: HV logger did not stop within 10s')
+        self._thread, self._stop = None, None
+
+    def _run(self, run_out_dir, sub_run_name, stop):
+        path = os.path.join(run_out_dir, sub_run_name, 'hv_monitor.csv')
+        writer = f = None
+        channels = []
+        rows = fails = stale = 0
+        try:
+            while not stop.is_set():
+                try:
+                    data = _hv_snapshot(self.cfg)
+                    age = _snapshot_age_s(data)
+                    if age is not None and age > self.opts['max_age_s']:
+                        stale += 1
+                        if stale in (1, 10) or stale % 100 == 0:
+                            print(f'[shim] HV log: snapshot {age:.0f}s old '
+                                  f'(limit {self.opts["max_age_s"]}s) — not '
+                                  f'writing a reading that is not current '
+                                  f'({stale} so far)')
+                        stop.wait(self.opts['interval_s'])
+                        continue
+                    stale = 0
+                    if writer is None:
+                        # First good reading fixes the column set for the file.
+                        os.makedirs(os.path.dirname(path), exist_ok=True)
+                        channels = sorted(data['channels'],
+                                          key=lambda c: [int(x) if x.isdigit() else x
+                                                         for x in str(c).split(':')])
+                        f = open(path, 'w', newline='')
+                        writer = csv.writer(f)
+                        writer.writerow(['timestamp', 'remote_timestamp'] + [
+                            f'{c} {k}' for c in channels
+                            for k in ('power', 'v0', 'vmon', 'imon')])
+                        print(f'[shim] HV log: {path} — {len(channels)} channels '
+                              f'from {self.cfg["hv_live_url"]}')
+                    row = [time.strftime('%Y-%m-%d %H:%M:%S'), data.get('time', '')]
+                    for c in channels:
+                        ch = data['channels'].get(c) or {}
+                        row.extend([ch.get('power', ''), ch.get('v0', ''),
+                                    ch.get('vmon', ''), ch.get('imon', '')])
+                    writer.writerow(row)
+                    f.flush()
+                    rows += 1
+                    fails = 0
+                except Exception as e:
+                    fails += 1
+                    # Loud on the first failure, then rate-limited: a lab run is
+                    # hours long and banco being off must not fill the pane.
+                    if fails in (1, 10) or fails % 100 == 0:
+                        print(f'[shim] HV log: cannot read banco ({fails} in a '
+                              f'row): {type(e).__name__}: {e}')
+                stop.wait(self.opts['interval_s'])
+        finally:
+            if f is not None:
+                f.close()
+                print(f'[shim] HV log: {rows} rows written to {path}')
+            elif rows == 0:
+                print(f'[shim] HV log: NO readings for {sub_run_name} — this '
+                      f'sub-run has no hv_monitor.csv. Check hv_live_url in '
+                      f'config/dream_bridge.json and the service on banco.')
+
+
 def gate_start(sub_run):
     """Blocking per-subrun gate. Returns the reply for daq_control — contains
     'HV Set' ONLY when the subrun may start."""
@@ -217,14 +385,25 @@ def gate_start(sub_run):
 
 
 def main():
+    logger = RemoteHVLogger(_load_json(BRIDGE_CONFIG_PATH))
+    if logger.cfg.get('hv_live_url'):
+        print(f'[shim] HV logging enabled: {logger.cfg["hv_live_url"]}')
+    else:
+        print('[shim] HV logging OFF (no hv_live_url in config/dream_bridge.json) '
+              '— runs will carry no hv_monitor.csv')
     while True:
         try:
             with Server(port=PORT) as server:
                 server.receive()
                 server.send('HV control connected')
-                hv_info = server.receive_json()  # kept for protocol parity; unused
-                print('[shim] client connected (Dream owns the real HV)')
+                # run_out_dir is the ONE thing we need from it: where this run's
+                # sub-run directories live, i.e. where hv_monitor.csv goes.
+                hv_info = server.receive_json()
+                print('[shim] client connected (the crate is banco\'s)')
                 globals()['_first_gate'] = True   # new run: re-arm the grace
+                # Re-read the bridge config per run, so editing hv_live_url does
+                # not need a restart of the stack mid-shift.
+                logger = RemoteHVLogger(_load_json(BRIDGE_CONFIG_PATH))
                 res = server.receive()
                 while 'Finished' not in res:
                     if 'Start' in res:
@@ -239,15 +418,24 @@ def main():
                     elif 'Begin Monitoring' in res:
                         server.send('Starting HV monitor')
                         sub_run = server.receive_json()
-                        server.send(f'HV monitoring started for {sub_run["sub_run_name"]}')
+                        name = sub_run['sub_run_name']
+                        started = logger.start(hv_info.get('run_out_dir', ''), name)
+                        print(f'[shim] {name}: HV logging '
+                              + ('started' if started else 'not configured'))
+                        server.send(f'HV monitoring started for {name}')
                     elif 'End Monitoring' in res:
                         server.send('Stopping HV monitor')
+                        logger.stop()
                         server.send('HV Monitor Stopped')
                     else:
                         server.send('Unknown Command')
                     res = server.receive()
         except Exception as e:
             print(f'Error: {e}\nRestarting hv shim server...')
+        finally:
+            # A dropped connection or a crashed run must not leave a logger
+            # writing into a finished sub-run's directory forever.
+            logger.stop()
     print('donzo')
 
 

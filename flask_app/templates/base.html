@@ -9,6 +9,9 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='bootstrap.min.css') }}">
     <script src="{{ url_for('static', filename='bootstrap.bundle.min.js') }}"></script>
     <script src="{{ url_for('static', filename='socket.io.min.js') }}"></script>
+    <!-- Site switch for the page: false at a lab site, where every CERN beam
+         panel is hidden and its poller returns immediately. -->
+    <script>const SITE_BEAM = {{ 'true' if beam_site else 'false' }};</script>
     <style>
         :root {
             --bg:      #0e1116;
@@ -311,7 +314,7 @@
         <div class="container-fluid flex-wrap">
             <a class="navbar-brand" href="#">
                 <span class="brand-dot"></span>P2 VMM DAQ
-                <span class="brand-sub">SPS</span>
+                <span class="brand-sub">{{ (site or "sps")|upper }}</span>
             </a>
             <ul class="nav nav-tabs main-tabs ms-2" id="daqTabs">
                 <li class="nav-item">
@@ -323,12 +326,17 @@
                 <li class="nav-item">
                     <a class="nav-link" data-bs-toggle="tab" href="#analysis-browser">Analysis</a>
                 </li>
+                {# CERN beam tabs — only at a beam site. The PANES stay in the
+                   DOM (their pollers key off "is my pane active", which is then
+                   permanently false); it is the way in that goes away. #}
+                {% if beam_site %}
                 <li class="nav-item">
                     <a class="nav-link" data-bs-toggle="tab" href="#beam">Beam</a>
                 </li>
                 <li class="nav-item">
                     <a class="nav-link" data-bs-toggle="tab" href="#beam2">Beam2</a>
                 </li>
+                {% endif %}
                 <li class="nav-item">
                     <a class="nav-link" data-bs-toggle="tab" href="#disk-space">Disk Space</a>
                 </li>

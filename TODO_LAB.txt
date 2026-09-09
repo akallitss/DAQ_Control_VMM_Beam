@@ -1,0 +1,150 @@
+================================================================================
+ LAB CHECKLIST — switching the VMM DAQ from the beam test to lab measurements
+================================================================================
+For Fe55 / cosmics running on dedippce185 (vmm_daplxa) with the HV on banco.
+The code side is done; everything below is machine state to verify ON THE BOX.
+Work top to bottom. Nothing here needs an edit of tracked code.
+
+Known machine state as of 2026-09-09 (re-check, do not assume):
+    - two checkouts: ~/DAQ_Control_VMM_Beam and the shared
+      /local/p2/DAQ_Control_VMM_Beam (basketp2 group) — the shared one is the
+      deploy that ran the beam test; both were on config/site.txt = sps
+    - enp4s0f1 UP at 192.168.1.16 (data NIC), 192.168.0.14 on the USB adapter
+      (TDK supplies .247-.249), 132.166.11.185 on the lab LAN
+    - /local/p2/p2testbench/TestBenchCosmics/ present, with p2basket_sc_*.py,
+      switchOn_tdk.sh / switchOff_tdk.sh and config/config_alinx_noThresholds_hyb2.json
+    - no vmm_* tmux stack running
+    - the CAEN crate (192.168.10.81) is NOT reachable from this machine
+
+--------------------------------------------------------------------------------
+ 1. Pick the checkout and update it
+--------------------------------------------------------------------------------
+ Do   : cd /local/p2/DAQ_Control_VMM_Beam && git pull    (or the GUI's Git Reset)
+        Everything below happens in that one checkout — one account owns the
+        stack (see README, "Several operators, one DAQ").
+
+--------------------------------------------------------------------------------
+ 2. base_data_dir                                    run_config_beam.py SITES['lab']
+--------------------------------------------------------------------------------
+ What : where the GUI's runs/ + analysis/ tree is created. Currently
+        /local/p2/p2data/lab_vmm/ — change it to the campaign you are taking.
+ Check: df -h /local/p2 ; mkdir -p /local/p2/p2data/lab_vmm && touch /local/p2/p2data/lab_vmm/.w
+ Note : keep it OUT of the directories daq_control.sh rotates files into
+        (source_tests/, am241_tests/, cosmics_sparks_*/), so a GUI run and a
+        hand-started dumpcap can never write into the same directory.
+
+--------------------------------------------------------------------------------
+ 3. Slow-control config file                         run_config_beam.py SITES['lab']
+--------------------------------------------------------------------------------
+ What : 'sc_config' — the json passed to p2basket-sc for acq-on/acq-off/
+        read-link-status. Set to config/config_alinx_noThresholds_hyb2.json,
+        which is what TestBenchCosmics/daq_control.sh uses today.
+ Check: ls /local/p2/p2testbench/TestBenchCosmics/config/config_alinx_*.json
+        and confirm with whoever set the bench up which one matches the
+        hybrids currently connected. Then, by hand, before anything else:
+            cd /local/p2/p2testbench/TestBenchCosmics
+            p2basket-sc --config-file config/config_alinx_noThresholds_hyb2.json --read-link-status
+        Every connected hybrid must come back ready. If this fails from the
+        shell it will fail from the GUI — fix it here first.
+
+--------------------------------------------------------------------------------
+ 4. Per-site machine configs (chip + power)
+--------------------------------------------------------------------------------
+ What : config/chip_config.json and config/power_config.json still point at
+        TestBenchCERN. Create lab variants; they win automatically at SITE=lab
+        and the CERN ones stay untouched for the next beam test.
+ Do   : cd /local/p2/DAQ_Control_VMM_Beam
+        cp config/chip_config.json  config/chip_config.lab.json
+        cp config/power_config.json config/power_config.lab.json
+        then in the .lab.json files set:
+          chip : TestBenchCosmics has NO config_base/ config_ext/ dirs (checked
+                 2026-09-09) — its yamls and ext .txt files sit flat in
+                 config/, so point both subdirs there and PIN the base yaml:
+                   "conf_dir":      "/local/p2/p2testbench/TestBenchCosmics",
+                   "base_subdir":   "config",
+                   "ext_subdir":    "config",
+                   "base_yaml":     "p2b-config-dedippcu196.yaml",   <- confirm
+                   "apply_script":  "/local/p2/p2testbench/TestBenchCosmics/p2basket_sc_config.py"
+                 (warm_reset_script already points at TestBenchCosmics.)
+                 base_yaml MUST be named explicitly here: auto-detection wants
+                 exactly one *.yaml in base_subdir and config/ holds nine.
+                 The Configure dropdown then offers the .txt files in config/
+                 (p2b-config-ext.txt, p2b-config-ext_HybDet.txt, ...). To run a
+                 gain/peaktime config scan in the lab, copy the exception files
+                 you want from TestBenchCERN/config_ext/ into that directory
+                 first — the run is named after the file that was applied, so
+                 whatever is offered there is what the data will be labelled
+                 with.
+          power: cwd -> /local/p2/p2testbench/TestBenchCosmics (its own
+                 switchOn_tdk.sh / switchOff_tdk.sh); check the tdkl_*.json
+                 names in its config/ for the measure command.
+ Check: the GUI's Chip Config and Hybrids LV Power panels appear and the
+        Measure button returns V/A for all three supplies.
+
+--------------------------------------------------------------------------------
+ 5. HV from banco (optional but recommended — this is the run's HV record)
+--------------------------------------------------------------------------------
+ What : deploy docs/dream_side/hv_live.py on banco and wire this machine to it.
+ Do   : follow docs/dream_side/README_DEPLOY.md, section "Lab runs".
+        Then on this machine, in config/dream_bridge.json:
+            "hv_live_url":   "http://<banco>:5001/hv_live",
+            "hv_live_token": "<same secret as banco's config/hv_live.json>"
+        (Leave dream_flask_url/token/hv_gate as they are — they are inert at a
+        lab site; the "+ Dream" toggle is hidden and combined starts refused.)
+ Check: curl -s "http://<banco>:5001/hv_live?token=<secret>" | head -c 300
+ If skipped: runs work, but no hv_monitor.csv and no HV plot. The
+        vmm_hv_control pane says "HV logging OFF" at startup and names the
+        sub-run it wrote nothing for.
+
+--------------------------------------------------------------------------------
+ 6. Run plan
+--------------------------------------------------------------------------------
+ What : run_config_beam.py — RUN_PLAN and the LAB_* constants.
+ Do   : RUN_PLAN = 'lab_source'
+        LAB_MEASUREMENT = 'fe55' | 'am241' | 'cosmics' | 'pulser' | 'noise'
+        LAB_N_SUBRUNS / LAB_SUBRUN_MIN  (8 x 30 min = a 4 h run)
+        For a chip-config scan use RUN_PLAN = 'config_scan' and drive it with
+        config_scan.py exactly as at the beam test.
+ Note : the HV-scan plans (mesh_then_drift*, retake_run25) REFUSE to build at
+        this site — they set voltages this machine does not own. Scan the HV
+        from banco and record it here.
+
+--------------------------------------------------------------------------------
+ 7. Switch the site and read the summary
+--------------------------------------------------------------------------------
+ Do   : echo lab > config/site.txt
+        .venv/bin/python run_config_beam.py
+ Read : Site: lab (simulate=False, beam=False) / the data dir / "Measuring:
+        fe55 (Fe55 source)" / the HV line saying this run sets no voltages /
+        capture 120 s/file / the sub-run list.
+ Then : .venv/bin/python qa_config.py
+        .venv/bin/python vmm_processor_config.py
+        (both regenerate config/*.json from the new site — the QA and decode
+        follow base_data_dir and the capture duration.)
+
+--------------------------------------------------------------------------------
+ 8. Start the stack and check each pane
+--------------------------------------------------------------------------------
+ Do   : ./start_servers.sh
+        tmux attach -t vmm_hv_control   # "[shim] HV logging enabled: ..." or OFF
+        tmux attach -t vmm_daq          # "Listening on 0.0.0.0:2101"
+        tmux attach -t vmm_flask
+ GUI  : ssh -f -N -L 15002:localhost:5002 vmm_daplxa   # then localhost:15002
+        Header badge reads LAB; no Beam Monitor strip, no Beam/Beam2 tabs, no
+        "+ Dream" toggle.
+
+--------------------------------------------------------------------------------
+ 9. First run (do this before trusting an overnight one)
+--------------------------------------------------------------------------------
+ Do   : Warm Reset -> Apply chip config -> Start QA -> Start Run with
+        LAB_N_SUBRUNS = 1 and LAB_SUBRUN_MIN = 2.
+ Check: - capture files appear in <base_data_dir>runs/<run>/<subrun>/raw_daq_data/
+          and are NOT 272 bytes (that size = no packets at all)
+        - hv_monitor.csv appears in the sub-run dir (if step 5 was done) and
+          the GUI's HV panel plots it
+        - the Online QA gallery fills, "Hits this run" climbs
+        - the run tree's run_config.json says beam_type: fe55, run_plan:
+          lab_source, and carries the chip config file name
+ Then : stop it, put the real LAB_N_SUBRUNS / LAB_SUBRUN_MIN back, and leave
+        the capture guard running (it is started by start_servers.sh) — at a
+        lab site it stops the run on two consecutive empty capture files.

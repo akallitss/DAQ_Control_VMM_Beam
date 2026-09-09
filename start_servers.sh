@@ -13,12 +13,15 @@ PY="$BASE_DIR/.venv/bin/python"
 # HV server: at 'sps' the CAEN crate hangs off banco's private LAN and the
 # Dream DAQ owns ALL HV — run the remote-HV shim (per-subrun scan gate against
 # Dream's readback) instead of the CAEN-driving hv_control.
+# In the LAB the same holds for a different reason: the crate is on banco's
+# cosmic-bench LAN and this machine cannot reach it at all, so the shim serves
+# port 2100 there too — gating nothing, but logging banco's HV readback into
+# each sub-run's hv_monitor.csv (config/dream_bridge.json -> hv_live_url).
 SITE="$(cat "$BASE_DIR/config/site.txt" 2>/dev/null || echo local)"
-if [ "$SITE" = "sps" ]; then
-  HV_SERVER="$BASE_DIR/hv_dream_shim.py"
-else
-  HV_SERVER="$BASE_DIR/hv_control.py"
-fi
+case "$SITE" in
+  sps|lab) HV_SERVER="$BASE_DIR/hv_dream_shim.py" ;;
+  *)       HV_SERVER="$BASE_DIR/hv_control.py" ;;
+esac
 bash_scripts/start_tmux.sh vmm_hv_control "$PY $HV_SERVER" 500
 bash_scripts/start_tmux.sh vmm_lv_control "$PY $BASE_DIR/lv_control.py" 500
 bash_scripts/start_tmux.sh vmm_daq "$PY $BASE_DIR/vmm_daq_control.py" 20000

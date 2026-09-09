@@ -166,7 +166,18 @@ Each machine selects its site with the gitignored `config/site.txt`
 - `bench` — Saclay VMM test bench (`vmm_daplxa`): **real ALINX capture** on
   `enp4s0f1` with fake HV/LV (the bench LV is the TDK supplies, driven from
   the GUI's power panel).
-- `sps` — real hardware. Deployment checklist below.
+- `sps` — real hardware at the beam. Deployment checklist below.
+- `lab` — Saclay lab measurements (Fe55 source, cosmics) on the same machine
+  and readout as `sps`, with the beam machinery off and the HV owned by banco.
+  See **Lab running** below.
+
+Two things follow the site switch besides `SITES`: the machine-specific
+`config/chip_config.json` and `config/power_config.json` may each have a
+per-site variant (`config/chip_config.lab.json`), which wins when it exists —
+so one box can hold both its beam and its lab wiring and switch with one word
+in `config/site.txt`. And `run_config_beam.py` exports `IS_BEAM_SITE`, which
+is what hides the beam panels, disables the beam alert rules and switches the
+capture guard's discriminator.
 
 ## Deploying on the DAQ computer (SPS)
 
@@ -249,6 +260,67 @@ tmux attach -t vmm_daq                   #   "Listening on 0.0.0.0:2101"
 
 A short dry run without beam (1 sub-run, 1–2 min) confirms HV ramp, LV CSV,
 capture rotation and the QA gallery end to end.
+
+## Lab running (Fe55, cosmics) — `SITE = 'lab'`
+
+Same machine, same hybrids, same readout chain as the beam test; what changes
+is that there is no beam, no combined Dream run, and the HV belongs to banco.
+The GUI replaces `TestBenchCosmics/daq_control.sh`: read link status, warm
+reset, apply a chip config, arm acquisition, capture, stop, and keep the run
+tree — from buttons instead of a terminal.
+
+**What the site switch does**
+
+| | `sps` | `lab` |
+|---|---|---|
+| slow control | TestBenchCERN, bare `p2basket-sc` | TestBenchCosmics, `--config-file config/config_alinx_noThresholds_hyb2.json` |
+| capture | `enp4s0f1`, 44.4 s/file | `enp4s0f1`, 120 s/file |
+| HV | Dream ramps it; shim gates each sub-run on its readback | banco holds it; shim *logs* its readback into each sub-run |
+| HV targets in the run config | the P2 channel map | none — this machine sets no voltage and says so |
+| beam monitor / Beam tabs / "+ Dream" | shown | hidden, pollers never start |
+| beam alert rules | on | off |
+| capture guard's "is the VMM at fault?" | ask Dream whether triggers are arriving | yes — a source rate does not stop |
+| trigger-referenced efficiency in the QA | on | off (self-triggered) |
+
+**Run plans.** `RUN_PLAN = 'lab_source'` gives `LAB_N_SUBRUNS` identical
+sub-runs of `LAB_SUBRUN_MIN` minutes named after `LAB_MEASUREMENT`
+(`fe55_00`, `fe55_01`, …), which is the ordinary overnight source or cosmics
+run. `RUN_PLAN = 'config_scan'` works unchanged — `config_scan.py` drives a
+chip-config scan in the lab exactly as it did at the beam. The HV-scan plans
+refuse to build at a site that sets no voltages, rather than silently taking
+identical sub-runs under scan names.
+
+**Deploying on the lab machine**
+
+```bash
+echo lab > config/site.txt          # the whole switch
+git pull                            # or the GUI's Git Reset
+cp config/chip_config.json config/chip_config.lab.json    # then point it at
+cp config/power_config.json config/power_config.lab.json  # TestBenchCosmics
+.venv/bin/python run_config_beam.py       # check the printed summary
+.venv/bin/python qa_config.py             # regenerate config/qa_config.json
+.venv/bin/python vmm_processor_config.py  # and processor_config.json
+./start_servers.sh
+```
+
+`start_servers.sh` runs `hv_dream_shim.py` on port 2100 here, not
+`hv_control.py`: the CAEN crate is on banco's cosmic-bench LAN and this
+machine cannot reach it at all.
+
+**HV recording.** A lab run gets its own `hv_monitor.csv` per sub-run, polled
+from banco's read-only `/hv_live` service — deploy
+`docs/dream_side/hv_live.py` on banco (see `docs/dream_side/README_DEPLOY.md`)
+and set `hv_live_url` + `hv_live_token` in `config/dream_bridge.json`. Until
+that is wired the runs work but carry no HV record, and the
+`vmm_hv_control` pane says so on every sub-run.
+
+**The capture guard matters more here, not less.** At the beam it only blamed
+the VMM when Dream was still recording; in the lab there is no Dream run to
+ask, so an unmodified guard would never fire — precisely where runs are left
+unattended overnight. At a lab site two consecutive closed empty capture files
+stop the run on their own. For a low-rate setup (cosmics on a tight external
+trigger, no noise hits) raise `EMPTY_TRIP` or the capture duration rather than
+weakening the test.
 
 ## Running
 

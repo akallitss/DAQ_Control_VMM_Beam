@@ -21,7 +21,7 @@
               <div class="stat-label" id="events-label">Hits this run (analyzed)</div>
               <div class="stat-value" id="events-display">0</div>
             </div>
-            <div class="stat">
+            <div class="stat" id="run-beam-stat">
               <div class="stat-label">Beam</div>
               <div class="stat-value" id="run-beam" style="font-size:1.1rem;">—</div>
             </div>
@@ -179,7 +179,7 @@
   <!-- Beam Monitor: ON/OFF state strip (parsed server-side from CERN Vistar
        SPS Page 1, see beam_state.py). The Vistar image itself is tucked behind
        the "Show page" toggle and only polled while visible. -->
-  <div class="panel mt-3">
+  <div class="panel mt-3" id="beam-monitor-panel">
     <div class="panel-header">
       <span class="panel-title">Beam Monitor</span>
       <span id="beam-chip" class="beam-chip beam-unknown">BEAM ?</span>
@@ -1567,7 +1567,18 @@ const BEAM_REFRESH_MS = 7000;  // CERN-requested external poll rate for SPS1
 let beamPageVisible = false;
 let beamBlobUrl = null;
 
+// At a lab site the beam strip and the run-control Beam tile have nothing to
+// show: hide them at load. The markup itself stays so the beam JS below keeps
+// its DOM (guarded by SITE_BEAM) instead of throwing on missing elements.
+if (!SITE_BEAM) {
+    ["beam-monitor-panel", "run-beam-stat"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add("d-none");
+    });
+}
+
 async function loadBeamVistars() {
+    if (!SITE_BEAM) return;
     const sel = document.getElementById("beam-vistar-select");
     try {
         const pages = await (await fetch("/beam_vistars")).json();
@@ -1639,6 +1650,7 @@ function fmtDuration(s) {
 }
 
 function renderBeamChip() {
+    if (!SITE_BEAM) return;
     const chip = document.getElementById("beam-chip");
     const dur = beamStateSince ? (Date.now() - beamStateSince) / 1000 : 0;
     if (beamStateName === "ON") {
@@ -1654,6 +1666,7 @@ function renderBeamChip() {
 }
 
 async function updateBeamState() {
+    if (!SITE_BEAM) return;   // no Vistar to poll away from the beam
     try {
         const s = await (await fetch("/beam_state")).json();
         if (!s.success) return;
@@ -2446,6 +2459,7 @@ function beamShowKrb(d) {
 }
 
 async function beamUpdateStatus() {
+  if (!SITE_BEAM) return;   // NXCALS beam feed is a beam-site thing
   let d;
   try { d = await (await fetch("/beam/status")).json(); } catch (e) { return; }
 
