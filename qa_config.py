@@ -9,7 +9,7 @@ The flask UI's Start QA Watcher button reads that JSON to launch qa_watcher.py.
 import json
 import os
 
-from run_config_beam import BASE_DATA_DIR, CAPTURE_DURATION_S
+from run_config_beam import BASE_DATA_DIR, CAPTURE_DURATION_S, SITE
 
 BASE_DATA = BASE_DATA_DIR
 # The pcapng QA lives in this repo (vmm_qa/vmm_pcapng_qa.py) and runs with this
@@ -59,7 +59,9 @@ CONFIG = {
 
     # Run filtering
     'include_runs': None,  # e.g. ['run_1', 'run_2'] — only process these; None = all
-    'exclude_runs': None,  # e.g. ['run_0']          — skip these
+    # 2026-10-22 lab campaign: run_1..run_3 are the 1.3 GB-per-2-min flood files of the
+    # hot-channel tests (VMM 4/9 bursting); QA on them would be killed by mem_guardian.
+    'exclude_runs': ['run_1', 'run_2', 'run_3'] if SITE == 'lab' else None,
 
     # Watcher behavior
     'poll_interval':   10,  # seconds between scans
