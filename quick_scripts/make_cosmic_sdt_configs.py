@@ -20,6 +20,7 @@ the file applied, so the name is the label.
 Usage:
     make_cosmic_sdt_configs.py --d 50,40,34,30,27,24,22,20,18,16 [--out DIR]
         [--baselines baselines.json] [--limits limits.json] [--masks masks.json]
+        [--hold 4=400,9=400]
         [--dry-run]
 
   baselines.json  {"2": 208, ...}  chip -> baseline sdt; overrides the defaults
@@ -27,6 +28,10 @@ Usage:
   limits.json     {"5": 24, ...}   chip -> smallest d it may be taken at (its
                   noise limit from the 5.1 scan). A chip asked for a smaller d
                   is held at its limit, and the file says so.
+  --hold          chip=sdt pairs: those chips stay at that ABSOLUTE sdt at every d
+                  (a chip that already floods the link at the lowest July
+                  threshold, e.g. VMM 4 and 9 at sdt 300, must not follow the
+                  scan down). Reported in the output.
   masks.json      {"40": {"19": [20], "14": [34]}, "default": {...}}
                   d -> chip -> channels to write `sm 1` for. "default" applies
                   to every d that has no entry of its own.
@@ -128,6 +133,7 @@ def main():
     ap.add_argument('--baselines')
     ap.add_argument('--limits')
     ap.add_argument('--masks')
+    ap.add_argument('--hold', default='', help='chip=sdt,... held at an absolute sdt')
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args()
 
@@ -137,6 +143,7 @@ def main():
     limits = {int(k): int(v) for k, v in json.load(open(a.limits)).items()} if a.limits else {}
     maskspec = json.load(open(a.masks)) if a.masks else {}
     ds = [int(x) for x in a.d.split(',')]
+    hold = {int(k): int(v) for k, v in (x.split('=') for x in a.hold.split(',') if x)}
 
     lines = open(a.template).readlines()
     idx, template_sdt, problems = parse_template(lines)
@@ -155,7 +162,9 @@ def main():
     for d in ds:
         new, held = {}, []
         for c in CHIPS:
-            if c in base:
+            if c in hold:
+                new[c] = hold[c]
+            elif c in base:
                 dd = max(d, limits.get(c, 0))
                 if dd != d:
                     held.append(f'{c}(d={dd})')
@@ -177,6 +186,8 @@ def main():
             with open(path, 'w') as f:
                 f.writelines(out)
     print('VMM 6 is held at absolute sdt 230 (baseline unknown) at every d.')
+    if hold:
+        print('held at an absolute sdt at every d: ' + ' '.join(f'{c}:{v}' for c, v in hold.items()))
     if a.dry_run:
         print('(dry run: nothing written)')
 
