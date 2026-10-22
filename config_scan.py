@@ -25,6 +25,15 @@ on its own would collide with this script's sequencing. This script re-applies
 the config and warm resets before every run anyway, which is the same recovery;
 a config whose run dies early is simply retried here.
 
+LAB SITES (run_config_beam.IS_BEAM_SITE False, e.g. the cosmic-muon threshold
+scan): there is no Dream and no beam. The script then skips the Dream-idle wait,
+starts plain VMM runs ({'dream': False}), takes no beam samples, and writes a
+RUN_QUALITY.json from the VMM's own counters (hits per VMM from the QA's
+events.json, capture bytes, files) instead of BEAM_QUALITY.json. It also does
+not touch config/hv_hold (no HV under DAQ control there). The free-disk floor
+and --until logic are the same, plus a projection from the previous point's
+volume so a point that cannot finish is not started.
+
 Usage:
     config_scan.py --until 21:00 --configs a.txt,b.txt [--minutes 55] [--dry-run]
 """
@@ -115,10 +124,18 @@ def sh(cmd):
 
 try:
     sys.path.insert(0, REPO)
-    from run_config_beam import BASE_DATA_DIR
+    from run_config_beam import BASE_DATA_DIR, IS_BEAM_SITE
     RUNS_DIR = os.path.join(BASE_DATA_DIR, 'runs')
+    ANALYSIS_DIR = os.path.join(BASE_DATA_DIR, 'analysis')
 except Exception:
+    IS_BEAM_SITE = True              # the unknown case keeps the beam behaviour
     RUNS_DIR = '/local/p2/p2data/TB_July26_H4/runs'
+    ANALYSIS_DIR = '/local/p2/p2data/TB_July26_H4/analysis'
+
+# Capture volume per minute of the previous point (lab sites), so the next one
+# is refused if it would not fit above MIN_FREE_GB. Thresholds step DOWN through
+# a scan and the noise volume climbs fast, so the last point is the best guide.
+_last_mb_per_min = [None]
 
 
 def free_gb(path=RUNS_DIR):
@@ -182,6 +199,37 @@ def write_beam_quality(run_name, cfg, stats):
             json.dump({'run': run_name, 'chip_config': cfg, **stats}, f, indent=2)
     except Exception as e:
         log(f'   could not write BEAM_QUALITY.json: {e}')
+
+
+def hits_per_vmm(run_name):
+    """{vmm: hits} summed over the QA's per-capture events.json of a run. Trails
+    the DAQ by about one capture rotation plus QA time, so the final file or two
+    of a run may be missing -- the totals are a floor, flagged in the JSON."""
+    out = {}
+    base = os.path.join(ANALYSIS_DIR, run_name)
+    for dp, _, fns in os.walk(base):
+        if 'events.json' not in fns:
+            continue
+        try:
+            with open(os.path.join(dp, 'events.json')) as f:
+                for v, n in (json.load(f).get('hits_per_vmm') or {}).items():
+                    out[int(v)] = out.get(int(v), 0) + int(n)
+        except (OSError, ValueError):
+            continue
+    return dict(sorted(out.items()))
+
+
+def write_run_quality(run_name, cfg, stats):
+    """Lab counterpart of write_beam_quality: the VMM's own counters, next to
+    the data. A cosmic point has no external reference for 'did it take data',
+    so what an analysis needs is hits per VMM (which chips were noisy at this
+    threshold) and the capture volume."""
+    try:
+        p = os.path.join(RUNS_DIR, run_name, 'RUN_QUALITY.json')
+        with open(p, 'w') as f:
+            json.dump({'run': run_name, 'chip_config': cfg, **stats}, f, indent=2)
+    except Exception as e:
+        log(f'   could not write RUN_QUALITY.json: {e}')
 
 
 def daq_running():
@@ -325,7 +373,16 @@ def run_one(cfg, minutes, dry_run):
             f'the data already taken at risk. STOPPING THE SCAN.')
         return None                      # fatal: no point trying later configs
     log(f'   {fg:.0f} GB free')
-    if not wait_until(dream_idle, DREAM_TEARDOWN_TIMEOUT_S, 'Dream to be idle'):
+    if not IS_BEAM_SITE and _last_mb_per_min[0] and fg >= 0:
+        # 1.5x margin on the previous point: the next one is at a lower threshold.
+        need_gb = _last_mb_per_min[0] * minutes * 1.5 / 1e3
+        if fg - need_gb < MIN_FREE_GB:
+            log(f'   previous point wrote {_last_mb_per_min[0]:.0f} MB/min; this one '
+                f'needs ~{need_gb:.0f} GB and would leave {fg - need_gb:.0f} GB '
+                f'(floor {MIN_FREE_GB} GB) — refusing to start it. STOPPING THE SCAN.')
+            return None
+    if IS_BEAM_SITE and not wait_until(dream_idle, DREAM_TEARDOWN_TIMEOUT_S,
+                                       'Dream to be idle'):
         log('   Dream never went idle; it would answer the trigger with 409')
         return False
     # warm reset -> config apply -> (start = acq-on). See the note above.
@@ -340,7 +397,7 @@ def run_one(cfg, minutes, dry_run):
 
     req('/update_run_config_py', {})
     time.sleep(2)
-    r = req('/run_config_py', {'dream': True})
+    r = req('/run_config_py', {'dream': IS_BEAM_SITE})
     if not r.get('success'):
         log(f'   start failed: {r.get("message")}')
         return False
@@ -370,17 +427,32 @@ def run_one(cfg, minutes, dry_run):
     # unstable, whether a config actually got beam is as important as whether
     # the DAQ ran.
     deadline = time.time() + (minutes + 3 * OVERHEAD_MIN) * 60
-    ev0 = dream_events()          # baseline, for the per-run assumption above
+    ev0 = dream_events() if IS_BEAM_SITE else None  # baseline, per-run assumption above
     on = tot = 0
     pulses = []
     last_sample = 0.0
     while time.time() < deadline:
-        if time.time() - last_sample >= 60:
+        if IS_BEAM_SITE and time.time() - last_sample >= 60:
             last_sample = time.time()
             beam_on, p10 = beam_sample()
             tot += 1
             on += 1 if beam_on else 0
             pulses.append(p10)
+        if not daq_running() and not IS_BEAM_SITE:
+            nbytes, nfiles = run_capture_bytes(run_name)
+            hpv = hits_per_vmm(run_name)
+            stats = {'minutes_requested': minutes,
+                     'capture_bytes': nbytes, 'capture_files': nfiles,
+                     'hits_total': sum(hpv.values()),
+                     'hits_per_vmm': hpv,
+                     'hits_per_vmm_note': 'from the QA events.json; trails the DAQ '
+                                          'by ~1 capture file, so a floor'}
+            write_run_quality(run_name, cfg, stats)
+            _last_mb_per_min[0] = nbytes / 1e6 / max(minutes, 1)
+            log(f'   {run_name} finished — {nbytes/1e6:.0f} MB in {nfiles} files '
+                f'({_last_mb_per_min[0]:.0f} MB/min), {stats["hits_total"]:,} hits '
+                f'in the QA so far')
+            return {'cfg': cfg, 'run': run_name, **stats}
         if not daq_running():
             nbytes, nfiles = run_capture_bytes(run_name)
             frac = (on / tot) if tot else None
@@ -484,7 +556,7 @@ def main():
             # in the finally below, so an abort never leaves HV up on a hold
             # nobody is watching.
             last = (cfg == configs[-1])
-            if not a.dry_run:
+            if not a.dry_run and IS_BEAM_SITE:
                 if last:
                     try:
                         os.remove(HV_HOLD)
@@ -524,12 +596,13 @@ def main():
             # Never leave a hold behind: if the scan aborts mid-sequence the
             # crate may still be biased, and the next run must power off
             # normally rather than inherit a hold nobody set.
-            try:
-                os.remove(HV_HOLD)
-                log('   released HV hold (scan over). NOTE: if the scan aborted '
-                    'early the crate may still be BIASED — check it.')
-            except FileNotFoundError:
-                pass
+            if IS_BEAM_SITE:
+                try:
+                    os.remove(HV_HOLD)
+                    log('   released HV hold (scan over). NOTE: if the scan aborted '
+                        'early the crate may still be BIASED — check it.')
+                except FileNotFoundError:
+                    pass
 
     log(f'CONFIG SCAN END: {len(done)} done, {len(failed)} not')
 
@@ -541,7 +614,10 @@ def main():
     # coincidence, independent of the chip config, and every run is the same
     # length — so differences in captured volume are beam differences.
     stats = [d for d in done if isinstance(d, dict) and d.get('dream_events')]
-    if stats:
+    if not IS_BEAM_SITE:
+        log('   lab site: no beam verdict; per-run detail (hits per VMM, volume) '
+            'is in each run RUN_QUALITY.json')
+    elif stats:
         evs = sorted(d['dream_events'] for d in stats)
         median = evs[len(evs) // 2]
         log(f'   median {median:,} triggers over {len(stats)} runs '
@@ -567,7 +643,8 @@ def main():
             log('   no config needs retaking on beam grounds')
     for c in failed:
         log(f'   MISS {c}')
-    log('   per-run detail is in each run BEAM_QUALITY.json')
+    log('   per-run detail is in each run '
+        f'{"BEAM" if IS_BEAM_SITE else "RUN"}_QUALITY.json')
     return 0
 
 

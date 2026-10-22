@@ -135,7 +135,9 @@ SITES = {
         # (source_tests/, am241_tests/, ...) so a GUI run never lands in the
         # middle of a directory another script is rotating files into. Point it
         # at the campaign being taken.
-        'base_data_dir': '/local/p2/p2data/lab_vmm/',
+        # 2026-10-22: three-chamber cosmic-muon threshold scan (see
+        # docs/HANDOFF_COSMIC_THRESHOLD_SCAN.md).
+        'base_data_dir': '/local/p2/p2data/cosmics_3det_202610/',
         'daq_host': '127.0.0.1',
         # HV lives on banco (CAEN crate on the 192.168.10.x cosmic-bench LAN,
         # unreachable from this machine — verified 2026-09-09). Port 2100 is
@@ -165,12 +167,16 @@ SITES = {
         'capture_duration_s': 120,
         'interfaces': [
             # Same data NIC as at the beam test (enp4s0f1, 192.168.1.16 in the
-            # lab). Slow control is the TestBenchCosmics install with its
-            # explicit --config-file, exactly as daq_control.sh calls it.
+            # lab). 2026-10-22: the cosmic scan runs the SAME hybrids and ALINX
+            # as the beam test, so slow control is the TestBenchCERN chain
+            # (bare form, as at CERN) -- the chip configs are then identical to
+            # the beam ones apart from what the scan changes. (The earlier
+            # TestBenchCosmics/config_alinx_noThresholds_hyb2.json wiring was
+            # for the Fe55 bench with hybrid 2 only.)
             {'name': 'alinx', 'iface': 'enp4s0f1', 'slow_control': 'p2basket',
              'p2basket_sc': '/local/p2/deploy/bin/p2basket-sc',
-             'sc_cwd': '/local/p2/p2testbench/TestBenchCosmics',
-             'sc_config': 'config/config_alinx_noThresholds_hyb2.json',
+             'sc_cwd': '/local/p2/p2testbench/TestBenchCERN',
+             'sc_config': 'config_base/p2b-config-cern-base.yaml',
              'alinx_config': None},
         ],
     },
@@ -235,7 +241,11 @@ POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = n
 #
 # Ceilings (enforced again on the Dream side, which refuses the whole run):
 # mesh <= 450 V, drift <= 900 V. Asserted below so a bad edit fails here.
-RUN_PLAN = 'mesh_then_drift_common'
+# 2026-10-22 lab cosmics: 'lab_source' for the reference run, 'config_scan' for
+# the sdt scan (config_scan.py insists on it). Kept a plain literal on purpose:
+# config_scan.py reads this line textually. At the SPS this must be an HV-scan
+# or config_scan plan again -- the lab plans carry no HV.
+RUN_PLAN = 'lab_source'
 
 # Every point gets the SAME run_time — scan points are only comparable if they
 # are. Do NOT shorten the tail to squeeze the campaign inside a beam window: if
@@ -351,7 +361,7 @@ OPERATING_LONG_SUBRUN_MIN = 30   # 2026-08-01: 2 x 30 = the 1 h efficiency run
 # and a lost sub-run costs LAB_SUBRUN_MIN, not the night. Sub-run boundaries are
 # acquisition stop/starts (the known non-ready-hybrid risk), so do not make them
 # short for no reason — 30-60 min is the sensible range for an overnight run.
-LAB_MEASUREMENT = 'fe55'       # labels the sub-runs: fe55_00, fe55_01, ...
+LAB_MEASUREMENT = 'cosmics'    # labels the sub-runs: cosmics_00, cosmics_01, ...
 LAB_N_SUBRUNS = 8
 LAB_SUBRUN_MIN = 30
 # What is actually in front of the detector — recorded in every run config.
@@ -501,6 +511,18 @@ OPERATING_HV = {
     'EIC_uRWELL_back':  {'drift': 620, 'resist': 420},
 }
 
+# Gas, written into every run_config.json. A wrong value here is worse than a
+# missing one (beam runs 1-58 carry 'Ar/Iso 95/5' but were on Ar/CO2/Iso 93/5/2).
+# Lab cosmics 2026-10-22: Ar/isobutane 95/5 is NOT CONFIRMED -- the string says
+# so on purpose. Replace it once the bottle is checked.
+GAS_MIXTURE = ('Ar/Iso 95/5 (UNCONFIRMED 2026-10-22)' if SITE == 'lab'
+               else 'Ar/Iso 95/5')
+
+# Lab only: the physical chamber standing at each station. In the beam test MID
+# was det1 and OUT det3 (IN det2/det4/det5 by run); the hybrids H1-H9 did not
+# move, the chambers did. Same z spacing as the SPS beam test.
+LAB_CHAMBERS = {'P2_IN': 'det3', 'P2_MID': 'det2', 'P2_OUT': 'det1'}
+
 # VMM readout cabling, per station: connector -> (hybrid, bottom VMM, top VMM).
 # As cabled 2026-07-29 (Alexandra). Hybrid H<n> carries VMMs 2n (bottom) and
 # 2n+1 (top); hybrid 0 (VMMs 0/1) is the trigger digitizer, not on a station.
@@ -527,9 +549,21 @@ DEFAULT_VMM_CABLE = 'HITACHI 2m'
 P2_VMM_CABLES = {
     'P2_MID': {'c4': 'SAMPTEC 2m', 'c6': 'SAMPTEC 2m'},
 }
+if SITE == 'lab':
+    # 2026-10-22 (Alexandra): only Samtec cables are available in the lab, 2 m,
+    # the same on every connector of all three stations. The beam reference
+    # (run_46) was all HITACHI 2 m, and the cable study showed cable length
+    # changes the noise. The label keeps the beam runs' spelling ('SAMPTEC') so
+    # an analysis grouping by cable string matches the 2026-08-01 beam runs.
+    DEFAULT_VMM_CABLE = 'SAMPTEC 2m'
+    P2_VMM_CABLES = {}
 CABLING_NOTE = ('2026-08-01: P2_MID c4 + c6 HITACHI 2m -> SAMPTEC 2m; all other '
                 'connectors unchanged (HITACHI 2m). P2_MID c5 is the in-station '
                 'control. HITACHI reference dataset: runs 38-48.')
+if SITE == 'lab':
+    CABLING_NOTE = ('2026-10-22 lab cosmics: SAMPTEC 2m on every connector c4-c6 of '
+                    'P2_IN / P2_MID / P2_OUT (the beam reference run_46 was all '
+                    'HITACHI 2m). Electronics (H1-H9, ALINX) unchanged from the beam test.')
 
 
 def _cable(det, connector):
@@ -586,8 +620,7 @@ class Config(RunConfigBase):
         self.dream_power_off_hv_at_end = not os.path.exists(HV_HOLD_PATH)
         self.resume = False  # True to resume an existing run: skip sub-runs already marked .subrun_complete.
         self.write_all_detectors_to_json = True  # Only when making run config json template. Maybe do always?
-        self.gas = 'Ar/Iso 95/5'  # Gas type for run
-        # self.gas = 'Ar/CO2/Iso 93/5/2'
+        self.gas = GAS_MIXTURE  # see GAS_MIXTURE above -- edit it there
         # What produced the hits — 'sps_beam' at the beam, the lab measurement
         # (fe55 / cosmics / pulser) in the lab. Both land in run_config.json and
         # are what an analysis reads to know what a run is.
@@ -922,6 +955,12 @@ class Config(RunConfigBase):
                         f'{CHIP_STATE_PATH} — apply a config before starting, '
                         'otherwise the run would be unlabelled')
 
+        if getattr(self, 'run_plan', None) == 'lab_source':
+            # Recorded when known (the cosmic reference run is taken at a
+            # specific chip config) but not required: an Fe55 run without a
+            # chip apply is still a valid lab run.
+            self.chip_config = _applied_chip_file() or None
+
         # --- HV scan template (uncomment and adapt at the beam): step every
         # --- station's mesh DOWN from the operating point, drift following so
         # --- each station's own 300 V gap stays constant (Dream convention).
@@ -945,6 +984,16 @@ class Config(RunConfigBase):
         # digging through detectors[].vmm_map (where the per-connector cable
         # types live).
         self.cabling_note = CABLING_NOTE
+        if not IS_BEAM_SITE:
+            # Nothing in the DAQ sets or reads this HV, so it is stated, not
+            # measured: the real V and I of all six channels go in the logbook
+            # at the start and end of every run.
+            self.lab_hv_note = ('HV is NOT under DAQ control or logging. Stated '
+                                'setpoints (Alexandra, 2026-10-22): mesh 410 V / drift '
+                                '710 V on all three chambers. CAEN 4-ch module: det3 '
+                                '(P2_IN) ch0 drift ch1 mesh; det1 (P2_OUT) ch3 drift '
+                                'ch4 mesh; rack HV module: det2 (P2_MID) ch0 mesh ch1 '
+                                'drift. Measured V/I: see the logbook.')
 
         # Which DAQ code took this run (see _daq_code_version).
         self.daq_code_version = _daq_code_version()
@@ -961,7 +1010,10 @@ class Config(RunConfigBase):
                 'name': det,
                 'description': f'P2 telescope {det.split("_")[1]} '
                                f'(z={_P2_Z_MM[det]:.0f} mm), VMM readout. '
-                               'HV channels mirrored from the Dream config.',
+                               'HV channels mirrored from the Dream config.'
+                               + (f' Lab: chamber {LAB_CHAMBERS[det]}.'
+                                  if not IS_BEAM_SITE else ''),
+                'chamber': LAB_CHAMBERS[det] if not IS_BEAM_SITE else None,
                 'det_type': 'P2',
                 'resist_type': 'none',
                 'bulked_from': 'Alex+Enzo',
@@ -1019,8 +1071,10 @@ if __name__ == '__main__':
     else:
         # Not a silent omission: this site sets no voltages at all, and that is
         # the single most surprising thing about it.
-        print('HV: set and held on banco — this run sets no voltages; the shim '
-              'logs banco\'s readback into each sub-run\'s hv_monitor.csv')
+        print('HV: NOT under DAQ control or logging (fixed 410/710 V, stated in '
+              'run_config lab_hv_note) — this run sets no voltages and records no '
+              'hv_monitor.csv unless hv_live is deployed; write V and I of all six '
+              'channels in the logbook at the start and end of each run')
     print(f'Capture: {", ".join(ifaces)}  ({config.vmm_daq_info["capture_tool"]}, '
           f'{config.vmm_daq_info["capture_duration_s"]} s/file)')
     print(f'LV units: {", ".join(config.lv_info["units"].keys())}')
