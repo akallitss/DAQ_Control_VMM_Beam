@@ -51,3 +51,17 @@ Setup: ALINX/FEC at 192.168.0.12, hybrids H1-H9 (VMM 2-19), data NIC enp4s0f1, `
 11. The Kerberos ticket on the machine had expired on 3 Aug (needed for the EOS backup).
 12. The apply returns before the chips have necessarily settled: the first `/chip_config/status` poll
     after `apply` still showed the previous file, so poll on `last.file` as well as `running`.
+
+### Noise scan, first points (2026-10-22 18:08-18:14)
+
+13. **The flood is a few hot channels, independent of threshold.** run_1 (d=50, VMM 4 and 9 held
+    at sdt 400): 635 MB/min, ~1.6 MHz, VMM 9 76 %, VMM 4 23 %, VMM 7 1 %, everything else ~100 Hz.
+    The same as at sdt 300 in the smoke test. From a 30 MB head of the capture: VMM 4 ch 49 = 99.2 %
+    of VMM 4; VMM 9 ch 41/63/33/44/42 = 32/19/17/15/14 % of VMM 9; VMM 7 ch 24 = 99.1 %. Masking
+    (`sm 1`) is the fix being tried (configs `..._cosmic_m1_d<d>`), polarity still to be confirmed by
+    the first masked point.
+14. **Write before QA:** with the QA watcher off, `RUN_QUALITY.json` has no hits per VMM (it reads the
+    QA's events.json). The per-VMM numbers above were computed by hand from the pcapng.
+15. `bash_scripts/stop_scan_after_current.sh` is hard-wired to the July tree and BEAM_QUALITY.json,
+    so it cannot be used here; the sequencer was stopped with SIGINT and the run in progress finished
+    by itself.
