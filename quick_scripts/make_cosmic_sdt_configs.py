@@ -133,6 +133,8 @@ def main():
     ap.add_argument('--baselines')
     ap.add_argument('--limits')
     ap.add_argument('--masks')
+    ap.add_argument('--tag', default='', help='inserted in the file name: ..._cosmic<tag>_d<d>.txt '
+                                          '(a different mask set or hold is a different label)')
     ap.add_argument('--hold', default='', help='chip=sdt,... held at an absolute sdt')
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args()
@@ -175,7 +177,7 @@ def main():
         masks = {int(c): [int(x) for x in chs] for c, chs in m.items()}
         out = render(lines, idx, new, masks)
         check_only_sdt_and_masks_differ(lines, out, sum(len(v) for v in masks.values()))
-        name = f'{stem}_cosmic_d{d}.txt'
+        name = f'{stem}_cosmic{a.tag}_d{d}.txt'
         path = os.path.join(a.out, name)
         print(f'd={d:>3}: {name}  sdt ' + ' '.join(f'{c}:{new[c]}' for c in CHIPS)
               + (f'  | held at their limit: {" ".join(held)}' if held else '')

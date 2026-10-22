@@ -1,0 +1,4 @@
+{
+  "_comment": "Hot channels seen in the 2026-10-22 lab noise scan, run_1 (d=50, VMM 4/9 held at sdt 400): each fires at ~1 MHz independent of threshold (same at sdt 300 in the smoke test and 400 here). VMM 4 ch49 = 99% of VMM 4 hits; VMM 9 ch 41/63/33/44/42 = ~98% of VMM 9; VMM 7 ch24 = 99% of VMM 7 (13 kHz). From a 30 MB head of the capture. The July 'walking burst' note says the hot channel can hop, so re-check after the first masked points.",
+  "default": {"4": [49], "7": [24], "9": [33, 41, 42, 44, 63]}
+}
