@@ -41,3 +41,8 @@ bash_scripts/start_tmux.sh vmm_mem_guardian "$PY $BASE_DIR/mem_guardian.py" 2000
 # the same external trigger, is still recording. Idle and near-free when no run
 # is active, and it re-arms after acting.
 bash_scripts/start_tmux.sh vmm_capture_guard "$PY $BASE_DIR/capture_guard.py" 2000
+# Lab campaign logbook (LOGBOOK.md in the data dir): rebuilt from the run tree
+# plus the notes / HV readings added with lab_logbook.py. Lab site only.
+if [ "$SITE" = "lab" ]; then
+  bash_scripts/start_tmux.sh vmm_logbook "$PY $BASE_DIR/lab_logbook.py watch" 500
+fi

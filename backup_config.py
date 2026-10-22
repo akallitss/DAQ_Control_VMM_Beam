@@ -16,11 +16,18 @@ Runtime requirements on the DAQ machine:
 import json
 import os
 
-from run_config_beam import BASE_DATA_DIR
+from run_config_beam import BASE_DATA_DIR, SITE
 
 SOURCE_DIR     = BASE_DATA_DIR
 EOS_DIR        = '/eos/project/s/salsachip/Data/T2_tests/P2_SPS_VMM_Data/'
 XROOTD_URL     = 'root://eosproject.cern.ch'  # serves /eos/project; verify on first transfer
+if SITE == 'lab':
+    # Lab cosmics campaign, 2026-10-22: the SPS beam test's backup went to the
+    # nTOF area on EOS public (p2_sps_july/vmm/), so this goes beside it in its
+    # own directory -- nothing shared with the beam runs, whose names this
+    # campaign would otherwise collide with (run_1...).
+    EOS_DIR    = '/eos/experiment/ntof/data/x17/vmm_cosmic_run_oct26/'
+    XROOTD_URL = 'root://eospublic.cern.ch'
 CERN_PRINCIPAL = 'akallits@CERN.CH'
 GPG_PASS_FILE  = os.path.expanduser('~/.cern_pass.gpg')  # create with gpg --encrypt
 

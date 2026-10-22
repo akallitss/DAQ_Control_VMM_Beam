@@ -590,6 +590,13 @@ TRIGGER_VMM = {
     'note': 'external trigger digitizer (H0); trigger on VMM 0 ch 44 '
             '(measured 2026-07-30; July notes said VMM 1 ch 60)',
 }
+if SITE == 'lab':
+    # 2026-10-22 (Alexandra): the lab stand has NO trigger hybrid. H0 is not
+    # used (cosmics are self-triggered), so nothing is digitised as a trigger
+    # and nothing in the data should be read as one.
+    TRIGGER_VMM = {'hybrid': None, 'vmms': [], 'trigger_channel': None,
+                   'note': 'no trigger hybrid at the lab stand; H0 not used '
+                           '(self-triggered cosmics)'}
 
 # Capture: seconds per pcapng file (dumpcap ring-buffer rotation interval).
 # Site-overridable ('capture_duration_s'): the lab runs longer files than the
@@ -605,7 +612,7 @@ class Config(RunConfigBase):
         super().__init__(config_path)
 
     def _set_defaults(self, config_path=None):
-        self.run_name = 'run_56'
+        self.run_name = 'run_1'   # 2026-10-22: fresh numbering for the lab campaign dir
         self.base_out_dir = BASE_DATA_DIR
         self.data_out_dir = f'{self.base_out_dir}runs/'
         self.run_out_dir = f'{self.data_out_dir}{self.run_name}/'
