@@ -65,3 +65,11 @@ Setup: ALINX/FEC at 192.168.0.12, hybrids H1-H9 (VMM 2-19), data NIC enp4s0f1, `
 15. `bash_scripts/stop_scan_after_current.sh` is hard-wired to the July tree and BEAM_QUALITY.json,
     so it cannot be used here; the sequencer was stopped with SIGINT and the run in progress finished
     by itself.
+16. **The hot channel hops (masking channel by channel fails).** run_3 (m1 masks, d=50): `sm 1` works
+    (every masked channel reads 0, so 1 = masked), but VMM 9 moved its burst to ch 20/21 (98 % of the
+    chip) and VMM 4 to ch 36/38; still ~420 MB/min. Same rate at sdt 300 (smoke test), 400 (run_1), and
+    ~250 (run_3), so it is not set by the threshold. VMM 4 = H2 Vmm 0 (P2_IN c5), VMM 9 = H4 Vmm 1
+    (P2_MID c4), VMM 7 ch 24 (13 kHz) is a single steady channel. These chips need a separate look
+    (hybrid, cable, or the firmware change?).
+17. **With VMM 4 and 9 fully masked (m2, all 64 channels) the data rate is ~1 MB/min** (run_4, d=50),
+    about 600x lower, and every other chip is quiet.
