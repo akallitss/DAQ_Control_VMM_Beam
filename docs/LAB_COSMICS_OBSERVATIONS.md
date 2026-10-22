@@ -106,3 +106,22 @@ VMM 6 fixed at sdt 230.
     not lower the rate. Possible: readout starvation when the link is saturated (total volume is 4 GB/min
     at d=16), a start-of-run transient in the head of the file, or dumpcap drops. Not checked yet:
     needs the tail of the same files and the packet/drop counters.
+
+### Per-channel calibration: what the new software has (checked 2026-10-22, install_2026-10-22T08h46m22sZ)
+
+22. **The measurement primitives exist in `libp2b-sc.so` but are not reachable.** `include/p2b/sc/cmd/MeasureVmmI2C.h`
+    (dated 2026-10-16) defines `MeasurePulserDac`, `MeasureThresholdDac`, `MeasureBandgapReference`,
+    `MeasureTemperature`, `MeasureVmmChannel(channel)` and `MeasureChannelThreshold(channel)` ("measures one
+    VMM channel with threshold mode on and off and returns the signed difference"), plus `ReadVmmAdc` /
+    `VmmAdcOperation.h`. `sc::Backend` instantiates every one of them for each active FEC
+    (`UdpCommandTuple`) and `Connector::runCommand(cmdId)` can run them. But:
+    - `p2basket-sc --help` and `CmdLine.all_action_cmds()` list only `read-temperature` among them;
+    - the Python binding exposes only `Cmd/CmdLine/SessionLock` and `Backend.connector()`, whose return type
+      (`p2b::sc::Backend::Connector`) is not registered, so Python cannot call it;
+    - the instances created by the Backend use the default channel 0, so a per-channel scan needs commands
+      constructed with each channel number;
+    - `p2basket-gui` and `test_p2b-sc` contain no measure/calibration strings.
+    This is the vmmsc calibration (pedestal per channel, threshold per channel, trim `sd`), so the new
+    firmware/software seems to be heading there. Question for the developers: a CLI command (e.g.
+    `--measure-channel-threshold`, all channels, all chips) or a Python binding for `Connector` and the
+    measure commands?
