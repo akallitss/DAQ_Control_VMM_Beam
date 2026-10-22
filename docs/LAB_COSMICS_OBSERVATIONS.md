@@ -76,7 +76,7 @@ Setup: ALINX/FEC at 192.168.0.12, hybrids H1-H9 (VMM 2-19), data NIC enp4s0f1, `
     (P2_MID c4), VMM 7 ch 24 (13 kHz) is a single steady channel. These chips need a separate look
     (hybrid, cable, or the firmware change?).
 17. **With VMM 4 and 9 fully masked (m2, all 64 channels) the data rate is ~1 MB/min** (run_4, d=50),
-    about 600x lower, and every other chip is quiet.
+    about 130x lower (635 -> 5 MB/min; an earlier "1 MB/min" and "600x" were wrong), and every other chip is quiet.
 18. **ReadADC (per-channel pedestal and threshold) is not reachable from `p2basket-sc`.** The vmmsc
     calibration (gitlab.cern.ch/rd51-slow-control/vmmsc, `calibration_module.cpp`) works by reading
     the VMM monitor ADC through slow control, not from hits. The new library has it
