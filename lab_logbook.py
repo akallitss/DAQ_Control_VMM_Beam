@@ -152,7 +152,11 @@ def render():
             rows = []
             for k, label in HV_CHANNELS:
                 v = vals.get(k)
-                rows.append(f"    - {label}: " + (f"{v['V']} V, {v['I_uA']} uA" if v else 'NOT RECORDED'))
+                if v:
+                    cur = f"{v['I_uA']} uA" if v.get('I_uA') is not None else 'current NOT RECORDED'
+                    rows.append(f"    - {label}: {v['V']} V, {cur}")
+                else:
+                    rows.append(f"    - {label}: NOT RECORDED")
             return f"- {e['ts']} **HV {e.get('when', '?')}**\n" + '\n'.join(rows)
         return f"- {e['ts']} {e.get('text', '')}"
 
@@ -186,8 +190,13 @@ def cmd_hv(a):
             raw = input(f'{label}  "V,uA" (blank = skip): ').strip()
         if not raw:
             continue
-        v, i = (x.strip() for x in raw.split(','))
-        vals[k] = {'V': float(v), 'I_uA': float(i)}
+        # "710,0.02", "710 0.02", "710/0.02" or just "710" (current not read).
+        parts = raw.replace(',', ' ').replace('/', ' ').split()
+        try:
+            vals[k] = {'V': float(parts[0]),
+                       'I_uA': float(parts[1]) if len(parts) > 1 else None}
+        except (ValueError, IndexError):
+            print(f'  could not read {raw!r} as "V" or "V,uA" -- {k} left NOT RECORDED')
     run = a.run or current_run()
     e = add_entry('hv', run=run, when=a.when, values=vals)
     print(f'logged HV {a.when} for {run}: {len(vals)}/{len(HV_CHANNELS)} channels')
