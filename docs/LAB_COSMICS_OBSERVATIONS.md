@@ -89,3 +89,20 @@ Setup: ALINX/FEC at 192.168.0.12, hybrids H1-H9 (VMM 2-19), data NIC enp4s0f1, `
     reads 0). Next largest: VMM 15 ch 56 (0.8 %, 35 k hits). So the three chips with a burst are VMM 4
     (H2 Vmm 0), VMM 7 (H3 Vmm 1) and VMM 9 (H4 Vmm 1), exactly the three that ran at the highest July
     sdt (300 / 285 / 300) and whose baselines were extrapolated.
+
+### Noise scan result (2026-10-22, run_4..run_13, m2 configs, d = 50..16 above the assumed baselines)
+
+Per-chip hit rate in kHz from the first 40 MB of each point (`quick_scripts/noise_scan_summary.py`;
+table and per-channel CSV in `analysis_noise_scan/` of the campaign dir). VMM 4 and 9 fully masked,
+VMM 6 fixed at sdt 230.
+
+20. **First d at which a chip exceeds 1 kHz (chip total):** VMM 7: 40 (burst, see 19); VMM 15: 34;
+    VMM 12, 14, 19: 30; VMM 3, 5: 27; VMM 8, 13, 17: 24; VMM 16, 18: 22; VMM 11: 20; VMM 10: 18;
+    VMM 2: not reached (0.33 kHz at d=16). So the onset spans 16 DAC across chips: the assumed
+    baselines (July ADC-edge estimates) are off by up to that much, which is what the per-channel
+    calibration is meant to remove.
+21. **Rates fall again at the lowest d for some chips, unexplained:** VMM 7: 489 (d=34), 332, 60, 4.2,
+    0.5, 0.04 kHz (d=20); VMM 5: 416 (d=20) then 0.33 (d=18), 2.9 (d=16). Lowering the threshold should
+    not lower the rate. Possible: readout starvation when the link is saturated (total volume is 4 GB/min
+    at d=16), a start-of-run transient in the head of the file, or dumpcap drops. Not checked yet:
+    needs the tail of the same files and the packet/drop counters.
