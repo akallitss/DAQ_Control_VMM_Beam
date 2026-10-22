@@ -241,11 +241,11 @@ POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = n
 #
 # Ceilings (enforced again on the Dream side, which refuses the whole run):
 # mesh <= 450 V, drift <= 900 V. Asserted below so a bad edit fails here.
-# 2026-10-22 lab cosmics: 'lab_source' for the reference run, 'config_scan' for
+# 2026-10-22 lab cosmics: 'config_scan' for the noise scan (5.1); 'lab_source' for
 # the sdt scan (config_scan.py insists on it). Kept a plain literal on purpose:
 # config_scan.py reads this line textually. At the SPS this must be an HV-scan
 # or config_scan plan again -- the lab plans carry no HV.
-RUN_PLAN = 'lab_source'
+RUN_PLAN = 'config_scan'
 
 # Every point gets the SAME run_time — scan points are only comparable if they
 # are. Do NOT shorten the tail to squeeze the campaign inside a beam window: if
