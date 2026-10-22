@@ -18,8 +18,10 @@ Setup: ALINX/FEC at 192.168.0.12, hybrids H1-H9 (VMM 2-19), data NIC enp4s0f1, `
    `Error: [Errno 13] Permission denied: '/local/p2/deploy/install_2026-10-22T08h46m22sZ/python-venv'`
    then `p2basket-python: line 9: .../python-venv/bin/pip: No such file or directory` and
    `line 17: .../python-venv/bin/activate: No such file or directory`. The command itself still
-   succeeds (rc 0, 0 failed hybrids). Looks like a wrapper trying to (re)create a venv in a directory
-   our user cannot write to.
+   succeeds (rc 0, 0 failed hybrids). **Cause (read from `bin/p2basket-python`):** the wrapper does
+   `if [ ! -d $INSTALL_DIR/python-venv ]; then python3 -m venv ...`, and the 2026-10-22 install dir
+   (`install_2026-10-22T08h46m22sZ`) has no `python-venv` directory (the 2026-06-17 install has one),
+   so every call tries to create it in a directory our user cannot write.
 3. **Link status of hybrid 0:** `hybrid[00].linkStatus = 4` (ready) like hybrids 1-9, although this
    stand has no trigger hybrid. Hybrids 10-15: 0. No VMM 0/1 hits appear in the data.
 4. **`vmmAppReg[15]` changed during a run:** `0x00000044` before the run, `0x00002044` in the link
@@ -38,7 +40,9 @@ Setup: ALINX/FEC at 192.168.0.12, hybrids H1-H9 (VMM 2-19), data NIC enp4s0f1, `
    file, about 48 GB/h. From a 60 MB sample (6634 packets, 5.9 s): 1.66 MHz total, VMM 9 = 89 %,
    VMM 4 = 10 %, VMM 14 = 0.4 %, all others < 0.03 %. VMM 4 and 9 were at sdt 300 (the "walking
    burst" chips of the beam test). All of VMM 2-19 present.
-8. **QA on a 1.5 GB file does not finish:** `vmm_pcapng_qa.py` with `--max-packets 100000` ran 3.5 min
+8. **QA on a 1.5 GB file does not finish (cause found: killed by mem_guardian, not I/O):** `mem_guardian.log`
+   shows `KILL ... rss=4454MB ... vmm_pcapng_qa.py .../run_56/...pcapng` at 17:21:04 (MemAvailable 865 MB).
+   Original observation: `vmm_pcapng_qa.py` with `--max-packets 100000` ran 3.5 min
    and wrote nothing (killed by timeout, mostly I/O wait). The same script on the first 60 MB took
    well under 200 s. At this rate every 120 s capture file is ~1.5 GB, so online QA would not keep up.
 
@@ -73,3 +77,10 @@ Setup: ALINX/FEC at 192.168.0.12, hybrids H1-H9 (VMM 2-19), data NIC enp4s0f1, `
     (hybrid, cable, or the firmware change?).
 17. **With VMM 4 and 9 fully masked (m2, all 64 channels) the data rate is ~1 MB/min** (run_4, d=50),
     about 600x lower, and every other chip is quiet.
+18. **ReadADC (per-channel pedestal and threshold) is not reachable from `p2basket-sc`.** The vmmsc
+    calibration (gitlab.cern.ch/rd51-slow-control/vmmsc, `calibration_module.cpp`) works by reading
+    the VMM monitor ADC through slow control, not from hits. The new library has it
+    (`include/p2b/vmmdcs/fec_config_module.h: int ReadADC(HwIndex iHyb, HwIndex iVmm, int adc_chan)`)
+    but the `p2basket-sc` command list has no such command, and `lib/python/site-packages/p2basket`
+    has no `ReadADC` either. Asking the firmware/software people whether a command or a Python
+    binding exists would save writing a tool against `libp2b-sc.so`.
