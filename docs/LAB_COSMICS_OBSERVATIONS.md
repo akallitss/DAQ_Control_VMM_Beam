@@ -84,3 +84,8 @@ Setup: ALINX/FEC at 192.168.0.12, hybrids H1-H9 (VMM 2-19), data NIC enp4s0f1, `
     but the `p2basket-sc` command list has no such command, and `lib/python/site-packages/p2basket`
     has no `ReadADC` either. Asking the firmware/software people whether a command or a Python
     binding exists would save writing a tool against `libp2b-sc.so`.
+19. **VMM 7 joins the hopping bursters.** m2 scan, run_6 (d=34, sdt 234 on VMM 7): 179 MB/min (d=40 was
+    9 MB/min); VMM 7 = 99 % of the hits, 4.77 M of 4.82 M in a 30 MB sample, on ch 23 (the masked ch 24
+    reads 0). Next largest: VMM 15 ch 56 (0.8 %, 35 k hits). So the three chips with a burst are VMM 4
+    (H2 Vmm 0), VMM 7 (H3 Vmm 1) and VMM 9 (H4 Vmm 1), exactly the three that ran at the highest July
+    sdt (300 / 285 / 300) and whose baselines were extrapolated.
