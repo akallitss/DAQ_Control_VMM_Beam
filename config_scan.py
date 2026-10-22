@@ -514,7 +514,9 @@ def main():
         # Equal livetime for every config — a config comparison at unequal
         # statistics is not a comparison.
         minutes = int(avail / len(configs)) - OVERHEAD_MIN
-    if minutes < 5:
+    # 5 min at the beam (a point shorter than that is not worth the overhead
+    # there); the lab noise scan deliberately takes 2 min points.
+    if minutes < (5 if IS_BEAM_SITE else 2):
         log(f'Only {avail:.0f} min available for {len(configs)} configs — '
             f'that is {minutes} min each. Refusing; give fewer configs or more time.')
         return 2
