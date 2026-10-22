@@ -1,0 +1,8 @@
+{
+  "_comment": "m2: VMM 4 and VMM 9 fully masked (all 64 channels), VMM 7 ch24 masked. The m1 test (run_3, 2026-10-22 18:15) showed masks work (sm 1 = masked, all masked channels read 0) but the burst on those two chips HOPS: VMM 9 moved from ch 41/63/33/44/42 to ch 20/21 (98% of the chip), VMM 4 from ch49 to ch 36/38. Threshold independent (same at sdt 300 and 400). So these two chips are taken out of the noise scan and need a separate investigation.",
+  "default": {
+    "4": [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63],
+    "7": [24],
+    "9": [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63]
+  }
+}
