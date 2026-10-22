@@ -26,7 +26,7 @@ if SITE == 'lab':
     # nTOF area on EOS public (p2_sps_july/vmm/), so this goes beside it in its
     # own directory -- nothing shared with the beam runs, whose names this
     # campaign would otherwise collide with (run_1...).
-    EOS_DIR    = '/eos/experiment/ntof/data/x17/vmm_cosmic_run_oct26/'
+    EOS_DIR    = '/eos/experiment/ntof/data/x17/p2_sps_july/vmm_cosmic_run_oct26/'
     XROOTD_URL = 'root://eospublic.cern.ch'
 CERN_PRINCIPAL = 'akallits@CERN.CH'
 GPG_PASS_FILE  = os.path.expanduser('~/.cern_pass.gpg')  # create with gpg --encrypt
