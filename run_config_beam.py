@@ -126,6 +126,25 @@ BASE_DATA_DIR = _SITE_CFG['base_data_dir']
 SIMULATE = _SITE_CFG['simulate']
 
 # ---------------------------------------------------------------------------
+# Gas mixture. Recorded in every run config as 'gas'.
+#
+# CHANGED 2026-08-02 (overnight): Ar/CO2/Iso -> Ar/CF4/Iso 88/10/2. This is now
+# the single biggest variable in the campaign, so it is a named constant here
+# rather than a literal buried in _set_defaults(): the gas has to be edited in
+# one obvious place, and it has to end up in the data.
+#
+# WARNING about everything up to and including run_58. self.gas was left at its
+# template default 'Ar/Iso 95/5' for the whole beam test, so runs 1..58 record a
+# mixture that was never on the detectors — they were on Ar/CO2/Iso. Do NOT read
+# the gas field of those runs; the real pre-2026-08-02 mixture is Ar/CO2/Iso.
+# Same failure mode as run_25's missing chip_config: a field that exists, is
+# written, and is wrong is worse than one that is absent.
+GAS_MIXTURE = 'Ar/CF4/Iso 88/10/2'
+# Previous mixtures, kept so the value above is edited rather than retyped:
+#   'Ar/CO2/Iso 93/5/2'   -- everything before 2026-08-02 (mislabelled, see above)
+#   'Ar/Iso 95/5'         -- the template default; never actually run here
+
+# ---------------------------------------------------------------------------
 # Run schedule
 #   N_SUBRUNS identical sub-runs of SUBRUN_MIN minutes at the nominal P2
 #   operating point. Short values for local simulation; set beam values at SPS.
@@ -169,13 +188,41 @@ POST_SUBRUN_PAUSE_MIN = 0   # optional pause AFTER each sub-run (minutes); 0 = n
 #
 # Ceilings (enforced again on the Dream side, which refuses the whole run):
 # mesh <= 450 V, drift <= 900 V. Asserted below so a bad edit fails here.
-RUN_PLAN = 'mesh_then_drift_common'
+RUN_PLAN = 'config_scan'
 
 # Every point gets the SAME run_time — scan points are only comparable if they
 # are. Do NOT shorten the tail to squeeze the campaign inside a beam window: if
 # the beam ends first, the unreached points are simply retaken after the next
 # beam start (2026-07-30, Alexandra).
-SCAN_SUBRUN_MIN = 12                              # minutes per scan point
+#
+# 2026-08-02: that rule was OVERRIDDEN for run_61, knowingly, by Alexandra, to
+# land the whole 17-point scan by 21:00. This scan therefore has TWO exposure
+# lengths and is the one dataset here where the rule above does not hold:
+#     meshscan_m00V, m10V, m20V          30 min
+#     meshscan_m30V .. driftscan_gap400V 21 min   (14 points, m30V retaken)
+# 21 is not a preference, it is what fits after the delay: Dream's HV readback
+# endpoint was down 14:00-15:40, which cost 90 min of the window. From a ~15:47
+# first capture, 14 points at 21 min + 0.43 min inter-point ramp ends 20:46;
+# 22 min ends 21:00 with the last point landing exactly on the backstop, which
+# would cut driftscan_gap400V and force a retake of the whole 22 min. Trading
+# 1 min per point for 13 min of margin is the better bet on a day that has
+# already produced two beam dropouts and a Dream outage.
+# CONSEQUENCE FOR ANALYSIS: do not compare raw counts between the 30 min and
+# 22 min points — normalise by live time, using each point's beam_run_log.csv
+# (beam_run_log.py) for the beam-off seconds. The alternative considered and
+# rejected was dropping m50/m70/m90 to keep every point at 30 min.
+#
+# 30 rather than the 12 the Ar/CO2/Iso scan used (2026-08-02, Alexandra): the
+# SPS intensity is down, and a point is only useful if it holds enough
+# statistics. 17 points x 30 min = 8 h 30 min of beam, which no single window
+# today provides — that is expected and accepted. The scan is taken across as
+# many beam windows as it needs, resuming at the first point not marked
+# .subrun_complete; it is NOT compressed to fit one.
+#
+# Consequence for the gas comparison: the new-gas points hold ~2.5x the
+# statistics of the Ar/CO2/Iso ones (run_55..run_57 at 12 min). Compare RATES
+# and normalised distributions, never raw counts, across the gas change.
+SCAN_SUBRUN_MIN = 21                              # minutes per scan point
 
 # Mesh scan down to 350 V on the MID/OUT mesh, i.e. 100 V below their operating
 # point, in 10 V steps. Each station steps by the same dv from its own operating
@@ -203,6 +250,21 @@ DRIFT_SCAN_GAPS_V = (150, 200, 250, 300, 350, 400)  # drift = that station's mes
 # run one dataset; 450 is the enforced MESH_CEILING_V and is never exceeded.
 # P2_IN is above its operating point only at m00V and in the drift scan (which
 # pins mesh at the base), not through the body of the mesh scan.
+#
+# HELD UNCHANGED for the Ar/CF4/Iso 88/10/2 campaign (2026-08-02, Alexandra).
+# Deliberately not re-tuned for the new gas: keeping the identical base point,
+# the identical 17 points and the identical chip config makes this scan a
+# controlled gas-to-gas comparison against run_55..run_57, with the mixture as
+# the only variable. The operating point for the new gas is chosen AFTER this
+# scan, from its own gain curve — see the note on OPERATING_LONG_P2_HV.
+#
+# The margin at 450 is now thin. Alexandra's manual HV test in the new gas on
+# 2026-08-02 could not take the mesh above 460 V, so m00V sits 10 V below the
+# measured wall on all three stations, in beam. Expect trips at the top of the
+# mesh scan and treat a lost m00V as information, not as a fault. This is also
+# why the mesh scan runs top-DOWN and m00V is FIRST: every later point is
+# further from the wall, so a trip costs the one point that was always the
+# riskiest instead of stranding the whole campaign behind it.
 SCAN_COMMON_P2_HV = {'mesh': 450, 'drift': 750}   # gap 300, all three stations
 
 # RUN_PLAN='retake_run25': just the points run_25 lost. Its VMM readout went
@@ -271,9 +333,30 @@ TRIGGER_TEST_MIN = 5
 # the efficiency measurement at the top of the scan, so if the scan's base point
 # ever moves this must move with it. Two independent literals is exactly how the
 # 10 V P2_IN discrepancy got in.
+# 2026-08-02, Ar/CF4/Iso: this derivation is now an ASSUMPTION, not a fact.
+# It was correct while the efficiency run was by definition the top of the
+# scan. In the new gas the operating point is to be chosen from the scan's own
+# gain curve and may not be 450/750 at all. Before starting the next
+# operating_long, either confirm the scan's base point is still the chosen
+# operating point, or replace this line with an explicit literal AND say in the
+# comment that it deliberately differs from the scan base. Leaving it derived
+# while intending a different voltage is the silent-wrong-value failure the
+# derivation was added to prevent, just inverted.
+# 2026-08-02 22:xx, CONFIRMED by Alexandra for the Ar/CF4/Iso efficiency run:
+# the scan base point (mesh 450 / drift 750, gap 300) IS the operating point,
+# so the derivation above stands rather than being silently assumed. Asked and
+# answered explicitly because the comment says a wrong value here is invisible.
 OPERATING_LONG_P2_HV = dict(SCAN_COMMON_P2_HV)
-OPERATING_LONG_N_SUBRUNS = 2
-OPERATING_LONG_SUBRUN_MIN = 30   # 2026-08-01: 2 x 30 = the 1 h efficiency run
+# 2026-08-01: the efficiency run at the top of the HV scan. Sized to fill the
+# beam to the 20:00 stop rather than to a round hour — phase 2 ran ~26 min ahead
+# of plan and the spare time is worth more as statistics on the cable comparison
+# (P2_MID c4/c6 SAMPTEC against c5 HITACHI) than as idle beam.
+# 3 x 28 = 84 min of data from a ~18:31 start lands ~19:56. Three chunks rather
+# than two: the readout died once already today (run_55, 14:55), and a death
+# costs the chunk in progress, so 28 min bounds the loss instead of 42.
+# RE-DERIVE from phase 2's actual end before starting — these assume 18:31.
+OPERATING_LONG_N_SUBRUNS = 4
+OPERATING_LONG_SUBRUN_MIN = 30
 
 CHIP_STATE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'config', 'chip_config_state.json')
@@ -382,6 +465,12 @@ def _load_continuation():
     except Exception:
         return None
 
+# Hard ceilings, asserted in _scan_hvs() so a bad edit fails here rather than
+# on the crate. Unchanged for the Ar/CF4/Iso campaign: the manual test on
+# 2026-08-02 put the new gas's practical mesh limit at ~460 V, so 450 remains
+# the right ceiling and is now only 10 V below a MEASURED wall rather than a
+# comfortable margin. Do not raise it to 460 to 'use the headroom' — 460 is
+# where the detector stopped, not where it is safe to sit in beam.
 MESH_CEILING_V = 450
 DRIFT_CEILING_V = 900
 
@@ -485,7 +574,15 @@ class Config(RunConfigBase):
         super().__init__(config_path)
 
     def _set_defaults(self, config_path=None):
-        self.run_name = 'run_56'
+        # 2026-08-02: jumped 59 -> 61 deliberately. Run Control started a run_59
+        # by hand overnight for another detector and run_60 was last night's
+        # 24 x 30 min overnight run, so both numbers are spoken for in the shared
+        # bookkeeping. Our own aborted run_59 (no data, stopped in the HV ramp)
+        # is parked in ../voided_runs/run_59_vmm_number_clash with a note.
+        # NOTE iterate_run_num.py only checks THIS machine's runs/ dir for
+        # collisions, so it cannot see another detector's numbers — a gap that
+        # has to be closed by hand, as here.
+        self.run_name = 'run_71'
         self.base_out_dir = BASE_DATA_DIR
         self.data_out_dir = f'{self.base_out_dir}runs/'
         self.run_out_dir = f'{self.data_out_dir}{self.run_name}/'
@@ -498,10 +595,17 @@ class Config(RunConfigBase):
         # only when a hold is in force; otherwise Dream keeps its own default of
         # powering off.
         self.dream_power_off_hv_at_end = not os.path.exists(HV_HOLD_PATH)
-        self.resume = False  # True to resume an existing run: skip sub-runs already marked .subrun_complete.
+        # True to resume an existing run: skip sub-runs already marked
+        # .subrun_complete and keep the same run directory.
+        # 2026-08-02: ON to continue run_61's Ar/CF4/Iso scan across the 14:00
+        # beam stop. m00V/m10V/m20V are complete; m30V was cut at 13 of 30 min
+        # and left deliberately unmarked, so it is retaken in full rather than
+        # entering the curve as a short point.
+        # TURN THIS BACK OFF once the scan is finished — left on, the next
+        # unrelated run silently lands in run_61 instead of a fresh directory.
+        self.resume = False
         self.write_all_detectors_to_json = True  # Only when making run config json template. Maybe do always?
-        self.gas = 'Ar/Iso 95/5'  # Gas type for run
-        # self.gas = 'Ar/CO2/Iso 93/5/2'
+        self.gas = GAS_MIXTURE  # see GAS_MIXTURE at the top — edit it there
         self.beam_type = 'sps_beam'
         # self.beam_type = 'cosmics'
         self.target_type = 'none'
