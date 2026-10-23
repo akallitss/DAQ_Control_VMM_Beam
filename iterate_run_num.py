@@ -16,6 +16,24 @@ from run_config_beam import Config
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RUNCONFIG_PY = os.path.join(BASE_DIR, 'run_config_beam.py')
+# Highest run NUMBER ever handed out on this machine. Directory existence alone is not enough:
+# the pruner deletes old local runs once they are safe on EOS, so a name can be free locally
+# while it is taken on EOS (2026-10-23: run_1 was reused and would have been backed up on top
+# of the real run_1). A number at or below this mark is never reused.
+HIGHWATER_PATH = os.path.join(BASE_DIR, 'config', 'run_highwater.txt')
+
+
+def _highwater():
+    try:
+        return int(open(HIGHWATER_PATH).read().strip())
+    except Exception:
+        return 0
+
+
+def _set_highwater(n):
+    if n > _highwater():
+        with open(HIGHWATER_PATH, 'w') as f:
+            f.write(str(n))
 
 
 def main():
@@ -24,8 +42,12 @@ def main():
     run_out_dir = config.run_out_dir
     run_base_dir = str(Path(run_out_dir).parent)
 
-    if not os.path.exists(run_out_dir):
+    m0 = re.match(r'^(.*?)_(\d+)$', run_name)
+    cur_num = int(m0.group(2)) if m0 else None
+    if not os.path.exists(run_out_dir) and not (cur_num is not None and cur_num <= _highwater()):
         print(f"Run directory does not exist yet — no increment needed: {run_out_dir}")
+        if cur_num is not None:
+            _set_highwater(cur_num)
         print('donzo')
         return
 
@@ -59,13 +81,14 @@ def main():
         suffix_num    = 1
 
     new_run_name = f"{base_run_name}_{suffix_num}"
-    while os.path.exists(os.path.join(run_base_dir, new_run_name)):
+    while os.path.exists(os.path.join(run_base_dir, new_run_name)) or suffix_num <= _highwater():
         print(f"  {new_run_name} also exists, trying next...")
         suffix_num  += 1
         new_run_name = f"{base_run_name}_{suffix_num}"
 
     print(f"Incrementing run_name: {run_name!r} -> {new_run_name!r}")
     update_run_name(RUNCONFIG_PY, new_run_name)
+    _set_highwater(suffix_num)
     print('donzo')
 
 
