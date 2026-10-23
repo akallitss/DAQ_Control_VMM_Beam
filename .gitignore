@@ -278,3 +278,8 @@ config/processor_config.json
 
 # Hand-renamed leftovers of the files above (config/continuation.json.stale-*)
 config/*.stale-*
+
+# Lab campaign machine state (differs per machine, must not be committed or pulled over)
+config/lab_hv_state.txt
+config/run_highwater.txt
+config/rate_guard_tripped.json
