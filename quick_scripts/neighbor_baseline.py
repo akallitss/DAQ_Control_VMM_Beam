@@ -95,6 +95,7 @@ def decode_raw(path, mb):
                 b.clear()
 
     done = 0
+    tick = 1e-6                                         # default pcapng resolution; the interface block can override it
     with open(path, 'rb', buffering=16 << 20) as f:
         head = f.read(12)
         if len(head) < 12 or struct.unpack('<I', head[8:12])[0] != 0x1A2B3C4D:
@@ -111,6 +112,17 @@ def decode_raw(path, mb):
             done += blen
             if limit and done > limit:
                 break
+            if btype == 1:                              # Interface Description Block: look for if_tsresol (option 9)
+                o = 8
+                while o + 4 <= len(body) - 4:
+                    code, ln = struct.unpack('<HH', body[o:o + 4])
+                    if code == 0:
+                        break
+                    if code == 9 and ln >= 1:
+                        r = body[o + 4]
+                        tick = 2.0 ** -(r & 0x7F) if r & 0x80 else 10.0 ** -r
+                    o += 4 + ((ln + 3) & ~3)
+                continue
             if btype != 6:                              # Enhanced Packet Block only
                 continue
             _, ts_hi, ts_lo, caplen, _ = struct.unpack('<IIIII', body[:20])
@@ -125,7 +137,7 @@ def decode_raw(path, mb):
             p = data[off + (data[off] & 0x0F) * 4 + 8:]
             if len(p) < 22 or p[4:7] != b'VM3':
                 continue
-            t = ((ts_hi << 32) | ts_lo) * 1e-6
+            t = ((ts_hi << 32) | ts_lo) * tick
             t0 = t if t0 is None else t0
             t1 = t
             nw = (len(p) - 22 + 5) // 6
