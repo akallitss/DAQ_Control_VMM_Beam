@@ -1001,6 +1001,22 @@ class Config(RunConfigBase):
                                 '(P2_IN) ch0 drift ch1 mesh; det1 (P2_OUT) ch3 drift '
                                 'ch4 mesh; rack HV module: det2 (P2_MID) ch0 mesh ch1 '
                                 'drift. Measured V/I: see the logbook.')
+            # The operator can DECLARE the HV state of the next runs in
+            # config/lab_hv_state.txt (one line, e.g. "ALL SIX CHANNELS OFF").
+            # It replaces the stated 410/710 V so a run taken with the HV off is
+            # never labelled as if it were on. Still not measured by the DAQ.
+            _hv_state_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          'config', 'lab_hv_state.txt')
+            try:
+                with open(_hv_state_path) as _f:
+                    _declared = _f.read().strip()
+            except OSError:
+                _declared = ''
+            if _declared:
+                self.lab_hv_state_declared = _declared
+                self.lab_hv_note = ('HV state DECLARED by the operator in config/lab_hv_state.txt: '
+                                    f'{_declared}. Not set, read or logged by the DAQ. '
+                                    'Measured V/I: see the logbook.')
 
         # Which DAQ code took this run (see _daq_code_version).
         self.daq_code_version = _daq_code_version()
