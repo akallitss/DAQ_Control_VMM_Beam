@@ -137,7 +137,7 @@ Runs 14-23 = the same configs as the HV-on m2 scan (`..._m2hvoff_d<d>`), runs 24
     (cosmics, chamber activity), none from the electronics.
 24. **The spread of the noise onset between chips is an electronics effect.** First d above 1 kHz with HV
     off: VMM 7: 40; 15: 34; 12, 19: 27; 3, 13, 14, 17: 24; 18: 22; 8, 11, 16: 20; 10: 18; 5: 16; 2: not
-    reached; VMM 6 never fires. The ordering is the HV-on one, shifted 0-6 DAC later, so the chip-to-chip
+    reached; VMM 6 never fires. The ordering is the HV-on one, usually 0-6 DAC later (VMM 5 is the exception: 27 with HV on, 16 with HV off), so the chip-to-chip
     spread of ~16 DAC remains with no voltage on the chambers.
 25. **The VMM 4, 7 and 9 bursts do not need HV.** Unmasked, HV off (kHz at d=50/40/34/30): VMM 4:
     69 / 1709 / 383 / 33; VMM 9: 1101 / 144 / 857 / 423; VMM 7: 53 / 80 / 0.7 / 0.01. So they come from
