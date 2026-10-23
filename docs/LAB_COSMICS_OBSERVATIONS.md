@@ -219,3 +219,19 @@ runs 24-27: HV off, nothing masked, VMM 4/9 at d = 50, 40, 34, 30 (sdt 249 ... 2
     (e.g. VMM 9 ch 20, run 24: 5th/50th/95th percentile 21/46/101 ticks), with secondary values near 50 and 95. Not a sharp oscillation
     (only 1-12 % of the spacings within one tick of the mode). Looks like a channel that re-fires as soon as it can, i.e. an
     input stuck at or above the threshold, not like random noise or pulses. Not tested beyond this.
+
+### Software incidents of 2026-10-23, block A+C start (all fixed, no data lost)
+
+39. **Flask died unnoticed** (last log line 13:53, cause unknown, memory guard shows no kill, nothing in flask.log). The next
+    config_scan timed out waiting for the warm reset. Restarted the vmm_flask session only.
+40. **Race in the start route (fixed, 55a3773).** `/run_config_py` launched `run_config_beam.py` with Popen + sleep(1) and read the
+    json; the generator took ~2 s, so the PREVIOUS run's json (run_32, sng1hvoff_m9) was used and a n479hvoff_d200 capture was written
+    into the old run_32 m9 folder (3 GB, plus overwritten run_config.json, vmm_daq.log, run_time.txt, tdk csv). config_scan's label check
+    caught it. Capture moved to `orphan_2026-10-23_1621_n479hvoff_d200/`; run_32/run_config.json restored from EOS (original capture intact
+    locally and on EOS). `/update_run_config_py` had the same race (Popen + sleep 0.2); both now wait for the child.
+41. **The pruner made a run name reusable (fixed).** It deleted old local runs once on EOS, so `iterate_run_num` found `run_1` free and
+    started a run there, while EOS `run_1` is yesterday's d=50 run. Stopped after ~1 min, data moved to
+    `orphan_2026-10-23_1626_run_1_n479hvoff_d200/`, EOS run_1 checked untouched. `iterate_run_num` now keeps a high-water mark in
+    `config/run_highwater.txt` (set to 32; the first good run of block A+C is run_35). After a `git checkout run_config_beam.py`
+    (which resets run_name to run_1) the counter steps over all used numbers.
+42. **config_scan's `/stop_run` after a failed label check did not stop the run in time:** the mislabelled capture ran its full 2 minutes.
