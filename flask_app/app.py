@@ -468,8 +468,9 @@ def restart_all():
 @app.route("/update_run_config_py", methods=['POST'])
 def update_run_config_py():
     try:
-        subprocess.Popen([sys.executable, f"{BASE_DIR}/iterate_run_num.py"])
-        time.sleep(0.2)  # Give it a moment to complete
+        # Wait for it to FINISH (a fixed sleep raced it: on a loaded machine the
+        # old run name was read before iterate_run_num had rewritten it).
+        subprocess.run([sys.executable, f"{BASE_DIR}/iterate_run_num.py"], timeout=60)
 
         return jsonify({"success": True, "message": f"Run number iterated"})
 
@@ -498,8 +499,12 @@ def run_config_py():
                                        "press Warm Reset and wait for all hybrids "
                                        "to come back ready."}), 409
 
-        subprocess.Popen([sys.executable, f"{BASE_DIR}/run_config_beam.py"])
-        time.sleep(1)
+        # Wait for the generator to FINISH before reading its json. It used to be
+        # Popen + sleep(1): on 2026-10-23 the generator took ~2 s (loaded machine),
+        # the route read the PREVIOUS run's json, and the new run was started
+        # inside the old run_32 directory with the old run's sub-run and config
+        # label. A run must never start from a json older than this request.
+        subprocess.run([sys.executable, f"{BASE_DIR}/run_config_beam.py"], timeout=60)
         config_path = os.path.join(CONFIG_RUN_DIR, 'run_config_beam.json')
         if not os.path.exists(config_path):
             return jsonify({"message": f"Config not found: {config_path}"}), 404
