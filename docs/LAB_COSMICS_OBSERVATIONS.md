@@ -235,3 +235,24 @@ runs 24-27: HV off, nothing masked, VMM 4/9 at d = 50, 40, 34, 30 (sdt 249 ... 2
     `config/run_highwater.txt` (set to 32; the first good run of block A+C is run_35). After a `git checkout run_config_beam.py`
     (which resets run_name to run_1) the counter steps over all used numbers.
 42. **config_scan's `/stop_run` after a failed label check did not stop the run in time:** the mislabelled capture ran its full 2 minutes.
+
+### Blocks A + C: VMM 4, 7, 9 unmasked, HV off, d = 200 ... 14 (runs 35-56, analysed on lxplus 2026-10-23)
+
+Block A (runs 35-47, sng 0): VMM 4/7/9 at d = 200, 100, 60, 50, 40, 34, 30, 27, 24, 22, 20, 18, 16; all other chips at d = 50 (quiet).
+Block C (runs 48-56, sng 1): the same chips at d = 100, 60, 50, 40, 34, 27, 22, 18, 14. Rates from the first 300 MB of each capture
+(`burst_anatomy.py`, `analysis_n479_hvoff/`); run_56 (d = 14) was not yet on EOS and is not included. Temperatures of all chips 31-38 C.
+
+43. **The bursts depend on the configuration that was applied, not on the threshold.** VMM 4 (kHz at d = 200/100/60/50/40/34/30/27): 12 / 0 / 0 / 27 / 1768 / none / 0 / 0.
+    VMM 9: 2727 / 26 / 688 / 105 / 9 / 0 / 0.5 / 6. VMM 7: 820 / none / 15 / 35 / 144 / 547 / 0 / 0. The rate jumps by orders of magnitude between neighbouring
+    thresholds and back; the hot channel changes with it (VMM 4: ch 45/43 at d = 200, ch 39 at 100, ch 38/36 at 60-40, ch 37/35 at 30 and below;
+    VMM 9: ch 45/33, 25/26, 27/24, 21, 16; VMM 7: ch 47/35, ch 25, ch 24, ch 23, ch 10). Not tested yet whether re-applying the SAME config
+    reproduces the same state (block B, the repeat points, was dropped from this session).
+44. **Underneath there is a smooth noise onset like the other chips.** Below the burst region the rate rises monotonically with falling d:
+    VMM 4 (ch 37/35) 0.8 / 5 / 26 / 112 / 340 kHz at d = 24 / 22 / 20 / 18 / 16, first above 1 kHz at d = 22; VMM 9 (ch 16, with ch 18) 0 / 0.5 / 6 / 50 / 160 / 380 / 740 / 1010 kHz at
+    d = 34 / 30 / 27 / 24 / 22 / 20 / 18 / 16, first above 1 kHz at d = 27. VMM 7 shows no smooth onset down to d = 16 (ch 10 at 0.4 kHz).
+    (The d values use the same extrapolated baselines as before, 199 / 200 / 191 for VMM 4 / 7 / 9.)
+45. **With sng 1 the same chips give their neighbours' baselines, but only for the channels that fire:** VMM 4 16 of 64 channels, median of channel medians 64
+    (range 47-153); VMM 7 11 channels, median 53 (46-177); VMM 9 19 channels, median 85 (44-240). The high values belong to the burst channels
+    themselves (obs. 37). Coverage is low because very few channels fire at all.
+46. **The first point of block A (d = 200, far above any baseline) already shows 2.7 MHz from VMM 9 and 0.8 MHz from VMM 7.** The burst is therefore not a threshold-crossing of
+    ordinary noise. Combined with obs. 37 and 38 (fixed ADC, ~600 ns spacing) this looks like a state the channel input gets stuck in after configuration.
