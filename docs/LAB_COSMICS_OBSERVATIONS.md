@@ -166,7 +166,8 @@ Analysis: `quick_scripts/neighbor_baseline.py` (first 800 MB of each capture); t
     over-threshold flag 0 (hit word bit 14): two neighbours per firing channel. Their ADC is a direct measurement of the
     channel at rest.
 29. **Measured baselines are not the shared 38.** Covered channels on the 16 working chips (518 of 1024, after
-    100 s of capture in total): ADC 31-80, chip medians 47.5 (VMM 10) to 60.5 (VMM 15), spread inside a chip about 3-9 ADC.
+    100 s of capture in total): median ADC 54; chip medians 47.5 (VMM 10) to 60.5 (VMM 15); channel values 16 to 80
+    (plus the outlier of obs. 30); spread inside a chip about 3-9 ADC; only 8 of the 518 channels are at or below 38.
     Coverage per chip 6-46 of 64; VMM 6 only 6, VMM 7 13. It grew at every step of the ladder (335, 337, 352, 426, 518
     channels), so more time at the high-rate steps (only 5-10 s of each 2 min file were analysed) would add more.
 30. **One abnormal channel:** VMM 16 ch 33 has a median neighbour ADC of 704 (1192 read-outs), against 31-69 for all
