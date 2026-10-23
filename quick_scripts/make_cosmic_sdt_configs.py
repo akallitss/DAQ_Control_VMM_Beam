@@ -88,7 +88,7 @@ def parse_template(lines):
     return idx, sdt, problems
 
 
-def render(lines, idx, new_sdt, masks):
+def render(lines, idx, new_sdt, masks, sng=False):
     out = list(lines)
     for chip, sdt in new_sdt.items():
         if not 0 <= sdt <= 1023:
@@ -111,18 +111,28 @@ def render(lines, idx, new_sdt, masks):
             for ch in sorted(masks[chip]):
                 out.append(f'Sys 0 Bec 0 Hyb {chip // 2} Vmm {chip % 2} '
                            f'Reg channel[{ch:02d}] Field sm   1\n')
+    if sng:
+        if out and not out[-1].endswith('\n'):
+            out[-1] += '\n'
+        out.append('\n')
+        out.append('# Neighbour read-out on (sng 1) on every detector chip: a channel is read out, with its\n')
+        out.append('# ADC value, when a neighbour fires, so below-threshold channels give a measured baseline\n')
+        for chip in CHIPS:
+            out.append(f'Sys 0 Bec 0 Hyb {chip // 2} Vmm {chip % 2} Reg bank1spi2   Field sng  1\n')
     return out
 
 
-def check_only_sdt_and_masks_differ(lines, out, n_masks):
+def check_only_sdt_and_masks_differ(lines, out, n_masks, n_sng=0):
     base = len(lines)
     for i, (a, b) in enumerate(zip(lines, out[:base])):
         if a != b and not SDT_RE.match(a.rstrip('\n')):
             raise SystemExit(f'line {i + 1} changed but is not an sdt line:\n{a}{b}')
     extra = out[base:]
-    bad = [l for l in extra if l.strip() and not l.startswith('#') and 'Field sm   1' not in l]
-    if bad or sum('Field sm   1' in l for l in extra) != n_masks:
-        raise SystemExit('appended lines are not exactly the requested sm 1 masks')
+    bad = [l for l in extra if l.strip() and not l.startswith('#')
+           and 'Field sm   1' not in l and 'Field sng  1' not in l]
+    if (bad or sum('Field sm   1' in l for l in extra) != n_masks
+            or sum('Field sng  1' in l for l in extra) != n_sng):
+        raise SystemExit('appended lines are not exactly the requested sm 1 masks / sng 1 lines')
 
 
 def main():
@@ -136,6 +146,9 @@ def main():
     ap.add_argument('--tag', default='', help='inserted in the file name: ..._cosmic<tag>_d<d>.txt '
                                           '(a different mask set or hold is a different label)')
     ap.add_argument('--hold', default='', help='chip=sdt,... held at an absolute sdt')
+    ap.add_argument('--chip-d', default='', help='chip:d,... a different d for these chips (instead of --d)')
+    ap.add_argument('--sng', action='store_true', help='append sng 1 (neighbour read-out) for every detector chip')
+    ap.add_argument('--label', default='', help='file name suffix instead of _d<d> (use with a single --d)')
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args()
 
@@ -146,6 +159,7 @@ def main():
     maskspec = json.load(open(a.masks)) if a.masks else {}
     ds = [int(x) for x in a.d.split(',')]
     hold = {int(k): int(v) for k, v in (x.split('=') for x in a.hold.split(',') if x)}
+    chip_d = {int(k): int(v) for k, v in (x.split(':') for x in a.chip_d.split(',') if x)}
 
     lines = open(a.template).readlines()
     idx, template_sdt, problems = parse_template(lines)
@@ -167,7 +181,7 @@ def main():
             if c in hold:
                 new[c] = hold[c]
             elif c in base:
-                dd = max(d, limits.get(c, 0))
+                dd = max(chip_d.get(c, d), limits.get(c, 0))
                 if dd != d:
                     held.append(f'{c}(d={dd})')
                 new[c] = base[c] + dd
@@ -175,9 +189,9 @@ def main():
                 new[c] = UNKNOWN_BASELINE_ABS[c]
         m = maskspec.get(str(d), maskspec.get('default', {}))
         masks = {int(c): [int(x) for x in chs] for c, chs in m.items()}
-        out = render(lines, idx, new, masks)
-        check_only_sdt_and_masks_differ(lines, out, sum(len(v) for v in masks.values()))
-        name = f'{stem}_cosmic{a.tag}_d{d}.txt'
+        out = render(lines, idx, new, masks, a.sng)
+        check_only_sdt_and_masks_differ(lines, out, sum(len(v) for v in masks.values()), len(CHIPS) if a.sng else 0)
+        name = f'{stem}_cosmic{a.tag}{a.label or f"_d{d}"}.txt'
         path = os.path.join(a.out, name)
         print(f'd={d:>3}: {name}  sdt ' + ' '.join(f'{c}:{new[c]}' for c in CHIPS)
               + (f'  | held at their limit: {" ".join(held)}' if held else '')
