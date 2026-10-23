@@ -198,3 +198,24 @@ vmm_daplxa did none of the work. 599 s of capture in total.
     level the threshold comparator acts on (the comparator has its own offset per channel, which the vmmsc
     "threshold above pedestal" measurement gives); coarse threshold steps; HV-on peaks against HV-off baselines. This weakens the
     reading of item 27 that a channel peaks at its ADC baseline.
+
+### Anatomy of the VMM 4 / 7 / 9 bursts (2026-10-23, first 400 MB of runs 1, 2, 24-27, run on lxplus)
+
+`quick_scripts/burst_anatomy.py`; result in `analysis_bursts/burst_anatomy.json`. Runs 1-2: HV on, VMM 4/9 held at sdt 400;
+runs 24-27: HV off, nothing masked, VMM 4/9 at d = 50, 40, 34, 30 (sdt 249 ... 229 / 241 ... 221).
+
+36. **The hot channel is stable inside a run and changes between runs.** In the 35-55 s of capture analysed, the share of each hot
+    channel is constant from one eighth of the capture to the next (e.g. VMM 4 ch 38/36 = 61/39 %, 63/37 %, ...). What changes is
+    the set between configurations: VMM 4: ch 49 (runs 1-2) -> ch 38 + 36 (run 24) -> ch 36 + 38 (runs 25-27); VMM 9: ch 41, 63, 33,
+    44, 42 (runs 1-2) -> ch 20 + 21 (run 24) -> ch 19 + 21 (run 25) -> ch 19 (runs 26-27); VMM 7: always ch 24. So the "walk" happens when the
+    chip is reconfigured (new apply, new threshold), not during a run. The active channels often sit next to each other
+    (36/38 around 37, 19/21 around 20, 20/21).
+37. **The burst hits have a narrow ADC and no pulse spectrum.** ADC 5th-95th percentile: VMM 4 ch 49 228-233 (width 5);
+    VMM 9 ch 41 232-241; HV-off runs: VMM 4 ch 38 104-111, ch 36 88-96 and 81-95; VMM 9 ch 20 82-92, ch 19 76-87; VMM 7 ch 24 83-101. These
+    values are close to a fixed number per run and much higher than the 45-65 ADC baselines of other channels; they
+    are ~230 at sdt 400 and 80-110 at sdt 220-250, so they move with the threshold setting.
+38. **The hits come at about the fastest rate the channel can fire.** Spacing between consecutive hits of the busiest channel inside a
+    packet, in 22.5 ns ticks: the most common value is 26-27 ticks (about 600 ns, 1.65 MHz) in several runs of VMM 4 and 9
+    (e.g. VMM 9 ch 20, run 24: 5th/50th/95th percentile 21/46/101 ticks), with secondary values near 50 and 95. Not a sharp oscillation
+    (only 1-12 % of the spacings within one tick of the mode). Looks like a channel that re-fires as soon as it can, i.e. an
+    input stuck at or above the threshold, not like random noise or pulses. Not tested beyond this.
