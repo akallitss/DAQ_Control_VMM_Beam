@@ -30,11 +30,13 @@ import json
 import os
 import sys
 
+import struct
+
 import numpy as np
-from scapy.all import PcapReader, UDP
 
 
 def decode_head(path, mb, tmp):
+    from scapy.all import PcapReader, UDP   # only the slow reader needs scapy
     with open(path, 'rb') as f, open(tmp, 'wb') as g:
         g.write(f.read(int(mb * 1e6)))
     chunks, t0, t1 = [], None, None
@@ -79,11 +81,77 @@ def decode_head(path, mb, tmp):
     return chunks, (t1 - t0) if t0 is not None else 0.0
 
 
+def decode_raw(path, mb):
+    """Fast reader: walks the pcapng blocks itself (no scapy, no temporary copy). mb = 0 reads the whole
+    file. Handles little-endian pcapng with Enhanced Packet Blocks, Ethernet (+ one VLAN tag) / IPv4 / UDP."""
+    limit = int(mb * 1e6) if mb else None
+    chunks, t0, t1, n = [], None, None, 0
+    bv, bc, ba, bo = [], [], [], []
+
+    def flush():
+        if bv:
+            chunks.append((np.concatenate(bv), np.concatenate(bc), np.concatenate(ba), np.concatenate(bo)))
+            for b in (bv, bc, ba, bo):
+                b.clear()
+
+    done = 0
+    with open(path, 'rb', buffering=16 << 20) as f:
+        head = f.read(12)
+        if len(head) < 12 or struct.unpack('<I', head[8:12])[0] != 0x1A2B3C4D:
+            raise SystemExit(f'{path}: not a little-endian pcapng file')
+        f.seek(0)
+        while True:
+            hdr = f.read(8)
+            if len(hdr) < 8:
+                break
+            btype, blen = struct.unpack('<II', hdr)
+            body = f.read(blen - 8)
+            if len(body) < blen - 8:
+                break                                   # truncated last block (file still being written)
+            done += blen
+            if limit and done > limit:
+                break
+            if btype != 6:                              # Enhanced Packet Block only
+                continue
+            _, ts_hi, ts_lo, caplen, _ = struct.unpack('<IIIII', body[:20])
+            data = body[20:20 + caplen]
+            off = 14
+            if data[12:14] == b'\x81\x00':
+                off = 18
+            elif data[12:14] != b'\x08\x00':
+                continue
+            if len(data) < off + 28 or data[off + 9] != 17:
+                continue
+            p = data[off + (data[off] & 0x0F) * 4 + 8:]
+            if len(p) < 22 or p[4:7] != b'VM3':
+                continue
+            t = ((ts_hi << 32) | ts_lo) * 1e-6
+            t0 = t if t0 is None else t0
+            t1 = t
+            nw = (len(p) - 22 + 5) // 6
+            b = np.frombuffer(p, dtype=np.uint8, count=6 * nw, offset=16).reshape(-1, 6).astype(np.uint32)
+            d1 = (b[:, 0] << 24) | (b[:, 1] << 16) | (b[:, 2] << 8) | b[:, 3]
+            d2 = (b[:, 4] << 8) | b[:, 5]
+            m = (d2 & 0x8000) != 0
+            if m.any():
+                d1, d2 = d1[m], d2[m]
+                bv.append(((d1 >> 22) & 0x1F).astype(np.uint8))
+                bc.append(((d2 >> 8) & 0x3F).astype(np.uint8))
+                ba.append(((d1 >> 12) & 0x3FF).astype(np.uint16))
+                bo.append(((d2 >> 14) & 1).astype(np.uint8))
+            n += 1
+            if n % 4000 == 0:
+                flush()
+    flush()
+    return chunks, (t1 - t0) if t0 is not None else 0.0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('pcap')
     ap.add_argument('out_dir')
-    ap.add_argument('--mb', type=float, default=100)
+    ap.add_argument('--mb', type=float, default=100, help='megabytes read from the start of each file (0 = whole file)')
+    ap.add_argument('--reader', choices=['raw', 'scapy'], default='raw')
     ap.add_argument('--min-nb', type=int, default=50, help='neighbour read-outs needed to call a channel covered')
     ap.add_argument('--shared', type=float, default=38, help='the single ADC baseline used for every channel so far')
     a = ap.parse_args()
@@ -95,7 +163,7 @@ def main():
     spans, cov_after = [], []
     files = [f for f in a.pcap.split(',') if f]
     for fi, path in enumerate(files):
-        chunks, span = decode_head(path, a.mb, tmp)
+        chunks, span = decode_raw(path, a.mb) if a.reader == 'raw' else decode_head(path, a.mb, tmp)
         spans.append(span)
         for v, c, ad, ot in chunks:
             key = v.astype(np.int64) * 64 + c.astype(np.int64)
@@ -135,7 +203,7 @@ def main():
         w = csv.writer(f)
         w.writerow(['vmm', 'ch', 'n_over', 'n_nb', 'adc_nb_median', 'adc_nb_mean', 'adc_nb_std', 'adc_over_median', 'first_file'])
         w.writerows(rows)
-    print(f'{len(files)} file(s): first {a.mb:g} MB of each, {span:.2f} s of capture in total')
+    print(f'{len(files)} file(s): ' + ('first %g MB of each' % a.mb if a.mb else 'whole files') + f', {span:.2f} s of capture in total')
     print(f'{"VMM":>4} {"hits":>10} {"nb %":>6} {"covered":>8} {"median":>7} {"min":>5} {"max":>5} {"std":>6} {"|med-shared|>3":>15}')
     for v in range(32):
         sl = slice(v * 64, v * 64 + 64)
