@@ -125,3 +125,32 @@ VMM 6 fixed at sdt 230.
     firmware/software seems to be heading there. Question for the developers: a CLI command (e.g.
     `--measure-channel-threshold`, all channels, all chips) or a Python binding for `Connector` and the
     measure commands?
+
+### HV-off scan (2026-10-23, runs 14-27; all six HV channels switched off by hand)
+
+Runs 14-23 = the same configs as the HV-on m2 scan (`..._m2hvoff_d<d>`), runs 24-27 = nothing masked
+(`..._m0hvoff_d50/40/34/30`). Tables: `analysis_noise_scan_hvoff/` (chip table, per-channel CSV,
+`hv_on_off_channels.csv` from `quick_scripts/compare_hv_noise.py`).
+
+23. **The electronics are silent at d=50 with HV off: 0.00 kHz on every chip**, against 0.04-0.13 kHz per
+    chip with HV on. The low-level rate in the HV-on scan therefore all comes from the detector side
+    (cosmics, chamber activity), none from the electronics.
+24. **The spread of the noise onset between chips is an electronics effect.** First d above 1 kHz with HV
+    off: VMM 7: 40; 15: 34; 12, 19: 27; 3, 13, 14, 17: 24; 18: 22; 8, 11, 16: 20; 10: 18; 5: 16; 2: not
+    reached; VMM 6 never fires. The ordering is the HV-on one, shifted 0-6 DAC later, so the chip-to-chip
+    spread of ~16 DAC remains with no voltage on the chambers.
+25. **The VMM 4, 7 and 9 bursts do not need HV.** Unmasked, HV off (kHz at d=50/40/34/30): VMM 4:
+    69 / 1709 / 383 / 33; VMM 9: 1101 / 144 / 857 / 423; VMM 7: 53 / 80 / 0.7 / 0.01. So they come from
+    the chip, hybrid or cable (VMM 4 = H2 Vmm 0, VMM 9 = H4 Vmm 1), not from the detector pads.
+26. **Channels still noisy with HV off (more than 1 kHz with HV on and at least half of that with HV off):**
+    VMM 12 (29 channels) and VMM 15 (31 channels) have wide sets, so a chip-wide electronics problem;
+    smaller sets on VMM 11 (ch 10, 19, 33, 38, 52), 13 (8 channels), 14 (ch 10, 11, 31, 32, 47, 55),
+    19 (ch 3, 11, 13, 18, 20, 24, 27, 53); single channels VMM 3 ch 37, 7 ch 23, 10 ch 22, 17 ch 32.
+    For every other chip the noisy channels disappear with the HV off: the pads or the gas.
+27. **Observation 21 explained (probably): the rate peaks at a channel's own baseline.** The same channel
+    rises and falls: VMM 7 ch 23 489 / 332 / 60 / 4.2 / 0.5 / 0.03 kHz from d=34 to d=20 (HV on; 566 / 269
+    kHz at d=34 / 30 with HV off); VMM 5 ch 46 0.6 / 7 / 62 / 181 / 416 kHz from d=30 to d=20, then gone at d=18
+    (ch 47 takes over at 0.2 kHz). A channel fires most when the threshold sits just above its baseline and
+    stops sending hits once the threshold is well below it (always over threshold, no new edges). So
+    these are single channels with a higher baseline than their chip, and the scan itself dates their
+    baselines. Not tested directly; the monitor-ADC read would confirm it.
