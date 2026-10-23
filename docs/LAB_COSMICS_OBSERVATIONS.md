@@ -154,3 +154,26 @@ Runs 14-23 = the same configs as the HV-on m2 scan (`..._m2hvoff_d<d>`), runs 24
     stops sending hits once the threshold is well below it (always over threshold, no new edges). So
     these are single channels with a higher baseline than their chip, and the scan itself dates their
     baselines. Not tested directly; the monitor-ADC read would confirm it.
+
+### Neighbour read-out (sng 1) baselines, HV off (2026-10-23, runs 28-32)
+
+`sng 1` on all detector chips (`Field sng 1`, register `bank1spi2`), HV declared off, VMM 4/9 fully masked and
+VMM 7 ch 24 masked as in the m2 scan. Run 28 = probe (per-chip thresholds guessed from the HV-off table); runs 29-32 =
+a ladder at 0 / -3 / -6 / -9 DAC from each chip's HV-off noise onset (VMM 6 at sdt 218/214/210/206), 2 min each.
+Analysis: `quick_scripts/neighbor_baseline.py` (first 800 MB of each capture); tables in `analysis_sng1_hvoff/`.
+
+28. **Neighbour read-out works as expected.** About two thirds of all hits (64-67 % on every chip) carry the
+    over-threshold flag 0 (hit word bit 14): two neighbours per firing channel. Their ADC is a direct measurement of the
+    channel at rest.
+29. **Measured baselines are not the shared 38.** Covered channels on the 16 working chips (518 of 1024, after
+    100 s of capture in total): ADC 31-80, chip medians 47.5 (VMM 10) to 60.5 (VMM 15), spread inside a chip about 3-9 ADC.
+    Coverage per chip 6-46 of 64; VMM 6 only 6, VMM 7 13. It grew at every step of the ladder (335, 337, 352, 426, 518
+    channels), so more time at the high-rate steps (only 5-10 s of each 2 min file were analysed) would add more.
+30. **One abnormal channel:** VMM 16 ch 33 has a median neighbour ADC of 704 (1192 read-outs), against 31-69 for all
+    other channels of that chip. Not explained (stuck channel, damaged input, different mode?).
+31. **Baseline vs position of the noise peak: weak positive trend.** Baselines (HV off) against the peak step d of the
+    HV-on noise scan (the HV-off scan does not reach its peaks within d = 50..16): Spearman +0.56 (10 channels, at
+    least 30 hits at the peak), +0.30 (32 channels, 10 hits), +0.35 (66 channels, 5 hits). Consistent with "a higher
+    baseline peaks at a higher threshold" (obs. 27) but not conclusive: few channels, coarse steps, low counts.
+32. **Data volume of the ladder:** 1.2 / 1.8 / 4.9 / 4.8 GB per minute at 0 / -3 / -6 / -9 DAC (run_31 and run_32:
+    9 GB each), about 25 GB in total with the probe. Hot channels, now with three times more hits each, dominate.
