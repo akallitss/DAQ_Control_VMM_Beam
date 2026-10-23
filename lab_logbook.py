@@ -38,6 +38,9 @@ from run_config_beam import BASE_DATA_DIR  # noqa: E402
 
 LOG_DIR = os.path.join(BASE_DATA_DIR, 'logbook')
 ENTRIES = os.path.join(LOG_DIR, 'entries.jsonl')
+# A copy of every run's run_config.json, kept next to the logbook: the pruner deletes old local runs once they are
+# on EOS, and the page is rebuilt from what is on disk, so without this the logbook would forget pruned runs.
+CACHE_DIR = os.path.join(LOG_DIR, 'run_config_cache')
 OUT = os.path.join(LOG_DIR, 'LOGBOOK.md')
 STATE = os.path.join(REPO, 'config', 'current_run_state.json')
 
@@ -87,6 +90,25 @@ def read_entries():
     return out
 
 
+def _cache_path(run):
+    return os.path.join(CACHE_DIR, f'{run}.json')
+
+
+def cache_run_config(run):
+    src = os.path.join(BASE_DATA_DIR, 'runs', run, 'run_config.json')
+    if os.path.exists(src):
+        try:
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            with open(src) as f:
+                txt = f.read()
+            json.loads(txt)
+            if not os.path.exists(_cache_path(run)) or open(_cache_path(run)).read() != txt:
+                with open(_cache_path(run), 'w') as g:
+                    g.write(txt)
+        except Exception:
+            pass
+
+
 def run_names():
     def key(p):
         n = os.path.basename(p)
@@ -94,18 +116,25 @@ def run_names():
             return int(n.rsplit('_', 1)[1])
         except Exception:
             return 10**9
-    return [os.path.basename(p) for p in sorted(
-        glob.glob(os.path.join(BASE_DATA_DIR, 'runs', 'run_*')), key=key)
-        if os.path.isdir(p)]
+    local = {os.path.basename(p) for p in glob.glob(os.path.join(BASE_DATA_DIR, 'runs', 'run_*')) if os.path.isdir(p)}
+    cached = {os.path.basename(p)[:-5] for p in glob.glob(os.path.join(CACHE_DIR, 'run_*.json'))}
+    return sorted(local | cached, key=lambda n: key(n))
 
 
 def run_block(run):
     rdir = os.path.join(BASE_DATA_DIR, 'runs', run)
+    pruned = not os.path.isdir(rdir)
+    cache_run_config(run)
     try:
-        cfg = json.load(open(os.path.join(rdir, 'run_config.json')))
+        cfg = json.load(open(_cache_path(run) if pruned else os.path.join(rdir, 'run_config.json')))
     except Exception:
         return ['(no run_config.json yet)']
     subs = cfg.get('sub_runs') or []
+    if pruned:
+        return [f"- started {cfg.get('start_time')}; plan `{cfg.get('run_plan')}`; measuring {cfg.get('beam_type')}",
+                f"- chip config: `{cfg.get('chip_config')}`",
+                f"- gas: {cfg.get('gas')}; sub-runs planned: {len(subs)} x {subs[0]['run_time'] if subs else '?'} min",
+                "- local data PRUNED (safe on EOS: .../p2_sps_july/vmm_cosmic_run_oct26/runs/" + run + "); completion and size not recorded here"]
     done = [s['sub_run_name'] for s in subs
             if os.path.exists(os.path.join(rdir, s['sub_run_name'], '.subrun_complete'))]
     nbytes = nfiles = 0
