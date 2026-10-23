@@ -191,7 +191,9 @@ vmm_daplxa did none of the work. 599 s of capture in total.
 34. **Three channels with a very high baseline:** VMM 16 ch 33 (704 ADC, 13582 read-outs), VMM 6 ch 14 (186, 66 read-outs),
     VMM 14 ch 34 (125, 85 read-outs). VMM 14 ch 34 is also one of the hottest channels in the noise scans. Not explained.
 35. **The ADC baseline does not predict where a channel's noise peaks.** With the whole captures: Spearman +0.43 (14 channels,
-    at least 30 hits at the peak), +0.32 (40, 10 hits), +0.17 (83, 5 hits); Pearson +0.07 / +0.08 / +0.02. The earlier
+    at least 30 hits at the peak), +0.32 (40, 10 hits), +0.17 (83, 5 hits); Pearson +0.07 / +0.08 / +0.02. Without the one
+    channel above 100 ADC (VMM 16 ch 33, which also stretches the axes): Spearman +0.48 / +0.33 / +0.17 on 13 / 39 / 82
+    channels, Pearson +0.11 / +0.21 / +0.04 (the figures in the note use these). The earlier
     "weak positive trend" (item 31) came from too few channels. Possible reasons, none tested: the ADC baseline is not the
     level the threshold comparator acts on (the comparator has its own offset per channel, which the vmmsc
     "threshold above pedestal" measurement gives); coarse threshold steps; HV-on peaks against HV-off baselines. This weakens the
