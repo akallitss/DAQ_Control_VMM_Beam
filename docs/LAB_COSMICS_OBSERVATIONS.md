@@ -172,9 +172,27 @@ Analysis: `quick_scripts/neighbor_baseline.py` (first 800 MB of each capture); t
     channels), so more time at the high-rate steps (only 5-10 s of each 2 min file were analysed) would add more.
 30. **One abnormal channel:** VMM 16 ch 33 has a median neighbour ADC of 704 (1192 read-outs), against 31-69 for all
     other channels of that chip. Not explained (stuck channel, damaged input, different mode?).
-31. **Baseline vs position of the noise peak: weak positive trend.** Baselines (HV off) against the peak step d of the
+31. **(superseded by item 35) Baseline vs position of the noise peak: weak positive trend.** Baselines (HV off) against the peak step d of the
     HV-on noise scan (the HV-off scan does not reach its peaks within d = 50..16): Spearman +0.56 (10 channels, at
     least 30 hits at the peak), +0.30 (32 channels, 10 hits), +0.35 (66 channels, 5 hits). Consistent with "a higher
     baseline peaks at a higher threshold" (obs. 27) but not conclusive: few channels, coarse steps, low counts.
 32. **Data volume of the ladder:** 1.2 / 1.8 / 4.9 / 4.8 GB per minute at 0 / -3 / -6 / -9 DAC (run_31 and run_32:
     9 GB each), about 25 GB in total with the probe. Hot channels, now with three times more hits each, dominate.
+
+### Whole captures analysed on lxplus (2026-10-23; supersedes the 800 MB heads of items 29-31)
+
+`neighbor_baseline.py` with its own pcapng reader (identical hit counts to the scapy version; 100 MB in 2 s) run on
+lxplus over the five whole captures read from the EOS backup (25 GB, about 8 minutes, low priority), so that
+vmm_daplxa did none of the work. 599 s of capture in total.
+
+33. **Coverage 627 of 1024 channels** on the 16 working chips (410, 410, 428, 528, 627 after the probe and each step; the
+    two lowest thresholds add the most). Per chip 13 (VMM 6) to 54 (VMM 12) of 64; VMM 7 has 18. Median baseline still 54 ADC;
+    chip medians 48.0 (VMM 10, 11) to 61.0 (VMM 6, 15); 10 of the 627 channels are at or below 38.
+34. **Three channels with a very high baseline:** VMM 16 ch 33 (704 ADC, 13582 read-outs), VMM 6 ch 14 (186, 66 read-outs),
+    VMM 14 ch 34 (125, 85 read-outs). VMM 14 ch 34 is also one of the hottest channels in the noise scans. Not explained.
+35. **The ADC baseline does not predict where a channel's noise peaks.** With the whole captures: Spearman +0.43 (14 channels,
+    at least 30 hits at the peak), +0.32 (40, 10 hits), +0.17 (83, 5 hits); Pearson +0.07 / +0.08 / +0.02. The earlier
+    "weak positive trend" (item 31) came from too few channels. Possible reasons, none tested: the ADC baseline is not the
+    level the threshold comparator acts on (the comparator has its own offset per channel, which the vmmsc
+    "threshold above pedestal" measurement gives); coarse threshold steps; HV-on peaks against HV-off baselines. This weakens the
+    reading of item 27 that a channel peaks at its ADC baseline.
