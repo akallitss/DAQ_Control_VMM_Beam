@@ -130,7 +130,7 @@ connected and at HV. Then compute the trim values (target ~ the trimmed σ 0.3 m
 Why baseline-relative steps and not a common sdt:
 
 - **A common sdt can flood the readout.** The chip baselines span sdt 180–212, so a common sdt of 200 is *below* the
-  baseline of VMM 2, 5, 10, 11, 12, 14 and 19. Those chips then fire continuously, which floods the link and fills the disk.
+  baseline of VMM 2, 5, 7, 10, 11, 12, 14 and 19. Those chips then fire continuously, which floods the link and fills the disk.
 - **The analysis uses d anyway**: the efficiency model is in DAC above baseline.
 - **Stop a chip at the first d where it turns noisy as a whole.** The July chip-wide noise floor was 17–20 VMM ADC above
   baseline at 4.5 mV/fC, i.e. ~19–22 DAC. Do not go further.
@@ -144,6 +144,7 @@ VMM  2:208  3:182  4:199*  5:212  6:???  7:200*  8:197  9:191*  10:210  11:204
 VMM 12:210 13:188 14:201  15:180 16:199 17:187 18:182  19:204
 * extrapolated from sdt 285-300 runs; VMM 6 had an ADC edge ~10, baseline unknown (start it at sdt 230 and step down
   in 5s while watching its rate). Replace all of these with the vmmsc pedestals of 5.0.
+  Systematic uncertainty ±6-8 DAC per chip (shared 38 ADC baseline and 0.9 slope); see Part 4 of the note.
 ```
 
 July settings for reference: chips 2, 3, 6, 8, 10, 11 and 13–18 at 230; 4 at 300; 5 at 245; 7 at 285; 9 at 300;
