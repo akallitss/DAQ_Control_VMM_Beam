@@ -16,8 +16,10 @@ Decode (same words as vmm_qa/vmm_pcapng_qa.parse_block): VM3 payload, 6-byte wor
 d1 = >I, d2 = >H, hit word when d2 bit 15 is set; vmm = d1>>22 & 0x1F; adc = d1>>12 & 0x3FF;
 channel = d2>>8 & 0x3F; over-threshold flag = d2>>14 & 1.
 
-Usage:  neighbor_baseline.py <file.pcapng> <out_dir> [--mb 100] [--min-nb 50] [--shared 38]
-Writes: <out_dir>/neighbor_baseline.csv   vmm,ch,n_over,n_nb,adc_nb_median,adc_nb_mean,adc_nb_std,adc_over_median
+Usage:  neighbor_baseline.py <file.pcapng[,file2.pcapng,...]> <out_dir> [--mb 100] [--min-nb 50] [--shared 38]
+        Several files (comma separated) are accumulated; the CSV then also says in which file each channel
+        was first covered (>= --min-nb neighbour read-outs), and the JSON gives the coverage after each file.
+Writes: <out_dir>/neighbor_baseline.csv   vmm,ch,n_over,n_nb,adc_nb_median,adc_nb_mean,adc_nb_std,adc_over_median,first_file
         <out_dir>/neighbor_baseline.json  per-chip summary
 and prints a per-chip table: hits, neighbour fraction, channels covered, spread of the baselines.
 """
@@ -87,15 +89,27 @@ def main():
     a = ap.parse_args()
     os.makedirs(a.out_dir, exist_ok=True)
     tmp = os.path.join(a.out_dir, '.head.pcapng')
-    chunks, span = decode_head(a.pcap, a.mb, tmp)
-    os.remove(tmp)
     H_nb = np.zeros((32 * 64, 1024), dtype=np.int64)
     H_ov = np.zeros((32 * 64, 1024), dtype=np.int64)
-    for v, c, ad, ot in chunks:
-        key = v.astype(np.int64) * 64 + c.astype(np.int64)
-        for H, sel in ((H_nb, ot == 0), (H_ov, ot == 1)):
-            if sel.any():
-                H += np.bincount(key[sel] * 1024 + ad[sel], minlength=32 * 64 * 1024).reshape(32 * 64, 1024)
+    first_file = np.full(32 * 64, -1, dtype=np.int64)
+    spans, cov_after = [], []
+    files = [f for f in a.pcap.split(',') if f]
+    for fi, path in enumerate(files):
+        chunks, span = decode_head(path, a.mb, tmp)
+        spans.append(span)
+        for v, c, ad, ot in chunks:
+            key = v.astype(np.int64) * 64 + c.astype(np.int64)
+            for H, sel in ((H_nb, ot == 0), (H_ov, ot == 1)):
+                if sel.any():
+                    H += np.bincount(key[sel] * 1024 + ad[sel], minlength=32 * 64 * 1024).reshape(32 * 64, 1024)
+        nb_now = H_nb.sum(axis=1)
+        newly = (nb_now >= a.min_nb) & (first_file < 0)
+        first_file[newly] = fi
+        cov_after.append({str(v): int((nb_now[v * 64:v * 64 + 64] >= a.min_nb).sum()) for v in range(32)
+                          if nb_now[v * 64:v * 64 + 64].sum() > 0})
+    span = sum(spans)
+    if os.path.exists(tmp):
+        os.remove(tmp)
     bins = np.arange(1024)
 
     def stats(H):
@@ -115,12 +129,13 @@ def main():
         v, c = divmod(k, 64)
         rows.append([v, c, int(n_ov[k]), int(n_nb[k]),
                      int(med_nb[k]) if n_nb[k] else '', round(float(mean_nb[k]), 2) if n_nb[k] else '',
-                     round(float(sd_nb[k]), 2) if n_nb[k] else '', int(med_ov[k]) if n_ov[k] else ''])
+                     round(float(sd_nb[k]), 2) if n_nb[k] else '', int(med_ov[k]) if n_ov[k] else '',
+                     int(first_file[k])])
     with open(os.path.join(a.out_dir, 'neighbor_baseline.csv'), 'w', newline='') as f:
         w = csv.writer(f)
-        w.writerow(['vmm', 'ch', 'n_over', 'n_nb', 'adc_nb_median', 'adc_nb_mean', 'adc_nb_std', 'adc_over_median'])
+        w.writerow(['vmm', 'ch', 'n_over', 'n_nb', 'adc_nb_median', 'adc_nb_mean', 'adc_nb_std', 'adc_over_median', 'first_file'])
         w.writerows(rows)
-    print(f'{a.pcap}: first {a.mb:g} MB, {span:.2f} s of capture')
+    print(f'{len(files)} file(s): first {a.mb:g} MB of each, {span:.2f} s of capture in total')
     print(f'{"VMM":>4} {"hits":>10} {"nb %":>6} {"covered":>8} {"median":>7} {"min":>5} {"max":>5} {"std":>6} {"|med-shared|>3":>15}')
     for v in range(32):
         sl = slice(v * 64, v * 64 + 64)
@@ -140,7 +155,8 @@ def main():
               f'{q["min"] if q["min"] is not None else "-":>5} {q["max"] if q["max"] is not None else "-":>5} '
               f'{q["std"] if q["std"] is not None else "-":>6} {q["n_far_from_shared"]:>15}')
     with open(os.path.join(a.out_dir, 'neighbor_baseline.json'), 'w') as f:
-        json.dump({'pcap': a.pcap, 'mb': a.mb, 'span_s': span, 'min_nb': a.min_nb, 'shared_adc': a.shared, 'per_vmm': per}, f, indent=1)
+        json.dump({'pcap': files, 'mb': a.mb, 'span_s': span, 'span_each_s': spans, 'min_nb': a.min_nb,
+                   'shared_adc': a.shared, 'covered_after_each_file': cov_after, 'per_vmm': per}, f, indent=1)
 
 
 if __name__ == '__main__':
