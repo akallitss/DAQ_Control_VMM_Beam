@@ -256,3 +256,25 @@ Block C (runs 48-56, sng 1): the same chips at d = 100, 60, 50, 40, 34, 27, 22, 
     themselves (obs. 37). Coverage is low because very few channels fire at all.
 46. **The first point of block A (d = 200, far above any baseline) already shows 2.7 MHz from VMM 9 and 0.8 MHz from VMM 7.** The burst is therefore not a threshold-crossing of
     ordinary noise. Combined with obs. 37 and 38 (fixed ADC, ~600 ns spacing) this looks like a state the channel input gets stuck in after configuration.
+
+### 24 Oct: HV ON measurements analysed (runs 57-75, on lxplus from EOS), and the access incident
+
+47. **Access incident, Fri 23 Oct 20:28 - Sat 24 Oct ~18:30.** SSSD's domain backend was killed by its own watchdog (22 Oct 20:03, 23 Oct 20:28; nss 22 Oct 18:51) and
+    `krb5_child: Matching credential not found` appears twice a day. From then on every login of the central account ak271430 failed with
+    `pam_sss ... received for user ak271430: 4 (System error)` (key and password), while the local account daqcontrol (key) worked. Machine up 47 days, clock 27 s behind
+    and NOT synchronised (timedatectl). Fixed by `sudo systemctl restart sssd` (by the user). The watchdog kills coincide with periods of heavy disk writing (run_75: 4.4 GB/min).
+    Related: my ssh used a multiplexed ControlMaster connection that died when the laptop changed network, so no login happened until a password was typed again.
+    The sequence launched Friday ended by itself at 20:24 (disk guard refused the 6th neighbour point), nothing was queued behind it, so no run was taken until Sat 18:33.
+48. **HV-on health check (run_57, 10 min, safe setting = HV-on onset + 8 DAC):** all 18 chips have hits (6-100 Hz per chip), broad spectra; det3 VMM 2,3,4,6,7 reach the ADC limit
+    (p90 = 1023), det2/det1 p90 500-850. Rates per chip are well above the expected cosmic rate (~4 Hz): mostly noise/background at that setting.
+49. **Neighbour read-out with cosmics, HV on (runs 71-75, 5 x 10 min, whole files 3000 s): 1123 of 1152 channels have a baseline (97 %), 14 of 18 chips complete** (667 before).
+    Median 51 ADC, 85 channels <= 38. On the 15 normal chips, channels measured with HV on and off (609): median difference +1.0, MAD 1.0, 70 % within 3 counts, 82 % within 5: HV does not move the baseline.
+    Only one channel of the 15 normal chips is above 80 ADC (VMM 16 ch 33, 704).
+50. **VMM 4, 7 and 9 each have a block of channels with a high baseline:** VMM 4 19 of 54 measured unmasked channels > 80 (from ch 40, median 191, max 352), VMM 7 29 of 51 (from ch 26, median 235, max 1023 at ch 50),
+    VMM 9 32 of 49 (from ch 23, median 135, max 223). The channels that burst (hot in >= 3 runs: VMM 4 34-39, VMM 7 22-25, VMM 9 15-27 + 33, 44) sit at the edge of the block.
+    With HV off the block channels that were measured were also high (6 of 7). Masked channels read 0 as neighbours.
+51. **The VMM 4/7/9 ladder with HV on (runs 58-70) vs HV off (runs 35-47), taken about an hour apart on Fri 23 Oct:** same configuration, same hot channel and rate within 2x (or both < 1 kHz) at
+    VMM 4: 8 of 13 thresholds (7 same, 1 quiet), VMM 7: 10 of 13 (5 same, 5 quiet), VMM 9: 5 of 13. Examples: VMM 4 d=40 1740 vs 1770 kHz ch 36; VMM 7 d=34 546 vs 547 kHz ch 23.
+    Differences at d = 34...27: with HV on the chips are noisier (VMM 4 d=30 85 kHz vs ~0), the chamber adding hits near the onset. So the burst state follows the threshold setting (re-applying a config an hour later
+    reproduces it at the high thresholds); direct repeat test with the same HV state still to do.
+52. **Rate of the lowest-threshold neighbour points:** run_74 (safe-12 DAC) 955 MB/min, run_75 (safe-16) 4447 MB/min (44 GB in 10 min), so the lab config_scan disk guard refused the next point (would leave 32 GB).
