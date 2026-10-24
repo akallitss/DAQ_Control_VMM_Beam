@@ -278,3 +278,17 @@ Block C (runs 48-56, sng 1): the same chips at d = 100, 60, 50, 40, 34, 27, 22, 
     Differences at d = 34...27: with HV on the chips are noisier (VMM 4 d=30 85 kHz vs ~0), the chamber adding hits near the onset. So the burst state follows the threshold setting (re-applying a config an hour later
     reproduces it at the high thresholds); direct repeat test with the same HV state still to do.
 52. **Rate of the lowest-threshold neighbour points:** run_74 (safe-12 DAC) 955 MB/min, run_75 (safe-16) 4447 MB/min (44 GB in 10 min), so the lab config_scan disk guard refused the next point (would leave 32 GB).
+
+### First look at muon coincidences in the reference run (run_76, 30 min, HV on, safe setting; analysed 24 Oct on lxplus)
+
+`quick_scripts/coincidence_check.py` and `event_multiplicity.py` (own pcapng reader; time = srs_timestamp*25 ns + (offset*4096+bcid+1)*22.5 ns - tdc*60/255, markers applied in stream order); results in `analysis_muons/`.
+
+53. **Over-threshold hit rates:** det3 285 Hz, det2 223 Hz, det1 407 Hz (all chips of the chamber together, 2000 s), 1.83 M hits.
+54. **Half of the hits are isolated singles and a quarter sit in huge simultaneous bursts.** Grouping hits with gaps > 100 ns: 1.07 M events, 955 701 of them a single hit (52 % of the hits); 1429 events with more than 36 hits
+    (0.71 Hz) carry 26 % of all hits (1038 events with 100-999 hits, 5 with more than 1000). These bursts, spread over many chips and chambers at the same time, give millions of fake pairs in a naive time
+    coincidence (3.7-6.3 M pairs per 25 ns bin between chambers, against a 4-10 k flat level), so they must be removed (multiplicity cut) before any track finding. Their origin is not known (discharges with the HV on, or electronic pick-up);
+    not yet compared with an HV-off run.
+55. **Muon-like events exist:** 1140 events with a hit in all three chambers, 645 of them with at most 12 hits per chamber (0.32 Hz = 19 per minute), median 1 hit per chamber; 6110 events with exactly two chambers
+    (at most 12 hits each). The expected 40 tracks per minute per chip is not reached (19 per minute for the whole stack in this first look; not corrected for the masked channels, cluster size or acceptance).
+56. **Time offsets between chambers in the muon-like events (first hit of each chamber):** det2-det3 median +0.0 ns, det1-det3 -7 ns, det1-det2 -5 ns; spread (robust) 36-43 ns, 10-90 % range about +-55 ns.
+    So no large constant offset between hybrids, and the time resolution (uncalibrated TDC) is ~40 ns: a coincidence window of +-100 ns is enough, and a narrower one would lose tracks.
