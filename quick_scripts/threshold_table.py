@@ -70,7 +70,7 @@ def main():
     chips = []
     for v in range(2, 20):
         if v in FIXED:
-            chips.append([v, 'fixed', FIXED[v], '', '', '', '', FIXED[v], 'VMM 6 was held at sdt 230 in every scan (silent with HV off, few hits with HV on): onset not measured'])
+            chips.append([v, 'fixed', '', '', '', '', '', FIXED[v], 'VMM 6 was held at sdt 230 in every scan (silent with HV off, few hits with HV on): onset not measured'])
             continue
         if v in (4, 7, 9):
             # Only the smooth rise below the burst region is a noise onset (chips' hot-channel bursts are threshold independent).
