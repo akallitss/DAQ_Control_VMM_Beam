@@ -292,3 +292,15 @@ Block C (runs 48-56, sng 1): the same chips at d = 100, 60, 50, 40, 34, 27, 22, 
     (at most 12 hits each). The expected 40 tracks per minute per chip is not reached (19 per minute for the whole stack in this first look; not corrected for the masked channels, cluster size or acceptance).
 56. **Time offsets between chambers in the muon-like events (first hit of each chamber):** det2-det3 median +0.0 ns, det1-det3 -7 ns, det1-det2 -5 ns; spread (robust) 36-43 ns, 10-90 % range about +-55 ns.
     So no large constant offset between hybrids, and the time resolution (uncalibrated TDC) is ~40 ns: a coincidence window of +-100 ns is enough, and a narrower one would lose tracks.
+
+### Weekend runs (24-25 Oct, HV on, gain 4.5): reference run, threshold scan, interleaved long run (analysed on lxplus from EOS; `event_multiplicity.py`, per-run json in `analysis_muons/per_run/`)
+
+57. **Reference run complete and stable.** 16 x 30 min (`run_76`-`run_91`, 8 h), safe setting; all complete, 152-158 MB each (5 MB/min), no guard trip. Muon-like events (hit in all three chambers, at most 12 per chamber)
+    20.8 +- 1.1 per minute for the stack, first four runs 20.4, last four 20.4: flat. But the total hit rate rose from 914 to 1431 hits/s over the 8 h (+57 %) and the large bursts (> 36 hits) from 0.71 to 1.24 Hz
+    (burst share of the hits 26-31 %), while the muon-like rate did not move. Cause unknown (chamber conditions, temperature, gas?); this is why the long run is interleaved.
+58. **Threshold scan with tracks, proxy yield (muon-like events per minute, stack):** safe+16 13.0, safe+8 15.8, safe 20.8, safe-4 22.1, safe-8 468.6. Burst share of the hits 27, 27, ~29, 13, 1 %. The yield rises 22 %, 27 %, 6 % per step from safe+16 down to safe-4, then explodes
+    at safe-8 (46 500 hits/s, 7.8 Hz of "muon-like" events), where noise coincidences dominate. This is a proxy, not an efficiency (it mixes muons and chance coincidences); the usable range ends between safe-4 and safe-8.
+    Data volume: 315, 315, 343, 1360 MB per hour (the safe-8 point 23 MB/min).
+59. **Timing between chambers is stable over 8 h:** medians of the first hit per chamber within -11 and +1 ns, spread 35-48 ns in every reference run.
+60. **Interleaved long run started Sun 25 Oct 13:22** (up to 48 x 30 min): safe+8, safe, safe-4, safe-6 in rotation (configs `_thrhvon_p8`, `_safehvon_v1`, `_thrhvon_m4`, `_thrhvon_m6`), user stops it. Safe-8 left out (noise coincidences);
+    safe-6 added to find where the noise starts between -4 and -8.
