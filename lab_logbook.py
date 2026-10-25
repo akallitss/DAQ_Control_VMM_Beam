@@ -42,6 +42,8 @@ ENTRIES = os.path.join(LOG_DIR, 'entries.jsonl')
 # on EOS, and the page is rebuilt from what is on disk, so without this the logbook would forget pruned runs.
 CACHE_DIR = os.path.join(LOG_DIR, 'run_config_cache')
 OUT = os.path.join(LOG_DIR, 'LOGBOOK.md')
+# Hand-written overview (groups of runs, glossary), put at the top of every render when present.
+OVERVIEW = os.path.join(LOG_DIR, 'OVERVIEW.md')
 STATE = os.path.join(REPO, 'config', 'current_run_state.json')
 
 # chamber -> (station, channels as wired 2026-10-22)
@@ -192,6 +194,9 @@ def render():
     out = ['# Lab logbook — cosmic-muon threshold scan', '',
            f'Rebuilt {now()} from `{BASE_DATA_DIR}`. Manual entries: `logbook/entries.jsonl`. '
            'HV is NOT read by the DAQ: only the HV entries below record it.', '']
+    if os.path.isfile(OVERVIEW):
+        with open(OVERVIEW) as f:
+            out += [f.read().rstrip('\n'), '']
     for run in run_names():
         out += [f'## {run}', ''] + run_block(run) + ['']
         if by_run.get(run):
