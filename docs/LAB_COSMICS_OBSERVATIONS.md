@@ -92,7 +92,7 @@ Setup: ALINX/FEC at 192.168.0.12, hybrids H1-H9 (VMM 2-19), data NIC enp4s0f1, `
 
 ### Noise scan result (2026-10-22, run_4..run_13, m2 configs, d = 50..16 above the assumed baselines)
 
-Per-chip hit rate in kHz from the first 40 MB of each point (`quick_scripts/noise_scan_summary.py`;
+Per-chip hit rate in kHz from the first 40 MB of each point (`cosmic_vmm_analysis/noise_scan_summary.py`;
 table and per-channel CSV in `analysis_noise_scan/` of the campaign dir). VMM 4 and 9 fully masked,
 VMM 6 fixed at sdt 230.
 
@@ -130,7 +130,7 @@ VMM 6 fixed at sdt 230.
 
 Runs 14-23 = the same configs as the HV-on m2 scan (`..._m2hvoff_d<d>`), runs 24-27 = nothing masked
 (`..._m0hvoff_d50/40/34/30`). Tables: `analysis_noise_scan_hvoff/` (chip table, per-channel CSV,
-`hv_on_off_channels.csv` from `quick_scripts/compare_hv_noise.py`).
+`hv_on_off_channels.csv` from `cosmic_vmm_analysis/compare_hv_noise.py`).
 
 23. **The electronics are silent at d=50 with HV off: 0.00 kHz on every chip**, against 0.04-0.13 kHz per
     chip with HV on. The low-level rate in the HV-on scan therefore all comes from the detector side
@@ -160,7 +160,7 @@ Runs 14-23 = the same configs as the HV-on m2 scan (`..._m2hvoff_d<d>`), runs 24
 `sng 1` on all detector chips (`Field sng 1`, register `bank1spi2`), HV declared off, VMM 4/9 fully masked and
 VMM 7 ch 24 masked as in the m2 scan. Run 28 = probe (per-chip thresholds guessed from the HV-off table); runs 29-32 =
 a ladder at 0 / -3 / -6 / -9 DAC from each chip's HV-off noise onset (VMM 6 at sdt 218/214/210/206), 2 min each.
-Analysis: `quick_scripts/neighbor_baseline.py` (first 800 MB of each capture); tables in `analysis_sng1_hvoff/`.
+Analysis: `cosmic_vmm_analysis/neighbor_baseline.py` (first 800 MB of each capture); tables in `analysis_sng1_hvoff/`.
 
 28. **Neighbour read-out works as expected.** About two thirds of all hits (64-67 % on every chip) carry the
     over-threshold flag 0 (hit word bit 14): two neighbours per firing channel. Their ADC is a direct measurement of the
@@ -201,7 +201,7 @@ vmm_daplxa did none of the work. 599 s of capture in total.
 
 ### Anatomy of the VMM 4 / 7 / 9 bursts (2026-10-23, first 400 MB of runs 1, 2, 24-27, run on lxplus)
 
-`quick_scripts/burst_anatomy.py`; result in `analysis_bursts/burst_anatomy.json`. Runs 1-2: HV on, VMM 4/9 held at sdt 400;
+`cosmic_vmm_analysis/burst_anatomy.py`; result in `analysis_bursts/burst_anatomy.json`. Runs 1-2: HV on, VMM 4/9 held at sdt 400;
 runs 24-27: HV off, nothing masked, VMM 4/9 at d = 50, 40, 34, 30 (sdt 249 ... 229 / 241 ... 221).
 
 36. **The hot channel is stable inside a run and changes between runs.** In the 35-55 s of capture analysed, the share of each hot
@@ -281,7 +281,7 @@ Block C (runs 48-56, sng 1): the same chips at d = 100, 60, 50, 40, 34, 27, 22, 
 
 ### First look at muon coincidences in the reference run (run_76, 30 min, HV on, safe setting; analysed 24 Oct on lxplus)
 
-`quick_scripts/coincidence_check.py` and `event_multiplicity.py` (own pcapng reader; time = srs_timestamp*25 ns + (offset*4096+bcid+1)*22.5 ns - tdc*60/255, markers applied in stream order); results in `analysis_muons/`.
+`cosmic_vmm_analysis/coincidence_check.py` and `event_multiplicity.py` (own pcapng reader; time = srs_timestamp*25 ns + (offset*4096+bcid+1)*22.5 ns - tdc*60/255, markers applied in stream order); results in `analysis_muons/`.
 
 53. **Over-threshold hit rates:** det3 285 Hz, det2 223 Hz, det1 407 Hz (all chips of the chamber together, 2000 s), 1.83 M hits.
 54. **Half of the hits are isolated singles and a quarter sit in huge simultaneous bursts.** Grouping hits with gaps > 100 ns: 1.07 M events, 955 701 of them a single hit (52 % of the hits); 1429 events with more than 36 hits
