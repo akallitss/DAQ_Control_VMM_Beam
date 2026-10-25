@@ -304,3 +304,22 @@ Block C (runs 48-56, sng 1): the same chips at d = 100, 60, 50, 40, 34, 27, 22, 
 59. **Timing between chambers is stable over 8 h:** medians of the first hit per chamber within -11 and +1 ns, spread 35-48 ns in every reference run.
 60. **Interleaved long run started Sun 25 Oct 13:22** (up to 48 x 30 min): safe+8, safe, safe-4, safe-6 in rotation (configs `_thrhvon_p8`, `_safehvon_v1`, `_thrhvon_m4`, `_thrhvon_m6`), user stops it. Safe-8 left out (noise coincidences);
     safe-6 added to find where the noise starts between -4 and -8.
+
+### Are there muon tracks? Tag-and-probe, channel order, orientation (25 Oct, runs 76-108; `cosmic_vmm_analysis/`, results in `analysis_muons/`)
+
+Stand (user, 25 Oct): chambers lying flat (perpendicular to their beam orientation), SPS z spacing, same channels, Samtec 2 m cables instead of Hitachi; no external trigger.
+
+61. **Chamber-level tag-and-probe is not an efficiency here.** `tag_and_probe.py` (outer chambers tag, det2 probe, no geometry): det2 0.52-0.58 at safe (16 repeats), 0.49-0.50 at safe+8/+16, 0.36 at safe-4,
+    0.04 at safe-8 -- the drop at low threshold is fake tags (noise in both outer chambers), and the ~0.55 "plateau" counts any det2 hit anywhere. Not usable to choose the threshold.
+62. **With the SPS pad map, hits do not line up as tracks.** `tag_and_probe_pads.py` (method of `sps_beam_analysis/22_tag_probe_efficiency.py`): det2 efficiency 3.6 % with a det2 hit in time in 63 % of the tags.
+    Map-independent checks (`muon_signal_check.py`): narrow time-coincidence peaks between all chamber pairs (~100 ns wide, also with ADC > 150), but spread over all chip pairs, not on facing chips; ADC of
+    three-chamber hits (median ~150) not higher than lone hits; same-chip hit pairs are mostly electronic neighbours (|dch| 1-4), and the map routes consecutive strips to pads ~100-170 mm apart by design.
+63. **Channel order / orientation (`orientation_check.py`, as cosmic_bench 02/03):** no wiring among 40 per connector (half orders, half swap, odd/even interleave) beats the SPS map on held-out events
+    (fraction of single-hit three-chamber events with det2 within 30 mm of the det3-det1 midpoint: SPS 0.136, best fit 0.154 on the fit half but 0.121 on the test half, shuffled 0.069). The SPS P2_IN ribbon
+    overrides (Hitachi) are not favoured with Samtec. Rotation scan: neighbouring chambers correlate at -26 deg (about the sector azimuth), i.e. only in phi -- the chip/sector correlation of shared noise.
+    No mirror. Large bursts (> 36 hits, 0.7-0.9 Hz, ~190 hits, ~0.8 us) spread evenly over all chips (~6 % each), mostly det3 and det2, centroid always mid-detector: not tracks.
+64. **No measurable muon signal at any setting.** `straight_track_rate.py`: groups with a straight (det3, det2, det1) triplet minus chance, with det2 channels shuffled inside their chip (keeps the chip-level noise
+    correlation): safe 16 +- 6 per hour (19 runs, 10.6 h), safe+16 21 +- 14, safe+8 13 +- 8, safe-4 13 +- 10, safe-6 54 +- 22, safe-8 ~920 per hour. The low-threshold excess is a fixed noise pattern, not muons:
+    10 pad combinations carry 45-60 % of it (VMM 5 ch 46 + VMM 11 ch 10 + VMM 19 ch 20 alone 546 of 2443 in run_95; VMM 3 ch 43 + VMM 11 ch 10 + VMM 18/19). Expected for muons through the stack
+    (~0.05 m2 per chamber, 62 cm lever arm): of order 1 Hz x efficiency^3, i.e. thousands per hour. So the chambers see few or no cosmic muons above noise at these settings; the threshold cannot be chosen by
+    efficiency until a signal is there. Open: HV values and gas at the lab vs SPS (gas still UNCONFIRMED), a source (Fe55) test to see signals and check the map in the same go.
