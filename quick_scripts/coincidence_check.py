@@ -31,7 +31,8 @@ def gray(g):
     return b
 
 
-def read_times(path, state):
+def read_times(path, state, with_adc=False):
+    """yields per packet (vmm, t_ns, ch) arrays, plus adc as a 4th array when with_adc."""
     tick = 1e-9
     out = []
     with open(path, 'rb', buffering=16 << 20) as f:
@@ -93,7 +94,10 @@ def read_times(path, state):
             v = hv[sel]
             t = srs_h * 25.0 + chip
             ok = srs_h > 0
-            out.append((v[ok], t[ok], ((d2[sel] >> 8) & 0x3F)[ok].astype(np.int64)))
+            rec = (v[ok], t[ok], ((d2[sel] >> 8) & 0x3F)[ok].astype(np.int64))
+            if with_adc:
+                rec += (((d1[sel] >> 12) & 0x3FF)[ok].astype(np.int64),)
+            out.append(rec)
     return out
 
 
