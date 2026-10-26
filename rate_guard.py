@@ -70,24 +70,24 @@ def total_bytes(run):
     return t
 
 
-def culprits(run, mb=60):
-    """Chips / channels carrying the data in the first MB of the newest capture (best effort)."""
+def culprits(run, max_packets=3000):
+    """Chips / channels carrying the data in the first packets of the newest capture (best effort).
+
+    Uses the DAQ's own decoder (vmm_qa/vmm_stations.parse_pcapng): the fast one it used before moved out to
+    P2_basket_analysis/cosmic_vmm_analysis on 2026-10-25, which is not deployed on the DAQ machine."""
     try:
-        from quick_scripts.neighbor_baseline import decode_raw
-        files = sorted(run_files(run), key=os.path.getmtime)
-        chunks, span = decode_raw(files[-1], mb)
+        sys.path.insert(0, os.path.join(REPO, 'vmm_qa'))
+        from vmm_stations import parse_pcapng
         import numpy as np
-        cnt = {}
-        for v, c, ad, ot in chunks:
-            for vv in np.unique(v):
-                m = v == vv
-                cnt.setdefault(int(vv), np.zeros(64, dtype=np.int64))
-                cnt[int(vv)] += np.bincount(c[m], minlength=64)
-        tot = sum(int(a.sum()) for a in cnt.values()) or 1
+        files = sorted(run_files(run), key=os.path.getmtime)
+        hits, _meta = parse_pcapng(files[-1], max_packets=max_packets)
+        hits = hits[hits['over_threshold'] == 1]
+        tot = len(hits) or 1
         out = []
-        for vv, a in sorted(cnt.items(), key=lambda kv: -kv[1].sum())[:3]:
+        for vv, n in hits['vmm'].value_counts().head(3).items():
+            a = np.bincount(hits.loc[hits['vmm'] == vv, 'ch'].to_numpy(dtype=np.int64), minlength=64)
             top = np.argsort(-a)[:4]
-            out.append({'vmm': vv, 'share_pct': round(100 * a.sum() / tot, 1), 'top_channels': [int(x) for x in top if a[x]]})
+            out.append({'vmm': int(vv), 'share_pct': round(100 * n / tot, 1), 'top_channels': [int(x) for x in top if a[x]]})
         return out
     except Exception as e:
         return [f'could not decode: {e}']
@@ -122,6 +122,14 @@ def main():
         if strikes:
             log(f'{run}: {rate:.0f} MB/min > {a.max_mb_min:g} (strike {strikes}/{a.strikes})')
         if strikes >= a.strikes:
+            # Stop first: the culprit decode and the logbook note take seconds and must not delay the stop.
+            stop_msg = 'dry run: not stopped'
+            if not a.dry_run:
+                try:
+                    req = urllib.request.Request(a.flask + '/stop_run', data=b'{}', headers={'Content-Type': 'application/json'})
+                    stop_msg = 'stop_run -> ' + urllib.request.urlopen(req, timeout=30).read().decode()[:120]
+                except Exception as e:
+                    stop_msg = f'stop_run FAILED: {e}'
             info = {'time': time.strftime('%Y-%m-%d %H:%M:%S'), 'run': run, 'rate_mb_min': round(rate), 'limit_mb_min': a.max_mb_min,
                     'culprits_in_newest_capture': culprits(run), 'dry_run': a.dry_run}
             try:
@@ -129,18 +137,13 @@ def main():
             except Exception:
                 pass
             log('TRIPPED: ' + json.dumps(info))
+            log(stop_msg)
             try:
                 subprocess.run([sys.executable, os.path.join(REPO, 'lab_logbook.py'), 'note',
                                 f'RATE GUARD tripped on {run}: {rate:.0f} MB/min (limit {a.max_mb_min:g}); culprits {info["culprits_in_newest_capture"]}'],
                                capture_output=True, timeout=30)
             except Exception:
                 pass
-            if not a.dry_run:
-                try:
-                    req = urllib.request.Request(a.flask + '/stop_run', data=b'{}', headers={'Content-Type': 'application/json'})
-                    log('stop_run -> ' + urllib.request.urlopen(req, timeout=30).read().decode()[:120])
-                except Exception as e:
-                    log(f'stop_run FAILED: {e}')
             hist, strikes = [], 0
             time.sleep(120)       # let the run stop before judging again
 
