@@ -80,7 +80,9 @@ def culprits(run, max_packets=3000):
         from vmm_stations import parse_pcapng
         import numpy as np
         files = sorted(run_files(run), key=os.path.getmtime)
-        hits, _meta = parse_pcapng(files[-1], max_packets=max_packets)
+        # the newest file can be one just opened (272 B header only): take the newest with real data
+        full = [f for f in files if os.path.getsize(f) > 1_000_000]
+        hits, _meta = parse_pcapng((full or sorted(files, key=os.path.getsize))[-1], max_packets=max_packets)
         hits = hits[hits['over_threshold'] == 1]
         tot = len(hits) or 1
         out = []
