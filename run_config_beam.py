@@ -533,6 +533,15 @@ P2_VMM_CABLING = {
     'P2_MID': {'c4': (4, 8, 9),   'c5': (5, 10, 11), 'c6': (6, 12, 13)},
     'P2_OUT': {'c4': (7, 14, 15), 'c5': (8, 16, 17), 'c6': (9, 18, 19)},
 }
+if SITE == 'lab':
+    # 2026-10-26 (Alexandra): lab cosmics, all three chambers re-cabled one
+    # connector down: c3-c5 instead of c4-c6 (runs 1-111 were c4-c6). Hybrid and
+    # VMM numbering unchanged (H1-H3 IN, H4-H6 MID, H7-H9 OUT).
+    P2_VMM_CABLING = {
+        'P2_IN':  {'c3': (1, 2, 3),   'c4': (2, 4, 5),   'c5': (3, 6, 7)},
+        'P2_MID': {'c3': (4, 8, 9),   'c4': (5, 10, 11), 'c5': (6, 12, 13)},
+        'P2_OUT': {'c3': (7, 14, 15), 'c4': (8, 16, 17), 'c5': (9, 18, 19)},
+    }
 
 # Which cable hangs off each connector. The hybrid/VMM numbering above does not
 # change when a cable is swapped, so without this a cable change leaves NO trace
@@ -564,6 +573,8 @@ if SITE == 'lab':
     CABLING_NOTE = ('2026-10-22 lab cosmics: SAMPTEC 2m on every connector c4-c6 of '
                     'P2_IN / P2_MID / P2_OUT (the beam reference run_46 was all '
                     'HITACHI 2m). Electronics (H1-H9, ALINX) unchanged from the beam test.')
+    CABLING_NOTE += (' From 2026-10-26 (after run_111) the chambers are read out on '
+                     'connectors c3-c5 instead of c4-c6 (same hybrids/VMMs).')
 
 
 def _cable(det, connector):
