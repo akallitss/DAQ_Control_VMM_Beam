@@ -647,6 +647,15 @@ def live_status():
            "setup": p2cfg.P2_SETUP, "available": p2cfg.p2_available()[0],
            "sources": p2cfg.live_sources(), "default_source": p2cfg.LIVE_SOURCE,
            "udp_address": p2cfg.LIVE_UDP_ADDRESS}
+    # the DAQ's run state, so the tab can tell "run starting, no data yet"
+    # (HV/LV handshake + acquisition on take ~40 s after Start) from "no run"
+    try:
+        run_state = get_daq_control_status().get("status")
+    except Exception:
+        run_state = None
+    out["run_state"] = run_state
+    out["run_active"] = (run_state is not None
+                         and run_state not in ("WAITING", "Run Complete", "ERROR"))
     try:
         out["file_age_s"] = round(time.time() - os.path.getmtime(p2cfg.LIVE_STATUS_PATH), 1)
         with open(p2cfg.LIVE_STATUS_PATH) as f:
