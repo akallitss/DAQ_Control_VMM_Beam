@@ -50,6 +50,8 @@ Config keys (see vmm_processor_config.py to generate the JSON):
   memory_kill_pct / max_attempts / cpu_nice / cpu_affinity / threads
   stall_timeout_s     : kill a decode whose store stops growing (default 300)
   hard_timeout_s      : absolute cap on one decode (default 3600)
+  engine, worker_args : 'legacy' (vmm_reduce.py) or 'p2' (p2-monitor-reduce,
+                        same calling convention); extra worker arguments
 """
 
 import json
@@ -220,6 +222,8 @@ def run_watcher(config: dict):
                         cmd.append('--drop-columns')
                     if calibration:
                         cmd += ['--calibration', str(calibration)]
+                    # engine-specific options (p2: the p2-mapping setup)
+                    cmd += [str(a) for a in config.get('worker_args', [])]
 
                     t0 = time.time()
                     ok, reason = wc.run_monitored(

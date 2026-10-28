@@ -33,6 +33,7 @@ from daq_status import (get_vmm_daq_status, get_hv_control_status,
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Add parent dir to path
 from run_config_beam import Config, BASE_DATA_DIR, SITE, IS_BEAM_SITE
+import p2_readout_config as p2cfg
 from get_run_events import get_total_events_for_run
 from monitor import DaqMonitor, fetch_chat_id, get_bot_username
 # NXCALS SPS beam-intensity watcher constants (the watcher process owns the Spark
@@ -591,6 +592,68 @@ def stop_processor():
         return jsonify({"success": True, "message": "Processor stopped"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Live tab: one `p2-monitor live` process (tmux vmm_live, p2-readout venv) that
+# follows the newest sub-run and writes config/live_status.json every poll.
+# Flask only starts/stops it and reads that file: no decoding in this process.
+# ---------------------------------------------------------------------------
+LIVE_PNGS = ("rate_map.png", "channel_rates.png", "level_rates.png")
+
+
+def _tmux_running(name):
+    return subprocess.run(["tmux", "has-session", "-t", name],
+                          capture_output=True).returncode == 0
+
+
+@app.route("/live/start", methods=["POST"])
+def live_start():
+    ok, why = p2cfg.p2_available()
+    if not ok:
+        return jsonify({"success": False, "message": f"Live monitor unavailable: {why}"}), 500
+    try:
+        subprocess.run(["tmux", "kill-session", "-t", p2cfg.LIVE_TMUX], capture_output=True)
+        os.makedirs(p2cfg.LIVE_PNG_DIR, exist_ok=True)
+        subprocess.Popen(["tmux", "new-session", "-d", "-s", p2cfg.LIVE_TMUX]
+                         + p2cfg.live_command())
+        return jsonify({"success": True, "message": "Live monitor started"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/live/stop", methods=["POST"])
+def live_stop():
+    subprocess.run(["tmux", "kill-session", "-t", p2cfg.LIVE_TMUX], capture_output=True)
+    return jsonify({"success": True, "message": "Live monitor stopped"})
+
+
+@app.route("/live/status")
+def live_status():
+    """The monitor's last live_status.json, whether it runs, and how old the file is."""
+    out = {"running": _tmux_running(p2cfg.LIVE_TMUX), "status": None, "file_age_s": None,
+           "options": p2cfg.LIVE_OPTIONS, "setup": p2cfg.P2_SETUP,
+           "available": p2cfg.p2_available()[0]}
+    try:
+        out["file_age_s"] = round(time.time() - os.path.getmtime(p2cfg.LIVE_STATUS_PATH), 1)
+        with open(p2cfg.LIVE_STATUS_PATH) as f:
+            out["status"] = json.load(f)
+    except (OSError, ValueError):
+        pass
+    pngs = {}
+    for name in LIVE_PNGS:
+        p = os.path.join(p2cfg.LIVE_PNG_DIR, name)
+        if os.path.isfile(p):
+            pngs[name] = int(os.path.getmtime(p))
+    out["pngs"] = pngs
+    return jsonify(out)
+
+
+@app.route("/live/png/<name>")
+def live_png(name):
+    if name not in LIVE_PNGS:
+        abort(404)
+    return send_from_directory(p2cfg.LIVE_PNG_DIR, name, max_age=0)
 
 
 @app.route("/start_qa", methods=["POST"])

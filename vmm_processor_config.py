@@ -86,6 +86,33 @@ CONFIG = {
     'threads':          4,   # numpy/BLAS thread cap
 }
 
+# --- decode engine -----------------------------------------------------------
+# p2_readout_config.PROCESSOR_ENGINE picks the worker. 'p2' swaps only the
+# worker (p2-monitor-reduce from the p2-readout venv, with the site's p2-mapping
+# setup); the watcher, and with it every guard above, stays the same. It gets
+# its own state file, so switching engines or running both side by side never
+# makes one skip captures the other has done.
+import p2_readout_config as p2cfg  # noqa: E402
+
+CONFIG['engine'] = p2cfg.PROCESSOR_ENGINE
+if p2cfg.PROCESSOR_ENGINE == 'p2':
+    _ok, _why = p2cfg.p2_available()
+    if not _ok:
+        raise SystemExit(f'processor engine p2 selected but unusable: {_why}')
+    CONFIG.update({
+        'python': p2cfg.P2_PYTHON,
+        'worker': f'{p2cfg.P2_BIN}/p2-monitor-reduce',
+        # --mapping-optional: a capture whose time no cabling entry covers is
+        # still reduced (electronics view) instead of failing every attempt
+        'worker_args': ['--setup', p2cfg.P2_SETUP, '--mapping-optional'],
+        'store_inner_dir': p2cfg.P2_STORE_INNER,
+        'keep_columns': p2cfg.P2_KEEP_COLUMNS,
+        'state_file': os.path.join(DAQ_REPO_DIR, 'config', 'processor_state_p2.json'),
+    })
+elif p2cfg.PROCESSOR_ENGINE != 'legacy':
+    raise SystemExit(f"unknown processor engine {p2cfg.PROCESSOR_ENGINE!r} "
+                     "(expected 'legacy' or 'p2')")
+
 if __name__ == '__main__':
     out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             'config', 'processor_config.json')

@@ -49,6 +49,12 @@ DEFAULTS = {
         # The decode worker is the other heavy, restartable job: the processor
         # re-queues a killed file on the next poll, exactly as qa_watcher does.
         "vmm_reduce.py",
+        # The p2 readout packages (p2_readout_config.py): the p2 engine's
+        # processor worker, the GUI Live tab's monitor, and reduces started by
+        # `p2-monitor watch`. All restartable; none takes data.
+        "p2-monitor-reduce",
+        "p2_monitor.cli live",
+        "p2_monitor.cli reduce",
     ],
     # Safety veto: never kill the live DAQ, its watchers, or the guardian itself,
     # even if a substring above happened to match part of their command line.

@@ -4,6 +4,10 @@
     "vmm_pcapng_qa.py",
     "vmm_hybrid_pcapng_monitoring.py",
     "/local/p2/p2soft/",
-    "/local/p2/DAQ_Control_VMM_Beam/vmm_qa/"
-  ]
+    "/local/p2/DAQ_Control_VMM_Beam/vmm_qa/",
+    "p2-monitor-reduce",
+    "p2_monitor.cli live",
+    "p2_monitor.cli reduce"
+  ],
+  "_comment_p2": "p2-monitor-reduce is the p2 engine's processor worker (re-queued by the watcher when killed); 'p2_monitor.cli live' is the GUI Live tab's monitor (restart from the tab); 'p2_monitor.cli reduce' covers reduces started by p2-monitor watch. All restartable, none part of data taking."
 }

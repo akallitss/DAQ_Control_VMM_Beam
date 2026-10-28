@@ -599,6 +599,68 @@
 </div>
 
 <!-- Disk Space Tab -->
+<div class="tab-pane fade" id="live">
+  <div class="panel mb-3">
+    <div class="panel-header">
+      <span class="panel-title">Live</span>
+      <span class="panel-header-note">Hit rates from the capture being written, every few
+        seconds (p2-monitor live, tmux <code>vmm_live</code>). Rates are over the last
+        <span id="live-window">–</span> s of data; under a flood the monitor samples and
+        says how much it read.</span>
+    </div>
+    <div class="panel-body">
+      <div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+        <button id="live-toggle" class="btn btn-info btn-sm">Start Live</button>
+        <span id="live-state" class="badge bg-secondary">–</span>
+        <span id="live-following" class="text-muted" style="font-size:0.85rem;"></span>
+      </div>
+      <div id="live-figures" class="mt-3" style="display:flex; gap:2rem; flex-wrap:wrap; font-size:0.9rem;"></div>
+      <div id="live-note" class="text-muted mt-2" style="font-size:0.8rem;"></div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="panel h-100">
+        <div class="panel-header"><span class="panel-title">Per detector and connector</span></div>
+        <div class="panel-body">
+          <div class="table-responsive">
+            <table class="table table-dark table-sm align-middle mb-0">
+              <thead><tr><th>Where</th><th class="text-end">Rate</th><th class="text-end">Hz/cm²</th>
+                <th class="text-end">Live ch.</th><th class="text-end">Hottest ch.</th></tr></thead>
+              <tbody id="live-phys"><tr><td colspan="5" class="text-muted">No data yet</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="panel h-100">
+        <div class="panel-header"><span class="panel-title">Per FEC, hybrid and chip</span>
+          <span class="panel-header-note">chip = FEC:VMM</span></div>
+        <div class="panel-body">
+          <div class="table-responsive" style="max-height:420px; overflow-y:auto;">
+            <table class="table table-dark table-sm align-middle mb-0">
+              <thead><tr><th>Where</th><th class="text-end">Rate</th>
+                <th class="text-end">Live ch.</th><th class="text-end">Hottest ch.</th></tr></thead>
+              <tbody id="live-elec"><tr><td colspan="4" class="text-muted">No data yet</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel mt-3">
+    <div class="panel-header"><span class="panel-title">Rate plots</span>
+      <span class="panel-header-note" id="live-png-note">redrawn every
+        <span id="live-plot-every">–</span> s while the monitor runs</span></div>
+    <div class="panel-body" id="live-pngs">
+      <div class="text-muted">No plots yet</div>
+    </div>
+  </div>
+</div>
+
 <div class="tab-pane fade" id="disk-space">
   <div class="panel mb-3">
     <div class="panel-header">
@@ -3255,6 +3317,121 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
   const dsTab = document.querySelector('a[href="#disk-space"]');
   if (dsTab) dsTab.addEventListener("shown.bs.tab", loadUsage);
   setMode("free");
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Live tab: reads /live/status (the p2-monitor live process's JSON); polls only
+// while the tab is shown.
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const pane = $("live");
+  let running = null;
+
+  function si(v, unit) {
+    if (v === null || v === undefined || isNaN(v)) return "–";
+    const steps = [[1e9, "G"], [1e6, "M"], [1e3, "k"], [1, ""]];
+    for (const [f, p] of steps) if (Math.abs(v) >= f) return (v / f).toPrecision(3) + " " + p + unit;
+    return v === 0 ? "0 " + unit : v.toPrecision(3) + " " + unit;
+  }
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+  function ageBadge(age) {
+    if (age === null || age === undefined) return '<span class="badge bg-secondary">no data</span>';
+    const cls = age < 15 ? "bg-success" : age < 60 ? "bg-warning text-dark" : "bg-danger";
+    const txt = age < 120 ? age.toFixed(0) + " s" : age < 7200 ? (age / 60).toFixed(0) + " min"
+              : (age / 3600).toFixed(1) + " h";
+    return `<span class="badge ${cls}">newest data ${txt} ago</span>`;
+  }
+
+  function rows(obj, areal) {
+    return Object.entries(obj || {}).map(([k, v]) => `<tr><td>${esc(k)}</td>
+      <td class="text-end">${si(v.rate_hz, "Hz")}</td>
+      ${areal ? `<td class="text-end">${v.rate_hz_per_cm2 !== undefined ? v.rate_hz_per_cm2.toPrecision(3) : "–"}</td>` : ""}
+      <td class="text-end">${v.live_channels}/${v.channels}</td>
+      <td class="text-end">${si(v.max_channel_rate_hz, "Hz")}</td></tr>`).join("");
+  }
+  function group(title, cols) {
+    return `<tr><td colspan="${cols}" class="text-muted" style="font-size:0.75rem; padding-top:0.6rem;">${title}</td></tr>`;
+  }
+
+  function render(d) {
+    running = d.running;
+    const btn = $("live-toggle");
+    btn.textContent = running ? "Stop Live" : "Start Live";
+    btn.className = running ? "btn btn-outline-secondary btn-sm" : "btn btn-info btn-sm";
+    btn.disabled = !d.available && !running;
+    $("live-state").className = "badge " + (running ? "bg-success" : "bg-secondary");
+    $("live-state").textContent = running ? "running" : (d.available ? "stopped" : "p2 venv missing");
+    $("live-window").textContent = d.options ? d.options.window : "–";
+    $("live-plot-every").textContent = d.options ? d.options.plot_every : "–";
+
+    const s = d.status;
+    if (!s) {
+      $("live-following").textContent = "";
+      $("live-figures").innerHTML = "";
+      $("live-note").textContent = running ? "Waiting for the first poll…" : "";
+      return;
+    }
+    $("live-following").innerHTML = s.capture
+      ? `${esc(s.run || "")} / ${esc(s.subrun || "")} / ${esc(s.capture)} · setup ${esc(s.setup || d.setup || "–")}`
+      : `waiting for captures in ${esc(s.raw_dir)}`;
+    const v = s.volume || {}, sm = s.sampling || {};
+    const frac = sm.fraction_read;
+    const figs = [
+      ageBadge(s.data_age_s),
+      `<span><b>${si(v.hits_per_s, "hits/s")}</b></span>`,
+      `<span><b>${v.mb_per_min_udp !== undefined ? v.mb_per_min_udp.toPrecision(3) : "–"}</b> MB/min</span>`,
+      `<span>${(s.hits_total || 0).toLocaleString()} hits since start</span>`,
+      frac !== null && frac !== undefined && frac < 1
+        ? `<span class="badge bg-warning text-dark">sampling: ${(100 * frac).toFixed(frac < 0.1 ? 1 : 0)} % of data read</span>` : "",
+      sm.memory_events ? `<span class="badge bg-danger">memory limit hit ${sm.memory_events}×</span>` : "",
+    ];
+    $("live-figures").innerHTML = figs.filter(Boolean).join("");
+    $("live-note").textContent = (d.file_age_s !== null && running && d.file_age_s > 30)
+      ? `The monitor has not written for ${d.file_age_s} s.` : "";
+
+    const r = s.rates || {};
+    $("live-phys").innerHTML = r.per_detector
+      ? group("detectors", 5) + rows(r.per_detector, true) + group("connectors", 5) + rows(r.per_connector, true)
+      : `<tr><td colspan="5" class="text-muted">No mapping (setup) or no data</td></tr>`;
+    $("live-elec").innerHTML = r.per_fec
+      ? group("FECs", 4) + rows(r.per_fec, false)
+        + (r.per_hybrid ? group("hybrids", 4) + rows(r.per_hybrid, false) : "")
+        + group("chips (FEC:VMM)", 4) + rows(r.per_chip, false)
+      : `<tr><td colspan="4" class="text-muted">No data yet</td></tr>`;
+
+    const names = Object.keys(d.pngs || {});
+    $("live-pngs").innerHTML = names.length
+      ? names.map(n => `<img src="/live/png/${n}?t=${d.pngs[n]}" class="img-fluid mb-3" alt="${n}"
+                          style="background:#fcfcfb; border-radius:6px; display:block;">`).join("")
+      : '<div class="text-muted">No plots yet</div>';
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch("/live/status");
+      render(await res.json());
+    } catch (e) { /* server busy: next poll */ }
+  }
+
+  $("live-toggle").addEventListener("click", async () => {
+    if (running) {
+      if (!confirm("Stop the live monitor?")) return;
+      const d = await (await fetch("/live/stop", { method: "POST" })).json();
+      showPopup(d.message, "#6c757d");
+    } else {
+      const d = await (await fetch("/live/start", { method: "POST" })).json();
+      showPopup(d.message, d.success ? "#17a2b8" : "#dc3545");
+    }
+    setTimeout(poll, 800);
+  });
+
+  const tab = document.querySelector('a[href="#live"]');
+  if (tab) tab.addEventListener("shown.bs.tab", poll);
+  setInterval(() => { if (pane.classList.contains("active")) poll(); }, 5000);
 })();
 </script>
 

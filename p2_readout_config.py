@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Where the P2 readout packages live and how the DAQ uses them.
+
+The packages (p2-decode, p2-mapping, p2-monitor; github.com/akallitss) are
+installed in their own venv, NOT in this repo's .venv, so installing or
+updating them can never change the numpy/pandas the DAQ runs on:
+
+    /local/p2/p2-readout/venv      the packages and their dependencies
+    /local/p2/p2-readout/wheels    the wheelhouse they were installed from
+    /local/p2/p2-readout/src       the tagged sources (for their tests)
+
+The box's network to GitHub/PyPI is unreliable, so updates go through the
+wheelhouse: build wheels on a machine with network, copy them in, then
+    venv/bin/pip install --no-index --no-deps --find-links wheels p2-monitor==X
+
+Two users here:
+  * the processor (vmm_processor_config.py): ENGINE 'p2' runs
+    p2-monitor-reduce as the watcher's worker instead of vmm_qa/vmm_reduce.py,
+    under the same guards (memory kill, stall/hard timeouts, nice/ionice,
+    thread cap, oom_score_adj, mem_guardian);
+  * the GUI's Live tab (flask_app/app.py): one `p2-monitor live` process in
+    tmux session vmm_live, following the newest sub-run.
+
+@author: Alexandra Kallitsopoulou
+"""
+
+import os
+
+from run_config_beam import BASE_DATA_DIR, SITE
+
+P2_READOUT_DIR = '/local/p2/p2-readout'
+P2_PYTHON = f'{P2_READOUT_DIR}/venv/bin/python'
+P2_BIN = f'{P2_READOUT_DIR}/venv/bin'
+
+# p2-mapping setup per DAQ site: cabling, detectors and their dates
+P2_SETUPS = {
+    'lab': 'lab_saclay_2026',
+    'sps': 'sps_h4_2026',
+}
+P2_SETUP = P2_SETUPS.get(SITE)
+
+# --- processor -------------------------------------------------------------
+# 'legacy' = vmm_qa/vmm_reduce.py (this repo's venv); 'p2' = p2-monitor-reduce.
+# Stays 'legacy' until the p2 engine has been validated on this box.
+PROCESSOR_ENGINE = 'legacy'
+# Where the p2 engine writes its stores. 'hits_store' replaces the legacy
+# output; 'hits_store_p2' lets both run side by side for a comparison.
+P2_STORE_INNER = 'hits_store'
+# Keep the per-hit columns? They cost ~3.4x the capture on disk and triple the
+# reduce time on this box (1.1 GB capture: 36 s without, 114 s with); the
+# histograms and scalars are the permanent record and the columns can be
+# regenerated from the pcapng.
+P2_KEEP_COLUMNS = False
+
+# --- live monitor (GUI Live tab) -------------------------------------------
+LIVE_TMUX = 'vmm_live'
+REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+LIVE_STATUS_PATH = f'{REPO_DIR}/config/live_status.json'
+LIVE_PNG_DIR = f'{REPO_DIR}/live_png'
+LIVE_RUNS_DIR = f'{BASE_DATA_DIR}runs'
+# None of these assume a data rate: they bound the monitor's own work and
+# memory per poll, so a flood makes it sample, not fall behind or grow.
+LIVE_OPTIONS = {
+    'window': 60,           # s of data the rates are averaged over
+    'interval': 5,          # s between polls
+    'max_read_mb': 16,      # read per poll at most
+    'max_behind_mb': 64,    # skip to the newest data beyond this backlog
+    'rss_limit_mb': 600,    # shed the window above this own memory
+    'oom_score_adj': 500,   # first to go under memory pressure, as other restartable jobs
+    'plot_every': 60,       # s between PNG redraws
+    'nice': 19,
+}
+
+
+def p2_available():
+    """(ok, reason): is the p2 venv there with p2-monitor installed?"""
+    if not os.path.isfile(P2_PYTHON):
+        return False, f'no p2 venv at {P2_PYTHON}'
+    if not os.path.isfile(f'{P2_BIN}/p2-monitor'):
+        return False, f'p2-monitor not installed in {P2_BIN}'
+    if not P2_SETUP:
+        return False, f'no p2-mapping setup for site {SITE!r} (add it to P2_SETUPS)'
+    return True, ''
+
+
+def live_command():
+    """argv of the live monitor, run under nice in its tmux session."""
+    o = LIVE_OPTIONS
+    return ['nice', '-n', str(o['nice']), P2_PYTHON, '-m', 'p2_monitor.cli', 'live',
+            LIVE_RUNS_DIR, '--follow-newest', '--setup', P2_SETUP,
+            '--out', LIVE_STATUS_PATH, '--plot-dir', LIVE_PNG_DIR,
+            '--plot-every', str(o['plot_every']), '--window', str(o['window']),
+            '--interval', str(o['interval']), '--max-read-mb', str(o['max_read_mb']),
+            '--max-behind-mb', str(o['max_behind_mb']),
+            '--rss-limit-mb', str(o['rss_limit_mb']),
+            '--oom-score-adj', str(o['oom_score_adj'])]

@@ -1,6 +1,12 @@
 # Credentials / local config with secrets
 config/monitor_config.json
 
+# Live monitor output (p2_readout_config.py) and the p2 processor's state
+config/live_status.json
+config/.live_status.json.tmp
+config/processor_state_p2.json
+live_png/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
