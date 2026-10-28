@@ -43,8 +43,11 @@ P2_SETUP = P2_SETUPS.get(SITE)
 
 # --- processor -------------------------------------------------------------
 # 'legacy' = vmm_qa/vmm_reduce.py (this repo's venv); 'p2' = p2-monitor-reduce.
-# Stays 'legacy' until the p2 engine has been validated on this box.
-PROCESSOR_ENGINE = 'legacy'
+# 'p2' since 2026-10-28, after validation on the lab DAQ box: identical
+# counts.npz and scalars to the legacy reduce on run_124 and run_123 captures,
+# 9x faster on the 255 MB flood file (24 s vs 223 s). Set 'legacy' to go back
+# (legacy imports vmm_decode from /local/p2/p2soft/vmm-analysis via a .pth).
+PROCESSOR_ENGINE = 'p2'
 # Where the p2 engine writes its stores. 'hits_store' replaces the legacy
 # output; 'hits_store_p2' lets both run side by side for a comparison.
 P2_STORE_INNER = 'hits_store'
