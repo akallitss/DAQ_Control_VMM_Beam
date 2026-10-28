@@ -77,6 +77,23 @@ LIVE_OPTIONS = {
     'nice': 19,
 }
 
+# Where the live monitor reads from: 'file' follows the capture dumpcap writes;
+# 'udp' reads the FEC's stream from the data NIC itself (dumpcap still gets
+# every packet: the kernel delivers each datagram to both). The GUI's Live tab
+# can pick either at start; this is the default.
+LIVE_SOURCE = 'file'
+# The FEC's destination (data NIC address and port), per site. Measured on the
+# lab box on 2026-10-28: 192.168.1.13:6006 -> 192.168.1.16:6006, nothing else
+# bound to 6006.
+LIVE_UDP_ADDRESS = {
+    'lab': '192.168.1.16:6006',
+}.get(SITE)
+# A socket buffer holds only ~4 MB, so the network reader polls more often with
+# a smaller read: about the same CPU budget as the file reader (~3-4 MB/s
+# decoded at most), but moderate rates are read completely. What it cannot
+# read, the kernel drops and counts; rates are scaled by the fraction read.
+LIVE_UDP_OPTIONS = {**LIVE_OPTIONS, 'interval': 1, 'max_read_mb': 4}
+
 
 def p2_available():
     """(ok, reason): is the p2 venv there with p2-monitor installed?"""
@@ -89,14 +106,26 @@ def p2_available():
     return True, ''
 
 
-def live_command():
+def live_sources():
+    """The live sources usable on this site."""
+    return ['file'] + (['udp'] if LIVE_UDP_ADDRESS else [])
+
+
+def live_command(source=None):
     """argv of the live monitor, run under nice in its tmux session."""
-    o = LIVE_OPTIONS
-    return ['nice', '-n', str(o['nice']), P2_PYTHON, '-m', 'p2_monitor.cli', 'live',
-            LIVE_RUNS_DIR, '--follow-newest', '--setup', P2_SETUP,
-            '--out', LIVE_STATUS_PATH, '--plot-dir', LIVE_PNG_DIR,
-            '--plot-every', str(o['plot_every']), '--window', str(o['window']),
-            '--interval', str(o['interval']), '--max-read-mb', str(o['max_read_mb']),
-            '--max-behind-mb', str(o['max_behind_mb']),
-            '--rss-limit-mb', str(o['rss_limit_mb']),
-            '--oom-score-adj', str(o['oom_score_adj'])]
+    source = source or LIVE_SOURCE
+    if source not in live_sources():
+        raise ValueError(f'live source {source!r} not available on site {SITE!r} '
+                         f'(have {live_sources()})')
+    o = LIVE_UDP_OPTIONS if source == 'udp' else LIVE_OPTIONS
+    where = (['--udp', LIVE_UDP_ADDRESS] if source == 'udp'
+             else [LIVE_RUNS_DIR, '--follow-newest',
+                   '--max-behind-mb', str(o['max_behind_mb'])])
+    return (['nice', '-n', str(o['nice']), P2_PYTHON, '-m', 'p2_monitor.cli', 'live']
+            + where +
+            ['--setup', P2_SETUP,
+             '--out', LIVE_STATUS_PATH, '--plot-dir', LIVE_PNG_DIR,
+             '--plot-every', str(o['plot_every']), '--window', str(o['window']),
+             '--interval', str(o['interval']), '--max-read-mb', str(o['max_read_mb']),
+             '--rss-limit-mb', str(o['rss_limit_mb']),
+             '--oom-score-adj', str(o['oom_score_adj'])])

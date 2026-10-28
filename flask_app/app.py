@@ -612,12 +612,23 @@ def live_start():
     ok, why = p2cfg.p2_available()
     if not ok:
         return jsonify({"success": False, "message": f"Live monitor unavailable: {why}"}), 500
+    source = (request.get_json(silent=True) or {}).get("source") or p2cfg.LIVE_SOURCE
+    try:
+        cmd = p2cfg.live_command(source)
+    except ValueError as e:
+        return jsonify({"success": False, "message": str(e)}), 400
     try:
         subprocess.run(["tmux", "kill-session", "-t", p2cfg.LIVE_TMUX], capture_output=True)
         os.makedirs(p2cfg.LIVE_PNG_DIR, exist_ok=True)
-        subprocess.Popen(["tmux", "new-session", "-d", "-s", p2cfg.LIVE_TMUX]
-                         + p2cfg.live_command())
-        return jsonify({"success": True, "message": "Live monitor started"})
+        # the previous source's numbers must not show under the new one
+        for p in [p2cfg.LIVE_STATUS_PATH] + [os.path.join(p2cfg.LIVE_PNG_DIR, n)
+                                             for n in LIVE_PNGS]:
+            if os.path.exists(p):
+                os.remove(p)
+        subprocess.Popen(["tmux", "new-session", "-d", "-s", p2cfg.LIVE_TMUX] + cmd)
+        where = (f"the network ({p2cfg.LIVE_UDP_ADDRESS})" if source == "udp"
+                 else "the capture files")
+        return jsonify({"success": True, "message": f"Live monitor started, reading {where}"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -632,8 +643,10 @@ def live_stop():
 def live_status():
     """The monitor's last live_status.json, whether it runs, and how old the file is."""
     out = {"running": _tmux_running(p2cfg.LIVE_TMUX), "status": None, "file_age_s": None,
-           "options": p2cfg.LIVE_OPTIONS, "setup": p2cfg.P2_SETUP,
-           "available": p2cfg.p2_available()[0]}
+           "options": p2cfg.LIVE_OPTIONS, "udp_options": p2cfg.LIVE_UDP_OPTIONS,
+           "setup": p2cfg.P2_SETUP, "available": p2cfg.p2_available()[0],
+           "sources": p2cfg.live_sources(), "default_source": p2cfg.LIVE_SOURCE,
+           "udp_address": p2cfg.LIVE_UDP_ADDRESS}
     try:
         out["file_age_s"] = round(time.time() - os.path.getmtime(p2cfg.LIVE_STATUS_PATH), 1)
         with open(p2cfg.LIVE_STATUS_PATH) as f:

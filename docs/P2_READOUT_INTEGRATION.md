@@ -56,6 +56,19 @@ Measured on this box with run_120's 1.1 GB flood capture already on disk: a cold
 start read 1.5 % of it (16.6 MB) in 4.1 s with 235 MB peak memory and reported
 ~1550 MB/min.
 
+### Reading from the network instead of the file
+
+The tab's source selector offers "from the network port" where the site has
+`LIVE_UDP_ADDRESS` (lab: `192.168.1.16:6006`, the FEC's destination). The
+monitor then binds a plain UDP socket on that address and decodes the FEC's
+datagrams directly, without waiting for dumpcap to write them. dumpcap is not
+affected: the kernel gives every datagram both to its capture and to this
+socket. It polls every second and decodes at most 4 MB per poll
+(`LIVE_UDP_OPTIONS`); what it cannot read, the kernel drops for this socket only
+and counts. The tab's "sampling" badge shows the fraction of packets decoded,
+and all rates and MB/min are scaled to the full stream by it. The same scaling
+now applies when the file reader skips ahead under a flood.
+
 ## Guards
 
 - `mem_guardian`: `p2-monitor-reduce`, `p2_monitor.cli live` and

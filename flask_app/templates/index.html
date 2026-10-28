@@ -610,6 +610,11 @@
     </div>
     <div class="panel-body">
       <div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+        <select id="live-source" class="form-select form-select-sm" style="width:auto;"
+                title="Where the live monitor reads the data">
+          <option value="file">from the capture files</option>
+          <option value="udp">from the network port</option>
+        </select>
         <button id="live-toggle" class="btn btn-info btn-sm">Start Live</button>
         <span id="live-state" class="badge bg-secondary">–</span>
         <span id="live-following" class="text-muted" style="font-size:0.85rem;"></span>
@@ -3367,6 +3372,14 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
     $("live-state").textContent = running ? "running" : (d.available ? "stopped" : "p2 venv missing");
     $("live-window").textContent = d.options ? d.options.window : "–";
     $("live-plot-every").textContent = d.options ? d.options.plot_every : "–";
+    const sel = $("live-source");
+    if (!sel.dataset.init) {                     // offer only what this site has
+      [...sel.options].forEach(o => { o.disabled = !(d.sources || ["file"]).includes(o.value); });
+      if (d.udp_address) sel.options[1].textContent = `from the network port (${d.udp_address})`;
+      sel.value = d.default_source || "file";
+      sel.dataset.init = "1";
+    }
+    sel.disabled = !!running;
 
     const s = d.status;
     if (!s) {
@@ -3375,18 +3388,22 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
       $("live-note").textContent = running ? "Waiting for the first poll…" : "";
       return;
     }
-    $("live-following").innerHTML = s.capture
+    const isUdp = (s.source || "").startsWith("udp");
+    if (isUdp) $("live-source").value = "udp";
+    $("live-following").innerHTML = isUdp
+      ? `network ${esc(s.source.replace("udp://", ""))} · setup ${esc(s.setup || d.setup || "–")}`
+      : s.capture
       ? `${esc(s.run || "")} / ${esc(s.subrun || "")} / ${esc(s.capture)} · setup ${esc(s.setup || d.setup || "–")}`
       : `waiting for captures in ${esc(s.raw_dir)}`;
     const v = s.volume || {}, sm = s.sampling || {};
-    const frac = sm.fraction_read;
+    const frac = sm.window_fraction !== undefined ? sm.window_fraction : sm.fraction_read;
     const figs = [
       ageBadge(s.data_age_s),
       `<span><b>${si(v.hits_per_s, "hits/s")}</b></span>`,
       `<span><b>${v.mb_per_min_udp !== undefined ? v.mb_per_min_udp.toPrecision(3) : "–"}</b> MB/min</span>`,
       `<span>${(s.hits_total || 0).toLocaleString()} hits since start</span>`,
       frac !== null && frac !== undefined && frac < 1
-        ? `<span class="badge bg-warning text-dark">sampling: ${(100 * frac).toFixed(frac < 0.1 ? 1 : 0)} % of data read</span>` : "",
+        ? `<span class="badge bg-warning text-dark" title="Rates are scaled to the full stream">sampling: ${(100 * frac).toFixed(frac < 0.1 ? 1 : 0)} % of packets decoded</span>` : "",
       sm.memory_events ? `<span class="badge bg-danger">memory limit hit ${sm.memory_events}×</span>` : "",
     ];
     $("live-figures").innerHTML = figs.filter(Boolean).join("");
@@ -3423,7 +3440,9 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
       const d = await (await fetch("/live/stop", { method: "POST" })).json();
       showPopup(d.message, "#6c757d");
     } else {
-      const d = await (await fetch("/live/start", { method: "POST" })).json();
+      const d = await (await fetch("/live/start", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: $("live-source").value }) })).json();
       showPopup(d.message, d.success ? "#17a2b8" : "#dc3545");
     }
     setTimeout(poll, 800);
