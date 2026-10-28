@@ -52,10 +52,11 @@ PROCESSOR_ENGINE = 'p2'
 # output; 'hits_store_p2' lets both run side by side for a comparison.
 P2_STORE_INNER = 'hits_store'
 # Keep the per-hit columns? They cost ~3.4x the capture on disk and triple the
-# reduce time on this box (1.1 GB capture: 36 s without, 114 s with); the
-# histograms and scalars are the permanent record and the columns can be
-# regenerated from the pcapng.
-P2_KEEP_COLUMNS = False
+# reduce time on this box (1.1 GB capture: 36 s without, 114 s with), but the
+# Online QA plots need them: qa_watcher runs vmm_qa/vmm_pcapng_qa.py on each
+# store, which loads the columns (dropping them made every QA job fail,
+# 2026-10-28). Keep True until the QA plots are drawn from counts.npz.
+P2_KEEP_COLUMNS = True
 
 # --- live monitor (GUI Live tab) -------------------------------------------
 LIVE_TMUX = 'vmm_live'
