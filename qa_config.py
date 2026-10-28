@@ -75,6 +75,18 @@ CONFIG = {
     'qa_threads':        4,          # numpy/BLAS thread cap; null = len(cpu_affinity)
 }
 
+# p2 engine: plots from the stored histograms (p2-monitor-qa, same file names
+# and events.json), cheap enough for every capture. See p2_readout_config.py.
+import p2_readout_config as p2cfg  # noqa: E402
+
+if p2cfg.P2_QA:
+    CONFIG.update({
+        'qa_python': p2cfg.P2_PYTHON,
+        'qa_script': f'{p2cfg.P2_BIN}/p2-monitor-qa',
+        'store_inner_dir': p2cfg.P2_STORE_INNER,
+        'plot_policy': p2cfg.P2_QA_PLOT_POLICY,
+    })
+
 if __name__ == '__main__':
     out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', 'qa_config.json')
     os.makedirs(os.path.dirname(out_path), exist_ok=True)

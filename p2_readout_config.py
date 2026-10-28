@@ -52,11 +52,21 @@ PROCESSOR_ENGINE = 'p2'
 # output; 'hits_store_p2' lets both run side by side for a comparison.
 P2_STORE_INNER = 'hits_store'
 # Keep the per-hit columns? They cost ~3.4x the capture on disk and triple the
-# reduce time on this box (1.1 GB capture: 36 s without, 114 s with), but the
-# Online QA plots need them: qa_watcher runs vmm_qa/vmm_pcapng_qa.py on each
-# store, which loads the columns (dropping them made every QA job fail,
-# 2026-10-28). Keep True until the QA plots are drawn from counts.npz.
-P2_KEEP_COLUMNS = True
+# reduce time on this box (1.1 GB capture: 36 s without, 114 s with). With the
+# p2 engine the Online QA plots come from the histograms (P2_QA below), so
+# nothing online reads the columns; they can be regenerated from the pcapng.
+# (With the old QA script they were needed: dropping them made every QA job
+# fail on 2026-10-28.)
+P2_KEEP_COLUMNS = False
+
+# --- Online QA ---------------------------------------------------------------
+# With the p2 engine, qa_watcher runs p2-monitor-qa (plots from counts_chip.npz,
+# same file names and events.json as vmm_qa/vmm_pcapng_qa.py) instead of the
+# per-hit script. It costs about the same for any capture size (~8 s, ~260 MB
+# for a 21 MB capture), so every capture gets its plots, not only the first of
+# each sub-run.
+P2_QA = PROCESSOR_ENGINE == 'p2'
+P2_QA_PLOT_POLICY = 'always'
 
 # --- live monitor (GUI Live tab) -------------------------------------------
 LIVE_TMUX = 'vmm_live'
