@@ -184,6 +184,12 @@ SITES = {
 
 _SITE_CFG = SITES[SITE]
 BASE_DATA_DIR = _SITE_CFG['base_data_dir']
+# The campaign's data directory, if changed from the GUI's Setup tab (Campaign;
+# gui_settings.py). Every service reads it from here, so a campaign switch
+# restarts them all together.
+import gui_settings as _gs  # noqa: E402
+
+BASE_DATA_DIR = _gs.value('data_dir', BASE_DATA_DIR)
 SIMULATE = _SITE_CFG['simulate']
 # Is this a beam site? False switches off everything that only makes sense with
 # a beam: the GUI's beam monitor and Beam tabs, the beam alert rules, the

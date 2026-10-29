@@ -56,6 +56,7 @@ DEFAULTS = {
         "p2_monitor.cli live",
         "p2_monitor.cli reduce",
         "p2-monitor-qa",
+        "p2-monitor analyze",
     ],
     # Safety veto: never kill the live DAQ, its watchers, or the guardian itself,
     # even if a substring above happened to match part of their command line.

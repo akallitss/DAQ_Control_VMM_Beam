@@ -40,6 +40,7 @@ PROCESSOR = 'next Start Processor'
 QA = 'next Start QA'
 LIVE = 'next Start of the Live monitor'
 GUARDIAN = 'restart of the memory guardian'
+CAMPAIGN = 'Apply campaign (restarts the DAQ services)'
 
 PLANS = ['config_scan', 'lab_source', 'trigger_test', 'operating_long', 'hv_scan',
          'mesh_then_drift', 'mesh_then_drift_common', 'retake_run25']
@@ -60,6 +61,17 @@ def _c(*choices):
 
 # key -> definition. group/label/help are shown in the tab.
 SCHEMA = {
+    # --- campaign: where the data go -------------------------------------------
+    'campaign_name': {'group': 'campaign', 'label': 'Campaign name', 'applies': CAMPAIGN,
+                      'type': 'text', 'help': 'Shown in the GUI and logs, e.g. cosmics_3det_202610.'},
+    'data_dir': {'group': 'campaign', 'label': 'Data directory', 'applies': CAMPAIGN,
+                 'type': 'dirpath',
+                 'help': 'Runs go to <data dir>/runs/, QA and analysis to <data dir>/analysis/.'},
+    'eos_dir': {'group': 'campaign', 'label': 'EOS backup folder', 'applies': CAMPAIGN,
+                'type': 'eospath',
+                'help': 'Where the backup watcher copies the runs; prune deletes a local run '
+                        'only once it is verified there file by file.'},
+
     # --- run ------------------------------------------------------------------
     'run_plan': {'group': 'run', 'label': 'Run type', 'applies': NEXT_RUN, **_c(*PLANS),
                  'help': "What a Start Run records: 'lab_source' N identical sub-runs "
@@ -196,7 +208,8 @@ SCHEMA = {
                                'help': 'Must be above the kill threshold.'},
 }
 
-GROUPS = {'run': 'Run', 'readout': 'Readout and monitoring', 'guards': 'Processor and QA guards'}
+GROUPS = {'campaign': 'Campaign', 'run': 'Run', 'readout': 'Readout and monitoring',
+          'guards': 'Processor and QA guards'}
 
 _DEFAULTS = {}      # key -> code default, recorded by value()
 
@@ -279,6 +292,17 @@ def coerce(key, v):
                     not all(isinstance(x, str) and x for x in v) or len(set(v)) != len(v):
                 raise ValueError
             v = list(v)
+        elif t == 'text':
+            v = str(v).strip()
+            if not re.fullmatch(r'[A-Za-z0-9_.+-]{1,80}', v):
+                raise ValueError
+        elif t in ('dirpath', 'eospath'):
+            v = os.path.normpath(str(v).strip())
+            if not v.startswith('/') or '..' in v.split('/') or any(c in v for c in ' \t\n;$`*?'):
+                raise ValueError
+            if t == 'eospath' and not re.match(r'^/eos/(project|experiment|user)/', v):
+                raise ValueError
+            v = v.rstrip('/') + '/'
         elif t == 'hostport':
             v = str(v).strip()
             m = re.fullmatch(r'(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}):(\d{1,5})', v)
@@ -289,6 +313,10 @@ def coerce(key, v):
         raise ValueError(f"{d['label']}: {v!r} is not a valid "
                          + (f"choice ({', '.join(d['choices'])})" if t == 'choice'
                             else 'non-empty list without repeats' if t == 'list'
+                            else 'name of letters, digits and _ . + - (at most 80)' if t == 'text'
+                            else 'absolute directory path without spaces' if t == 'dirpath'
+                            else 'EOS path /eos/project/..., /eos/experiment/... or /eos/user/...'
+                            if t == 'eospath'
                             else (f"comma-separated list of whole numbers {d['min']}-{d['max']}"
                                   " without repeats") if t == 'intlist'
                             else 'HOST:PORT (e.g. 192.168.1.16:6006)' if t == 'hostport'

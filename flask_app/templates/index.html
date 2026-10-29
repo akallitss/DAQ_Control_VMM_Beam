@@ -300,9 +300,36 @@
 
 <!-- Analysis Browser Tab -->
 <div class="tab-pane fade" id="analysis-browser">
+  <div class="panel mb-3">
+    <div class="panel-header">
+      <span class="panel-title">Detector view</span>
+      <span class="panel-header-note">Per run and per sub-run, from the processed data and the
+        mapping: hits on the detector surface, rate and ADC per channel of every VMM,
+        amplitude, rate vs time, and the trend across sub-runs. The same for every campaign.</span>
+    </div>
+    <div class="panel-body">
+      <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
+        <select id="dv-run" class="form-select form-select-sm" style="width:auto; min-width:16rem;"></select>
+        <select id="dv-item" class="form-select form-select-sm" style="width:auto; min-width:16rem;"></select>
+        <button id="dv-build" class="btn btn-info btn-sm">Build</button>
+        <span id="dv-status" class="text-muted" style="font-size:0.85rem;"></span>
+      </div>
+      <div class="table-responsive mt-3">
+        <table class="table table-dark table-sm align-middle mb-0">
+          <thead><tr><th>Detector</th><th class="text-end">Hits</th><th class="text-end">Rate</th>
+            <th class="text-end">Hz/cm²</th><th class="text-end">Live ch.</th><th class="text-end">Dead ch.</th>
+            <th class="text-end">Noisy ch.</th><th class="text-end">Mean ADC</th></tr></thead>
+          <tbody id="dv-summary"><tr><td colspan="8" class="text-muted">Choose a run</td></tr></tbody>
+        </table>
+      </div>
+      <div id="dv-note" class="text-muted mt-1" style="font-size:0.8rem;"></div>
+    </div>
+  </div>
+  <div id="dv-plots" class="mb-4"></div>
+
   <div class="panel">
     <div class="panel-header">
-      <span class="panel-title">Analysis</span>
+      <span class="panel-title">All plots (analysis folder)</span>
       <nav aria-label="breadcrumb">
         <ol class="breadcrumb" id="ab-breadcrumb"></ol>
       </nav>
@@ -678,6 +705,28 @@
       <div id="su-head" style="font-size:0.85rem;">Loading…</div>
       <button id="su-edit-btn" class="btn btn-info btn-sm mt-2">Change the stand…</button>
       <span id="su-edit-why" class="text-muted ms-2" style="font-size:0.8rem;"></span>
+    </div>
+  </div>
+
+  <div class="panel mb-3">
+    <div class="panel-header"><span class="panel-title">Campaign: where the data go</span>
+      <span class="panel-header-note">The data directory and the EOS folder the runs are backed
+        up to. Changing them restarts every DAQ service together, so it is only allowed with no
+        run and no scan in progress.</span></div>
+    <div class="panel-body">
+      <div id="cp-now" style="font-size:0.85rem;">Loading…</div>
+      <button class="btn btn-outline-info btn-sm mt-2" id="cp-edit">Start a new campaign / change directories…</button>
+      <div id="cp-form" class="mt-2 d-none">
+        <table class="table table-dark table-sm align-middle mb-2" style="max-width:900px;"><tbody>
+          <tr><td style="width:12rem;">Campaign name</td><td><input id="cp-name" class="form-control form-control-sm" placeholder="e.g. fe55_3det_202611"></td></tr>
+          <tr><td>Data directory</td><td><input id="cp-data" class="form-control form-control-sm" placeholder="/local/p2/p2data/&lt;campaign&gt;/"></td></tr>
+          <tr><td>EOS backup folder</td><td><input id="cp-eos" class="form-control form-control-sm" placeholder="/eos/experiment/.../&lt;campaign&gt;/"></td></tr>
+        </tbody></table>
+        <button class="btn btn-info btn-sm" id="cp-check">Check</button>
+        <button class="btn btn-success btn-sm" id="cp-apply" disabled>Apply campaign</button>
+        <button class="btn btn-outline-secondary btn-sm" id="cp-cancel">Cancel</button>
+        <div id="cp-result" class="mt-2" style="font-size:0.85rem;"></div>
+      </div>
     </div>
   </div>
 
@@ -3690,7 +3739,7 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
         .map(n => `${n.replace("vmm_", "")} ${r[n] ? "✓" : "✗"}`).join(", ") +
       (d.hv_targets ? "" : " · HV is held on banco (HV-scan plans unavailable)");
     // the run settings live in the Setup tab (what is recorded, with the stand)
-    $("set-groups").innerHTML = Object.entries(d.groups).filter(([g]) => g !== "run").map(([g, title]) => {
+    $("set-groups").innerHTML = Object.entries(d.groups).filter(([g]) => g !== "run" && g !== "campaign").map(([g, title]) => {
       const rows = d.settings.filter(s => s.group === g).map(s => `<tr>
           <td style="min-width:16rem;">${esc(s.label)}
             ${s.help ? `<div class="text-muted" style="font-size:0.75rem;">${esc(s.help)}</div>` : ""}</td>
@@ -4095,6 +4144,137 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
 
   const tab = document.querySelector('a[href="#setup"]');
   if (tab) tab.addEventListener("shown.bs.tab", () => { loadRun(); loadSetup(); });
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Analysis tab, detector view (/detector_view): choose a run and a sub-run
+// (or the whole run), build it, show the summary and the plots.
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const si = (v, u) => v === null || v === undefined ? "–" :
+    Math.abs(v) >= 1e6 ? (v / 1e6).toPrecision(3) + " M" + u : Math.abs(v) >= 1e3 ? (v / 1e3).toPrecision(3) + " k" + u : v.toPrecision(3) + " " + u;
+  const CAPTION = {"rate_map.png": "Hits on the detector surface (rate per pad area)",
+    "vmm_adc.png": "ADC per channel, per VMM (map and mean)", "channel_rates.png": "Hit rate per channel, per VMM",
+    "amplitude.png": "Amplitude per detector and connector half", "time.png": "Hit rate vs time",
+    "level_rates.png": "Rate per detector, connector, hybrid, chip", "trend.png": "Trend across sub-runs"};
+  let runs = [], cur = null, poll = null;
+
+  async function loadRuns(keep) {
+    const d = await (await fetch("/detector_view/runs")).json();
+    runs = d.runs;
+    const sel = $("dv-run"), prev = keep || sel.value;
+    sel.innerHTML = runs.map(r => `<option value="${r.run}">${r.run} · ${r.captures} capture(s)` +
+      (r.built ? (r.stale ? " · needs update" : " · built") : "") + `</option>`).join("");
+    if (prev && runs.some(r => r.run === prev)) sel.value = prev;
+    await loadRun();
+  }
+
+  function renderItem() {
+    const it = cur && cur.items.find(i => i.item === $("dv-item").value);
+    const s = it && it.summary;
+    $("dv-summary").innerHTML = s && Object.keys(s.detectors || {}).length
+      ? Object.entries(s.detectors).map(([det, v]) => `<tr><td>${esc(det)}</td>
+          <td class="text-end">${(v.hits || 0).toLocaleString()}</td><td class="text-end">${si(v.rate_hz, "Hz")}</td>
+          <td class="text-end">${v.rate_hz_per_cm2 === null ? "–" : v.rate_hz_per_cm2.toPrecision(3)}</td>
+          <td class="text-end">${v.live_channels}/${v.channels}</td><td class="text-end">${v.dead_channels}</td>
+          <td class="text-end">${v.noisy_channels}</td><td class="text-end">${v.mean_adc === null ? "–" : v.mean_adc.toFixed(0)}</td></tr>`).join("")
+      : `<tr><td colspan="8" class="text-muted">${cur && cur.items.length ? "No detector data (no mapping?)" : "Not built yet: press Build"}</td></tr>`;
+    $("dv-note").textContent = s ? `${s.captures} capture(s), ${(s.live_time_s / 60).toFixed(1)} min live, setup ${s.setup || "–"}, ` +
+      `first capture ${s.first_capture || "–"}. Noisy = above ${10}× its VMM's median channel rate.` : "";
+    const run = $("dv-run").value;
+    $("dv-plots").innerHTML = it ? Object.entries(it.pngs).map(([n, t]) => `
+      <div class="panel mb-3"><div class="panel-header"><span class="panel-title">${esc(CAPTION[n] || n)}</span></div>
+        <div class="panel-body"><img src="/detector_view/png/${run}/${encodeURIComponent(it.item)}/${n}?t=${t}"
+          class="img-fluid" alt="${esc(n)}" style="background:#fcfcfb; border-radius:6px;"></div></div>`).join("") : "";
+  }
+
+  async function loadRun() {
+    const run = $("dv-run").value;
+    if (!run) { $("dv-status").textContent = "No runs yet."; return; }
+    cur = await (await fetch(`/detector_view/${run}`)).json();
+    const sel = $("dv-item"), prev = sel.value;
+    sel.innerHTML = cur.items.map(i => `<option value="${esc(i.item)}">${i.item === "_run" ? "whole run" : esc(i.item)}</option>`).join("");
+    if (prev && cur.items.some(i => i.item === prev)) sel.value = prev;
+    const r = runs.find(x => x.run === run) || {};
+    $("dv-build").textContent = r.built ? "Rebuild" : "Build";
+    $("dv-build").disabled = cur.building || !!cur.other_building;
+    $("dv-status").textContent = cur.building ? "building… " + (cur.log.slice(-1)[0] || "")
+      : cur.other_building ? `${cur.other_building} is being built`
+      : r.stale ? "new captures since the last build: Rebuild to include them"
+      : r.built ? `built ${new Date(r.built * 1000).toLocaleString()}` : "";
+    renderItem();
+    clearTimeout(poll);
+    if (cur.building || cur.other_building) poll = setTimeout(() => loadRuns(run), 4000);
+  }
+
+  $("dv-run").addEventListener("change", () => { $("dv-item").innerHTML = ""; loadRun(); });
+  $("dv-item").addEventListener("change", renderItem);
+  $("dv-build").addEventListener("click", async () => {
+    const run = $("dv-run").value;
+    const d = await (await fetch(`/detector_view/${run}/build`, { method: "POST" })).json();
+    showPopup(d.message, d.success ? "#17a2b8" : "#dc3545");
+    setTimeout(() => loadRuns(run), 1500);
+  });
+
+  const tab = document.querySelector('a[href="#analysis-browser"]');
+  if (tab) tab.addEventListener("shown.bs.tab", () => loadRuns());
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Setup tab: campaign panel (/campaign): data directory and EOS folder.
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  let cur = null;
+
+  async function load() {
+    cur = await (await fetch("/campaign")).json();
+    const busy = cur.run_state && !["WAITING", "Run Complete", "ERROR"].includes(cur.run_state);
+    $("cp-now").innerHTML = `<b>${esc(cur.campaign_name)}</b> · data <code>${esc(cur.data_dir)}</code>
+      (${cur.free_gb ?? "?"} GB free) · backup <code>${esc(cur.eos_dir)}</code> <span class="text-muted">via ${esc(cur.xrootd_url)}</span>` +
+      (cur.history.length ? `<details class="mt-1"><summary class="text-muted" style="font-size:0.8rem;">earlier campaigns</summary>` +
+        cur.history.map(h => `<div class="text-muted" style="font-size:0.8rem;">${esc(h.time)}: ${esc(h.previous && h.previous.campaign_name)} → <b>${esc(h.campaign_name)}</b> (${esc(h.data_dir)})</div>`).join("") + `</details>` : "");
+    $("cp-edit").disabled = busy || cur.scan_running;
+    $("cp-edit").title = busy ? `a run is in progress (${cur.run_state})` : cur.scan_running ? "a config scan is running" : "";
+  }
+
+  const body = () => JSON.stringify({campaign_name: $("cp-name").value, data_dir: $("cp-data").value, eos_dir: $("cp-eos").value});
+  ["cp-name", "cp-data", "cp-eos"].forEach(id => $(id).addEventListener("input", () => { $("cp-apply").disabled = true; }));
+
+  $("cp-edit").addEventListener("click", () => {
+    $("cp-name").value = cur.campaign_name; $("cp-data").value = cur.data_dir; $("cp-eos").value = cur.eos_dir;
+    $("cp-result").innerHTML = ""; $("cp-apply").disabled = true;
+    $("cp-form").classList.remove("d-none");
+  });
+  $("cp-cancel").addEventListener("click", () => $("cp-form").classList.add("d-none"));
+
+  $("cp-check").addEventListener("click", async () => {
+    const d = await (await fetch("/campaign/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: body() })).json();
+    $("cp-apply").disabled = !d.success;
+    $("cp-result").innerHTML =
+      (d.errors.length ? `<div class="text-danger">${d.errors.map(esc).join("<br>")}</div>` : '<div class="text-success">Checks passed. Apply will:</div>') +
+      (d.success ? `<ul class="mb-1">${d.actions.map(a => `<li>${esc(a)}</li>`).join("")}</ul>` : "") +
+      d.warnings.map(w => `<div class="text-warning">${esc(w)}</div>`).join("");
+  });
+
+  $("cp-apply").addEventListener("click", async () => {
+    if (!confirm(`Apply campaign ${$("cp-name").value}?\n\nData: ${$("cp-data").value}\nBackup: ${$("cp-eos").value}\n\n` +
+                 "Every DAQ service is restarted, the GUI last: this page reloads in about 15 s.")) return;
+    const d = await (await fetch("/campaign/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: body() })).json();
+    if (!d.success) { $("cp-result").innerHTML = `<div class="text-danger">${(d.errors || []).map(esc).join("<br>")}</div>`; return; }
+    $("cp-result").innerHTML = `<div class="text-success">${esc(d.message)}</div><div class="text-muted">Reloading…</div>`;
+    setTimeout(() => location.reload(), 15000);
+  });
+
+  const tab = document.querySelector('a[href="#setup"]');
+  if (tab) tab.addEventListener("shown.bs.tab", load);
 })();
 </script>
 

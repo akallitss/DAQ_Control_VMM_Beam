@@ -33,6 +33,7 @@ from daq_status import (get_vmm_daq_status, get_hv_control_status,
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Add parent dir to path
 from run_config_beam import Config, BASE_DATA_DIR, SITE, IS_BEAM_SITE
+import glob
 import importlib
 import shlex
 import gui_settings
@@ -1022,6 +1023,288 @@ def setup_get():
                "ceilings": hv.get("ceilings"), "rows": hv_rows} if s.hv else None,
         "history": history,
     })
+
+
+# ---------------------------------------------------------------------------
+# Analysis tab, detector view: `p2-monitor analyze` (p2-readout venv) builds,
+# per run, each sub-run and the whole run from the stored histograms into
+# <analysis>/<run>/_detector_view/. One build at a time, nice 19, killable by
+# mem_guardian; measured ~0.35 GB peak whatever the number of captures.
+# ---------------------------------------------------------------------------
+DV_DIRNAME = "_detector_view"
+DV_PNGS = ("rate_map.png", "vmm_adc.png", "channel_rates.png", "amplitude.png", "time.png",
+           "level_rates.png", "trend.png")
+_dv_build = {"run": None, "proc": None}
+_RUN_RE = re.compile(r"^run_\d+$")
+_ITEM_RE = re.compile(r"^(?!\.)[A-Za-z0-9_.+-]+$")     # no "." or ".."
+
+
+def _dv_out(run):
+    return os.path.join(ANALYSIS_DIR, run, DV_DIRNAME)
+
+
+def _dv_building():
+    p = _dv_build["proc"]
+    return _dv_build["run"] if p is not None and p.poll() is None else None
+
+
+def _dv_newest_store(run):
+    inner = p2cfg.P2_STORE_INNER
+    paths = glob.glob(os.path.join(RUN_DIR, run, "*", inner, "*", "scalars.json"))
+    return (len(paths), max((os.path.getmtime(p) for p in paths), default=None))
+
+
+@app.route("/detector_view/runs")
+def detector_view_runs():
+    runs = sorted((d for d in os.listdir(RUN_DIR) if _RUN_RE.match(d)
+                   and os.path.isdir(os.path.join(RUN_DIR, d))) if os.path.isdir(RUN_DIR) else [],
+                  key=lambda d: -int(d.split("_")[1]))
+    out = []
+    for run in runs[:300]:
+        n, newest = _dv_newest_store(run)
+        summ = os.path.join(_dv_out(run), "_run", "summary.json")
+        built = os.path.getmtime(summ) if os.path.isfile(summ) else None
+        out.append({"run": run, "captures": n, "built": built,
+                    "stale": bool(built and newest and newest > built)})
+    return jsonify({"runs": out, "building": _dv_building()})
+
+
+@app.route("/detector_view/<run>")
+def detector_view_run(run):
+    if not _RUN_RE.match(run):
+        abort(404)
+    base = _dv_out(run)
+    items = []
+    if os.path.isdir(base):
+        names = sorted(n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n)))
+        for n in (["_run"] if "_run" in names else []) + [n for n in names if n != "_run"]:
+            d = os.path.join(base, n)
+            try:
+                with open(os.path.join(d, "summary.json")) as f:
+                    summ = json.load(f)
+            except (OSError, ValueError):
+                summ = None
+            items.append({"item": n, "summary": summ,
+                          "pngs": {p: int(os.path.getmtime(os.path.join(d, p)))
+                                   for p in DV_PNGS if os.path.isfile(os.path.join(d, p))}})
+    log = os.path.join(base, "build.log")
+    tail = open(log).read().splitlines()[-8:] if os.path.isfile(log) else []
+    return jsonify({"run": run, "items": items, "building": _dv_building() == run,
+                    "other_building": _dv_building(), "log": tail})
+
+
+@app.route("/detector_view/<run>/build", methods=["POST"])
+def detector_view_build(run):
+    if not _RUN_RE.match(run) or not os.path.isdir(os.path.join(RUN_DIR, run)):
+        return jsonify({"success": False, "message": f"no run {run}"}), 404
+    if _dv_building():
+        return jsonify({"success": False,
+                        "message": f"{_dv_building()} is being built; one at a time."}), 409
+    importlib.reload(p2cfg)
+    ok, why = p2cfg.p2_available()
+    if not ok:
+        return jsonify({"success": False, "message": why}), 500
+    if not _dv_newest_store(run)[0]:
+        return jsonify({"success": False, "message": f"{run} has no processed capture yet."}), 400
+    out = _dv_out(run)
+    os.makedirs(out, exist_ok=True)
+    env = {**os.environ, "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1",
+           "MKL_NUM_THREADS": "1", "MPLBACKEND": "Agg"}
+    logf = open(os.path.join(out, "build.log"), "w")
+    _dv_build["proc"] = subprocess.Popen(
+        ["nice", "-n", "19", f"{p2cfg.P2_BIN}/p2-monitor", "analyze",
+         os.path.join(RUN_DIR, run), "--out-dir", out, "--store-inner", p2cfg.P2_STORE_INNER],
+        stdout=logf, stderr=subprocess.STDOUT, env=env, cwd=out)
+    _dv_build["run"] = run
+    log_event("DETECTOR_VIEW", "flask_analysis", run=run, remote_addr=request.remote_addr)
+    return jsonify({"success": True, "message": f"Building the detector view of {run}…"})
+
+
+@app.route("/detector_view/png/<run>/<item>/<name>")
+def detector_view_png(run, item, name):
+    if not _RUN_RE.match(run) or not _ITEM_RE.match(item) or name not in DV_PNGS:
+        abort(404)
+    return send_from_directory(os.path.join(_dv_out(run), item), name, max_age=0)
+
+
+# ---------------------------------------------------------------------------
+# Campaign (Setup tab): where the data go -- data directory and EOS folder.
+# Every service takes these paths at its start, so applying a campaign
+# restarts all of them together (only while no run and no scan is active).
+# ---------------------------------------------------------------------------
+CAMPAIGN_KEYS = ("campaign_name", "data_dir", "eos_dir")
+CAMPAIGNS_LOG = f"{BASE_DIR}/config/campaigns.jsonl"
+CAMPAIGN_MIN_FREE_GB = 60          # as config_scan.MIN_FREE_GB
+# services that hold BASE_DATA_DIR / the EOS folder, restarted by their own
+# command line (read from the running process); the processor, QA, backup and
+# live monitor are restarted by their GUI routes, the GUI itself last
+CAMPAIGN_RESTART_SESSIONS = ("vmm_prune", "vmm_logbook", "vmm_rate_guard", "vmm_capture_guard")
+
+
+def _campaign_current():
+    import backup_config
+    importlib.reload(backup_config)
+    rc = sys.modules["run_config_beam"]
+    defaults = _settings_defaults()
+    ov = gui_settings.overrides()
+    data_dir = ov.get("data_dir", defaults.get("data_dir", rc.BASE_DATA_DIR))
+    return {"campaign_name": ov.get("campaign_name",
+                                    os.path.basename(str(data_dir).rstrip("/"))),
+            "data_dir": data_dir, "eos_dir": backup_config.EOS_DIR,
+            "xrootd_url": backup_config.XROOTD_URL}
+
+
+def _free_gb(path):
+    p = path
+    while p and not os.path.exists(p):
+        p = os.path.dirname(p.rstrip("/"))
+    try:
+        st = os.statvfs(p or "/")
+        return st.f_bavail * st.f_frsize / 1e9, p
+    except OSError:
+        return None, p
+
+
+def _campaign_check(data):
+    """(new values, errors, warnings, actions) for a requested campaign."""
+    errors, warnings = [], []
+    new = {}
+    for k in CAMPAIGN_KEYS:
+        try:
+            new[k] = gui_settings.coerce(k, data.get(k, ""))
+        except ValueError as e:
+            errors.append(str(e))
+    if errors:
+        return new, errors, warnings, []
+    cur = _campaign_current()
+    d = new["data_dir"]
+    if d.startswith(BASE_DIR.rstrip("/") + "/"):
+        errors.append("The data directory must not be inside the DAQ code directory.")
+    free, existing = _free_gb(d)
+    if not os.access(existing, os.W_OK):
+        errors.append(f"{existing} is not writable by the DAQ.")
+    if free is not None and free < CAMPAIGN_MIN_FREE_GB:
+        errors.append(f"Only {free:.0f} GB free on {existing} (need {CAMPAIGN_MIN_FREE_GB} GB).")
+    if os.path.isdir(os.path.join(d, "runs")) and os.listdir(os.path.join(d, "runs")) \
+            and d != cur["data_dir"]:
+        warnings.append(f"{d}runs/ already holds runs: the new runs will join them.")
+    try:
+        with open(CAMPAIGNS_LOG) as f:
+            past = [json.loads(l) for l in f if l.strip()]
+    except OSError:
+        past = []
+    for p in past:
+        if p.get("eos_dir") == new["eos_dir"] and p.get("data_dir") != d:
+            warnings.append(f"EOS folder {new['eos_dir']} was used by campaign "
+                            f"{p.get('campaign_name')} ({p.get('data_dir')}); runs keep "
+                            "distinct numbers, but the two campaigns will share it.")
+    if all(new[k] == cur[k] for k in CAMPAIGN_KEYS):
+        errors.append("This is the campaign in force now.")
+    running = [s for s in (PROC_TMUX, QA_TMUX, BACKUP_TMUX, p2cfg.LIVE_TMUX) +
+               CAMPAIGN_RESTART_SESSIONS if _tmux_running(s)]
+    actions = ([f"create {d}runs/ and {d}analysis/" if not os.path.isdir(d + "runs") else
+                f"use the existing {d}"] +
+               [f"restart {s}" for s in running] + ["restart the GUI (vmm_flask), last"])
+    return new, errors, warnings, actions
+
+
+@app.route("/campaign")
+def campaign_get():
+    cur = _campaign_current()
+    free, _ = _free_gb(cur["data_dir"])
+    try:
+        with open(CAMPAIGNS_LOG) as f:
+            past = [json.loads(l) for l in f if l.strip()][-10:]
+    except OSError:
+        past = []
+    return jsonify({**cur, "free_gb": round(free, 1) if free is not None else None,
+                    "run_state": _run_state(), "scan_running": bool(_config_scan_pids()),
+                    "history": list(reversed(past))})
+
+
+@app.route("/campaign/check", methods=["POST"])
+def campaign_check():
+    new, errors, warnings, actions = _campaign_check(request.get_json(silent=True) or {})
+    return jsonify({"success": not errors, "errors": errors, "warnings": warnings,
+                    "actions": actions})
+
+
+@app.route("/campaign/apply", methods=["POST"])
+def campaign_apply():
+    data = request.get_json(silent=True) or {}
+    new, errors, warnings, actions = _campaign_check(data)
+    state = _run_state()
+    if state not in RUN_IDLE_STATES:
+        errors.append(f"A run is in progress ({state}).")
+    if _config_scan_pids():
+        errors.append("A config scan is running.")
+    if errors:
+        return jsonify({"success": False, "errors": errors}), 409
+    d = new["data_dir"]
+    old = _campaign_current()
+    grp = os.stat(old["data_dir"]).st_gid if os.path.isdir(old["data_dir"]) else None
+    for sub in ("", "runs", "analysis"):
+        p = os.path.join(d, sub)
+        os.makedirs(p, mode=0o2770, exist_ok=True)
+        if grp is not None:
+            try:
+                os.chown(p, -1, grp)
+            except OSError:
+                pass
+    ok, errs, applied = gui_settings.save({k: new[k] for k in CAMPAIGN_KEYS},
+                                          who=request.remote_addr or "gui")
+    if not ok:
+        return jsonify({"success": False, "errors": errs}), 400
+    with open(CAMPAIGNS_LOG, "a") as f:
+        f.write(json.dumps({"time": datetime.now().isoformat(timespec="seconds"),
+                            "who": request.remote_addr, **new,
+                            "previous": {k: old[k] for k in CAMPAIGN_KEYS}}) + "\n")
+    log_event("CAMPAIGN", "flask_setup", name=new["campaign_name"], data_dir=d,
+              eos_dir=new["eos_dir"], previous=old["data_dir"], remote_addr=request.remote_addr)
+
+    restarted = []
+    # services restarted by their own command line, read from the running process
+    for s in CAMPAIGN_RESTART_SESSIONS:
+        if not _tmux_running(s):
+            continue
+        r = subprocess.run(["tmux", "list-panes", "-t", s, "-F", "#{pane_pid}"],
+                           capture_output=True, text=True)
+        kids = subprocess.run(["pgrep", "-P", r.stdout.split()[0], "-a"],
+                              capture_output=True, text=True).stdout.split("\n")[0] \
+            if r.stdout.strip() else ""
+        cmd = kids.split(" ", 1)[1] if " " in kids else ""
+        if "python" not in cmd:
+            continue
+        subprocess.run(["tmux", "kill-session", "-t", s], capture_output=True)
+        subprocess.run(["bash", f"{BASH_DIR}/start_tmux.sh", s, f"cd {BASE_DIR} && {cmd}", "2000"],
+                       capture_output=True, cwd=BASE_DIR)
+        restarted.append(s)
+    for s, stop, start in ((PROC_TMUX, stop_processor, start_processor),
+                           (QA_TMUX, stop_qa, start_qa), (BACKUP_TMUX, stop_backup, start_backup)):
+        if _tmux_running(s):
+            stop()
+            start()
+            restarted.append(s)
+    if _tmux_running(p2cfg.LIVE_TMUX):
+        try:
+            with open(p2cfg.LIVE_STATUS_PATH) as f:
+                src = "udp" if str(json.load(f).get("source", "")).startswith("udp") else "file"
+        except (OSError, ValueError):
+            src = None
+        importlib.reload(p2cfg)
+        subprocess.run(["tmux", "kill-session", "-t", p2cfg.LIVE_TMUX], capture_output=True)
+        subprocess.Popen(["tmux", "new-session", "-d", "-s", p2cfg.LIVE_TMUX]
+                         + p2cfg.live_command(src))
+        restarted.append(p2cfg.LIVE_TMUX)
+    # the GUI last, from a detached shell (this process is inside vmm_flask)
+    subprocess.Popen(["setsid", "bash", "-c",
+                      f"sleep 3; tmux kill-session -t vmm_flask; cd {BASE_DIR} && "
+                      f"bash {BASH_DIR}/start_tmux.sh vmm_flask {BASE_DIR}/flask_app/start_flask.sh 5000"],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    return jsonify({"success": True, "restarted": restarted + ["vmm_flask"],
+                    "message": f"Campaign {new['campaign_name']} applied: data in {d}, backup to "
+                               f"{new['eos_dir']}. Restarted {', '.join(restarted) or 'no running service'}; "
+                               "the GUI restarts in a few seconds."})
 
 
 # ---------------------------------------------------------------------------
