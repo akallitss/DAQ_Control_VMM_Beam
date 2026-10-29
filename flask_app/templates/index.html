@@ -684,6 +684,22 @@
   </div>
 
   <div class="panel mt-3">
+    <div class="panel-header"><span class="panel-title">Electronics: active channels</span>
+      <span class="panel-header-note">Every FEC · VMM that sends hits, mapped or not, channel by
+        channel (0-63, left to right). For finding which channel a cable lands on: plug it and
+        watch "last 5 s". With "from the network port" it updates every second.</span></div>
+    <div class="panel-body">
+      <div style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap; font-size:0.85rem;">
+        <label><input type="radio" name="el-span" value="recent" checked> last 5 s</label>
+        <label><input type="radio" name="el-span" value="window"> whole window</label>
+        <label><input type="checkbox" id="el-unmapped"> only chips not in the setup</label>
+        <span id="el-scale" class="text-muted"></span>
+      </div>
+      <div id="el-grid" class="mt-2" style="font-size:0.75rem;"><span class="text-muted">No data yet</span></div>
+    </div>
+  </div>
+
+  <div class="panel mt-3">
     <div class="panel-header"><span class="panel-title">Rate plots</span>
       <span class="panel-header-note" id="live-png-note">redrawn every
         <span id="live-plot-every">–</span> s while the monitor runs</span></div>
@@ -3661,6 +3677,8 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
         + group("chips (FEC:VMM)", 4) + rows(r.per_chip, false)
       : `<tr><td colspan="4" class="text-muted">No data yet</td></tr>`;
 
+    lastStatus = s;
+    renderElectronics();
     const names = Object.keys(d.pngs || {});
     $("live-pngs").innerHTML = names.length
       ? names.map(n => `<img src="/live/png/${n}?t=${d.pngs[n]}" class="img-fluid mb-3" alt="${n}"
@@ -3691,7 +3709,56 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
 
   const tab = document.querySelector('a[href="#live"]');
   if (tab) tab.addEventListener("shown.bs.tab", poll);
-  setInterval(() => { if (pane.classList.contains("active")) poll(); }, 5000);
+  // every 2 s while the tab is shown: the network source updates every second
+  setInterval(() => { if (pane.classList.contains("active")) poll(); }, 2000);
+
+  // ---- electronics view: one row per FEC·VMM, 64 channel cells -------------
+  var lastStatus = null;           // var: set by render() above, hoisted
+  const BLUES = ["#1b2a3f", "#1f4f8a", "#2a78d6", "#5aa2ef", "#9ccaf8", "#e8f3ff"];
+  function cellColour(v, lo, hi) {
+    if (!v) return "transparent";
+    const f = hi > lo ? (Math.log10(v) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)) : 1;
+    return BLUES[Math.max(0, Math.min(BLUES.length - 1, Math.round(f * (BLUES.length - 1))))];
+  }
+  function fmtHz(v) {
+    return v >= 1e6 ? (v / 1e6).toPrecision(3) + " MHz" : v >= 1e3 ? (v / 1e3).toPrecision(3) + " kHz"
+         : v >= 1 ? v.toPrecision(3) + " Hz" : v ? (v * 1e3).toPrecision(3) + " mHz" : "0";
+  }
+  function renderElectronics() {
+    const e = lastStatus && lastStatus.electronics;
+    if (!e || !Object.keys(e.chips).length) {
+      $("el-grid").innerHTML = '<span class="text-muted">No hits in the window yet</span>';
+      $("el-scale").textContent = "";
+      return;
+    }
+    const span = document.querySelector('input[name="el-span"]:checked').value;
+    const key = span === "recent" ? "recent_hz" : "window_hz";
+    let chips = Object.entries(e.chips);
+    if ($("el-unmapped").checked) chips = chips.filter(([, c]) => !c.where);
+    // unmapped chips first (what you are looking for when plugging cables), then by FEC, VMM
+    chips.sort(([a, ca], [b, cb]) => (!!ca.where - !!cb.where) ||
+      a.split(":").map(Number)[0] - b.split(":").map(Number)[0] || a.split(":").map(Number)[1] - b.split(":").map(Number)[1]);
+    const vals = chips.flatMap(([, c]) => (c[key] || []).filter(v => v > 0));
+    const lo = vals.length ? Math.min(...vals) : 1, hi = vals.length ? Math.max(...vals) : 1;
+    $("el-scale").textContent = `over the last ${(span === "recent" ? e.recent_s : e.window_s).toFixed(1)} s of data · ` +
+      `colour: ${fmtHz(lo)} (dark) to ${fmtHz(hi)} (light), log scale`;
+    $("el-grid").innerHTML = chips.length ? chips.map(([id, c]) => {
+      const [fec, vmm] = id.split(":");
+      const r = c[key] || [];
+      const active = r.map((v, ch) => [v, ch]).filter(([v]) => v > 0);
+      const top = active.sort((a, b) => b[0] - a[0]).slice(0, 4).map(([v, ch]) => `ch ${ch} ${fmtHz(v)}`).join(", ");
+      const cells = r.map((v, ch) => `<span title="FEC ${fec} VMM ${vmm} ch ${ch}: ${fmtHz(v)}"
+          style="display:inline-block; width:10px; height:14px; margin-right:1px; border-radius:2px;
+                 background:${cellColour(v, lo, hi)}; outline:1px solid rgba(255,255,255,0.08);"></span>`).join("");
+      return `<div style="display:flex; align-items:center; gap:0.6rem; margin-bottom:3px; flex-wrap:wrap;">
+          <span style="width:9.5rem; flex:none;"><b>FEC ${fec} · VMM ${vmm}</b><br>${c.where
+            ? `<span class="text-muted">${esc(c.where)}</span>` : '<span class="badge bg-warning text-dark">not in setup</span>'}</span>
+          <span style="white-space:nowrap;">${cells}</span>
+          <span class="text-muted">${active.length}/64 active${top ? " · " + top : ""}</span></div>`;
+    }).join("") : '<span class="text-muted">No chip outside the setup sends hits</span>';
+  }
+  document.querySelectorAll('input[name="el-span"]').forEach(r => r.addEventListener("change", renderElectronics));
+  $("el-unmapped").addEventListener("change", renderElectronics);
 })();
 </script>
 
