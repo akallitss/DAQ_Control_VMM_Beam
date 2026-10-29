@@ -76,3 +76,32 @@ now applies when the file reader skips ahead under a flood.
 - `rate_guard`: unchanged. Its trigger needs no decoding and its culprit decode is
   limited to 3000 packets; making the safety net depend on the optional live
   monitor would add a failure mode.
+
+## 3. The setup file: one place for detectors, cabling and HV
+
+`setup_source.py` loads the site's p2-mapping setup (`lab_saclay_2026` in the
+lab, `sps_h4_2026` at the beam; `local` and `bench` use the beam's). A machine
+keeps its own editable copy in `/local/p2/p2-setups/<name>.yaml` (a git
+repository: every change has an author, date and message); without one the
+copy shipped with p2-mapping is used.
+
+`run_config_beam.py` takes from it, under the same names as before:
+`P2_VMM_CABLING` and the cable per connector (the cabling entry in force when
+the run starts), `LAB_CHAMBERS` (detector aliases), the z positions, `P2_HV`,
+`URWELL_HV`, `OPERATING_HV` and the ceilings. `TRIGGER_VMM` keeps its notes but
+must agree with the file's trigger, or no run is configured.
+`p2_readout_config.P2_SETUP` is the same file, so the processor, QA and live
+monitor read exactly what the run configuration read.
+
+Checked when switching (2026-10-29): for every site (local, bench, sps, lab)
+and every run plan, the module constants and the generated run configuration
+were byte-identical before and after (28 cases); a modified copy of the file
+changed the run configuration and the processor's `--setup` accordingly.
+
+Still carrying their own copies (old QA path): `vmm_qa/vmm_stations.py`
+(cabling; used by rate_guard's culprit decode) and `vmm_qa/vmm_scan_curves.py`
+(HV channels).
+
+The GUI's **Setup** tab shows the file read-only: detectors, HV map and
+operating point, every dated cabling entry with what changed from the previous
+one, and the file's git history.

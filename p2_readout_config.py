@@ -35,12 +35,11 @@ P2_READOUT_DIR = '/local/p2/p2-readout'
 P2_PYTHON = f'{P2_READOUT_DIR}/venv/bin/python'
 P2_BIN = f'{P2_READOUT_DIR}/venv/bin'
 
-# p2-mapping setup per DAQ site: cabling, detectors and their dates
-P2_SETUPS = {
-    'lab': 'lab_saclay_2026',
-    'sps': 'sps_h4_2026',
-}
-P2_SETUP = P2_SETUPS.get(SITE)
+# The p2-mapping setup -- the same file run_config_beam.py takes the stand
+# from (setup_source.py): this machine's copy in /local/p2/p2-setups if there
+# is one, else the copy shipped with p2-mapping. Passed as --setup to the
+# processor, QA and live monitor.
+from run_config_beam import SETUP_REF as P2_SETUP  # noqa: E402
 
 # --- processor -------------------------------------------------------------
 # 'legacy' = vmm_qa/vmm_reduce.py (this repo's venv); 'p2' = p2-monitor-reduce.

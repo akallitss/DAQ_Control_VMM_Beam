@@ -666,6 +666,53 @@
   </div>
 </div>
 
+<div class="tab-pane fade" id="setup">
+  <div class="panel mb-3">
+    <div class="panel-header">
+      <span class="panel-title">Setup</span>
+      <span class="panel-header-note">The stand as its setup file describes it: detectors,
+        readout cabling (dated) and HV. Read-only for now. Every run configuration, the
+        processor, the QA and the live monitor read this one file.</span>
+    </div>
+    <div class="panel-body" id="su-head" style="font-size:0.85rem;">Loading…</div>
+  </div>
+  <div class="row g-3">
+    <div class="col-lg-5">
+      <div class="panel h-100">
+        <div class="panel-header"><span class="panel-title">Detectors</span></div>
+        <div class="panel-body"><div class="table-responsive">
+          <table class="table table-dark table-sm align-middle mb-0">
+            <thead><tr><th>Station</th><th>Chamber</th><th class="text-end">z (mm)</th></tr></thead>
+            <tbody id="su-dets"></tbody></table></div>
+          <div id="su-trigger" class="text-muted mt-2" style="font-size:0.8rem;"></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-7">
+      <div class="panel h-100">
+        <div class="panel-header"><span class="panel-title">HV</span>
+          <span class="panel-header-note" id="su-hv-note"></span></div>
+        <div class="panel-body"><div class="table-responsive">
+          <table class="table table-dark table-sm align-middle mb-0">
+            <thead><tr><th>Detector</th><th>Electrode</th><th class="text-end">Card</th>
+              <th class="text-end">Channel</th><th class="text-end">Operating (V)</th>
+              <th class="text-end">Ceiling (V)</th></tr></thead>
+            <tbody id="su-hv"></tbody></table></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel mt-3">
+    <div class="panel-header"><span class="panel-title">Readout cabling</span>
+      <span class="panel-header-note">Each entry applies from its date until the next; a run
+        uses the one in force when it starts, and old runs keep theirs.</span></div>
+    <div class="panel-body" id="su-cabling"></div>
+  </div>
+  <div class="panel mt-3">
+    <div class="panel-header"><span class="panel-title">Changes to the setup file</span></div>
+    <div class="panel-body" id="su-history" style="font-size:0.85rem;"></div>
+  </div>
+</div>
+
 <div class="tab-pane fade" id="settings">
   <div class="panel mb-3">
     <div class="panel-header">
@@ -3624,6 +3671,76 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
   }));
 
   const tab = document.querySelector('a[href="#settings"]');
+  if (tab) tab.addEventListener("shown.bs.tab", load);
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Setup tab (read-only): /setup, the site's setup file.
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "–").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+  function cablingTable(rows) {
+    return `<div class="table-responsive"><table class="table table-dark table-sm align-middle mb-2">
+      <thead><tr><th>Detector</th><th>Connector</th><th>Hybrid</th><th>FEC</th>
+        <th>Bottom VMM</th><th>Top VMM</th><th>Cable</th><th>Strip order</th></tr></thead><tbody>` +
+      rows.map(r => `<tr><td>${esc(r.detector)}</td><td>c${esc(r.connector)}</td>
+        <td>H${esc(r.hybrid)}</td><td>${r.fec ?? "any"}</td><td>${esc(r.bottom_vmm)}</td>
+        <td>${esc(r.top_vmm)}</td><td>${esc(r.cable)}</td>
+        <td class="text-muted" style="font-size:0.8rem;">${r.bottom_order || r.top_order
+          ? `bottom ${esc(r.bottom_order || "reverse")}, top ${esc(r.top_order || "reverse")}` : "reverse"}</td></tr>`).join("") +
+      `</tbody></table></div>`;
+  }
+
+  function render(d) {
+    if (d.error) { $("su-head").innerHTML = `<span class="text-danger">Cannot read the setup: ${esc(d.error)}</span>`; return; }
+    const users = Object.entries(d.used_by);
+    const same = users.every(([, v]) => v === users[0][1]);
+    $("su-head").innerHTML =
+      `<b>${esc(d.name)}</b> (site ${esc(d.site)}): ${esc(d.description)}<br>
+       file <code>${esc(d.path)}</code> · sha256 ${esc((d.sha256 || "").slice(0, 12))}
+       ${d.editable_copy ? "" : `<br><span class="text-warning">This is the copy shipped with p2-mapping;
+         this machine has no own copy in ${esc(d.setups_dir)}.</span>`}
+       <br>${same ? `<span class="text-success">✓ run configuration, processor, QA and live monitor all use this file</span>`
+                  : `<span class="text-danger">Components read different setups: ` +
+                    users.map(([k, v]) => `${esc(k)}: ${esc(v)}`).join("; ") + `</span>`}`;
+    $("su-dets").innerHTML = d.detectors.map(x => `<tr><td>${esc(x.name)}</td>
+      <td>${esc(x.alias)}</td><td class="text-end">${esc(x.z_mm)}</td></tr>`).join("");
+    $("su-trigger").textContent = d.trigger
+      ? `Trigger: hybrid ${d.trigger.hybrid}, VMM ${d.trigger.vmm}, channel ${d.trigger.ch}`
+      : "No trigger channel (self-triggered).";
+    const hv = d.hv;
+    $("su-hv-note").textContent = !hv ? "not described in the setup file"
+      : hv.set_here ? "set by this DAQ (targets sent with every sub-run)"
+      : `not set by this DAQ: ${hv.note || ""}`;
+    $("su-hv").innerHTML = hv && hv.rows.length
+      ? hv.rows.map(r => `<tr><td>${esc(r.name)}${r.reference ? ' <span class="badge bg-secondary">reference</span>' : ""}</td>
+          <td>${esc(r.electrode)}</td><td class="text-end">${esc(r.card)}</td><td class="text-end">${esc(r.channel)}</td>
+          <td class="text-end">${esc(r.operating)}</td><td class="text-end">${esc(r.ceiling)}</td></tr>`).join("")
+      : `<tr><td colspan="6" class="text-muted">No channel map${hv && hv.ceilings
+          ? ` (ceilings: ${Object.entries(hv.ceilings).map(([k, v]) => `${k} ${v} V`).join(", ")})` : ""}</td></tr>`;
+    $("su-cabling").innerHTML = d.cabling.slice().reverse().map(e => `
+      <div class="mb-3">
+        <div style="font-size:0.9rem;"><b>from ${esc(e.valid_from)}</b>
+          ${e.current ? '<span class="badge bg-success ms-1">in force now</span>' : ""}
+          <span class="text-muted ms-2">${esc(e.note)}</span></div>
+        ${e.changes.length ? `<div class="text-info" style="font-size:0.8rem;">changed from the previous entry: ${e.changes.map(esc).join("; ")}</div>` : ""}
+        ${e.current ? cablingTable(e.rows)
+          : `<details><summary class="text-muted" style="font-size:0.8rem;">show ${e.rows.length} rows</summary>${cablingTable(e.rows)}</details>`}
+      </div>`).join("");
+    $("su-history").innerHTML = d.history.length
+      ? d.history.map(h => `<div><code>${esc(h.commit)}</code> ${esc(h.date)} · ${esc(h.author)} · ${esc(h.message)}</div>`).join("")
+      : '<span class="text-muted">No change history (the file is not in a git repository on this machine).</span>';
+  }
+
+  async function load() {
+    try { render(await (await fetch("/setup")).json()); }
+    catch (e) { $("su-head").textContent = "Could not load the setup: " + e; }
+  }
+  const tab = document.querySelector('a[href="#setup"]');
   if (tab) tab.addEventListener("shown.bs.tab", load);
 })();
 </script>

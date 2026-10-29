@@ -769,6 +769,87 @@ def settings_post():
                                 + "; ".join(when)) if applied else "Nothing changed"})
 
 
+# ---------------------------------------------------------------------------
+# Setup tab (read-only): the stand as the setup file describes it -- the file
+# run_config_beam.py, the processor, QA and live monitor all read
+# (setup_source.py). Read fresh on each request.
+# ---------------------------------------------------------------------------
+def _cabling_changes(prev, cur):
+    """What changed between two cabling entries, per hybrid (the thing that moves)."""
+    key = lambda r: (r.get("fec"), r["hybrid"])
+    name = lambda k: f"H{k[1]}" + (f" (FEC {k[0]})" if k[0] is not None else "")
+    where = lambda r: f"{r['detector']} c{r['connector']}"
+    a = {key(r): r for r in prev.hybrids}
+    b = {key(r): r for r in cur.hybrids}
+    out = []
+    for k in sorted(set(a) | set(b), key=lambda k: (k[0] or 0, k[1])):
+        if k not in a:
+            out.append(f"{name(k)} added at {where(b[k])}")
+        elif k not in b:
+            out.append(f"{name(k)} removed from {where(a[k])}")
+        else:
+            d = [f"{where(a[k])} -> {where(b[k])}"] if where(a[k]) != where(b[k]) else []
+            d += [f"{f} {a[k].get(f)} -> {b[k].get(f)}"
+                  for f in sorted((set(a[k]) | set(b[k])) - {"detector", "connector"})
+                  if a[k].get(f) != b[k].get(f)]
+            if d:
+                out.append(f"{name(k)}: " + ", ".join(d))
+    return out
+
+
+@app.route("/setup")
+def setup_get():
+    import setup_source
+    try:
+        s = setup_source.load(SITE)
+    except BaseException as e:          # SystemExit from a missing package, ValueError ...
+        return jsonify({"error": f"{type(e).__name__}: {e}",
+                        "ref": setup_source.setup_ref(SITE)}), 500
+    try:
+        current = s.cabling_at("now")
+    except LookupError:
+        current = None
+    entries = []
+    for i, e in enumerate(s.cabling):
+        entries.append({
+            "valid_from": e.valid_from.isoformat(timespec="minutes"), "note": e.note,
+            "current": e is current,
+            "rows": sorted(e.hybrids, key=lambda r: (list(s.detectors).index(r["detector"])
+                                                     if r["detector"] in s.detectors else 99,
+                                                     r["connector"])),
+            "changes": _cabling_changes(s.cabling[i - 1], e) if i else [],
+        })
+    hv = s.hv or {}
+    hv_rows = []
+    for det, roles in (hv.get("channels") or {}).items():
+        for role, cc in roles.items():
+            hv_rows.append({"name": det, "electrode": role, "card": cc[0], "channel": cc[1],
+                            "operating": (hv.get("operating") or {}).get(det, {}).get(role),
+                            "ceiling": (hv.get("ceilings") or {}).get(role),
+                            "reference": det in (hv.get("references") or [])})
+    history = []
+    d = os.path.dirname(s.path)
+    if os.path.isdir(os.path.join(d, ".git")):
+        r = subprocess.run(["git", "-C", d, "log", "-15", "--format=%h|%ad|%an|%s",
+                            "--date=format:%Y-%m-%d %H:%M", "--", os.path.basename(s.path)],
+                           capture_output=True, text=True, timeout=10)
+        history = [dict(zip(("commit", "date", "author", "message"), l.split("|", 3)))
+                   for l in r.stdout.splitlines() if l.count("|") >= 3]
+    importlib.reload(p2cfg)
+    return jsonify({
+        "name": s.name, "site": SITE, "description": s.description, "path": s.path,
+        "sha256": s.sha256, "editable_copy": s.path.startswith(setup_source.SETUPS_DIR),
+        "setups_dir": setup_source.SETUPS_DIR,
+        "used_by": {"run configuration": setup_source.setup_ref(SITE),
+                    "processor, QA and live monitor": p2cfg.P2_SETUP},
+        "detectors": [{"name": k, **v} for k, v in s.detectors.items()],
+        "trigger": s.trigger, "cabling": entries,
+        "hv": {"set_here": hv.get("set_here"), "note": hv.get("note", ""),
+               "ceilings": hv.get("ceilings"), "rows": hv_rows} if s.hv else None,
+        "history": history,
+    })
+
+
 @app.route("/settings/restart/<component>", methods=["POST"])
 def settings_restart(component):
     """Restart one component so saved settings take effect now.
