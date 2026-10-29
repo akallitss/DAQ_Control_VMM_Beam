@@ -1043,7 +1043,11 @@ def _effective_run_plan():
 
 
 def _config_scan_pids():
-    r = subprocess.run(["pgrep", "-f", "config_scan.py --until"], capture_output=True, text=True)
+    """PIDs of running config_scan.py sequencers: a python process whose command
+    starts with the script. Anchored, so a shell or ssh command that merely
+    contains the text (a tmux wrapper, a pgrep loop) is never matched."""
+    r = subprocess.run(["pgrep", "-f", r"^[^ ]*python[^ ]* [^ ]*config_scan\.py --until"],
+                       capture_output=True, text=True)
     return [int(p) for p in r.stdout.split() if p.strip().isdigit()]
 
 
