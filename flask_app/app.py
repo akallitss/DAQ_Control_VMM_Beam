@@ -33,6 +33,8 @@ from daq_status import (get_vmm_daq_status, get_hv_control_status,
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Add parent dir to path
 from run_config_beam import Config, BASE_DATA_DIR, SITE, IS_BEAM_SITE
+import importlib
+import gui_settings
 import p2_readout_config as p2cfg
 from get_run_events import get_total_events_for_run
 from monitor import DaqMonitor, fetch_chat_id, get_bot_username
@@ -609,6 +611,7 @@ def _tmux_running(name):
 
 @app.route("/live/start", methods=["POST"])
 def live_start():
+    importlib.reload(p2cfg)            # settings changed in the Settings tab
     ok, why = p2cfg.p2_available()
     if not ok:
         return jsonify({"success": False, "message": f"Live monitor unavailable: {why}"}), 500
@@ -642,6 +645,7 @@ def live_stop():
 @app.route("/live/status")
 def live_status():
     """The monitor's last live_status.json, whether it runs, and how old the file is."""
+    importlib.reload(p2cfg)            # settings changed in the Settings tab
     out = {"running": _tmux_running(p2cfg.LIVE_TMUX), "status": None, "file_age_s": None,
            "options": p2cfg.LIVE_OPTIONS, "udp_options": p2cfg.LIVE_UDP_OPTIONS,
            "setup": p2cfg.P2_SETUP, "available": p2cfg.p2_available()[0],
@@ -676,6 +680,120 @@ def live_png(name):
     if name not in LIVE_PNGS:
         abort(404)
     return send_from_directory(p2cfg.LIVE_PNG_DIR, name, max_age=0)
+
+
+# ---------------------------------------------------------------------------
+# Settings tab: values the operator changes without editing code
+# (gui_settings.py; config/gui_settings.json + history). Flask validates and
+# stores them; each component reads them when it next starts.
+# ---------------------------------------------------------------------------
+def _settings_defaults():
+    """Code default of every setting. value() records them when the modules
+    that read the settings are imported; import the ones flask does not."""
+    import importlib
+    for mod in ("vmm_processor_config", "qa_config"):
+        try:
+            importlib.import_module(mod)
+        except BaseException:          # e.g. engine p2 without the venv
+            pass
+    try:
+        import mem_guardian
+        base = mem_guardian.file_config()
+        gui_settings._DEFAULTS.setdefault("guardian_kill_avail_mb", base["kill_avail_mb"])
+        gui_settings._DEFAULTS.setdefault("guardian_warn_avail_mb", base["warn_avail_mb"])
+    except Exception:
+        pass
+    return dict(gui_settings._DEFAULTS)
+
+
+def _settings_effective(defaults):
+    ov = gui_settings.overrides()
+    return {k: ov.get(k, defaults.get(k)) for k in gui_settings.SCHEMA}
+
+
+def _next_run_number():
+    try:
+        with open(os.path.join(BASE_DIR, "config", "run_highwater.txt")) as f:
+            return int(f.read().strip()) + 1
+    except (OSError, ValueError):
+        return None
+
+
+@app.route("/settings")
+def settings_get():
+    defaults = _settings_defaults()
+    ov = gui_settings.overrides()
+    items = []
+    for k, d in gui_settings.SCHEMA.items():
+        items.append({"key": k, **{f: d[f] for f in d if f != "file"},
+                      "default": defaults.get(k),
+                      "value": ov.get(k, defaults.get(k)), "changed": k in ov})
+    try:
+        daq_state = get_daq_control_status().get("status")
+    except Exception:
+        daq_state = None
+    applied = (chip._read_state().get("last_applied") or {}).get("file") \
+        if hasattr(chip, "_read_state") else None
+    return jsonify({
+        "groups": gui_settings.GROUPS, "settings": items,
+        "history": gui_settings.history(),
+        "site": SITE, "hv_targets": bool(getattr(sys.modules.get("run_config_beam"),
+                                                 "HV_TARGETS", True)),
+        "next_run": _next_run_number(), "chip_config_applied": applied,
+        "run_state": daq_state,
+        "running": {n: _tmux_running(n) for n in
+                    (PROC_TMUX, QA_TMUX, p2cfg.LIVE_TMUX, "vmm_mem_guardian")},
+    })
+
+
+@app.route("/settings", methods=["POST"])
+def settings_post():
+    data = request.get_json(silent=True) or {}
+    changes = data.get("changes") or {}
+    if not isinstance(changes, dict) or not changes:
+        return jsonify({"success": False, "errors": ["nothing to change"]}), 400
+    defaults = _settings_defaults()
+    hv = bool(getattr(sys.modules.get("run_config_beam"), "HV_TARGETS", True))
+    ok, errors, applied = gui_settings.save(
+        changes, who=request.remote_addr or "gui",
+        effective=_settings_effective(defaults), hv_targets=hv)
+    if not ok:
+        return jsonify({"success": False, "errors": errors}), 400
+    for k, (old, new) in applied.items():
+        log_event("SETTING", "flask_settings", key=k, old=old,
+                  new=new if new is not None else f"default({defaults.get(k)})",
+                  remote_addr=request.remote_addr)
+    when = sorted({gui_settings.SCHEMA[k]["applies"] for k in applied})
+    return jsonify({"success": True, "changed": list(applied),
+                    "message": (f"Saved {len(applied)} setting(s); takes effect at: "
+                                + "; ".join(when)) if applied else "Nothing changed"})
+
+
+@app.route("/settings/restart/<component>", methods=["POST"])
+def settings_restart(component):
+    """Restart one component so saved settings take effect now.
+
+    Processor and QA: as their Stop/Start buttons (each start regenerates its
+    config; a killed job is re-queued). Guardian: its own tmux session. The live
+    monitor is restarted from the Live tab (it keeps its source choice there).
+    """
+    if component == "processor":
+        stop_processor()
+        return start_processor()
+    if component == "qa":
+        stop_qa()
+        return start_qa()
+    if component == "guardian":
+        subprocess.run(["tmux", "kill-session", "-t", "vmm_mem_guardian"], capture_output=True)
+        r = subprocess.run(["bash", f"{BASH_DIR}/start_tmux.sh", "vmm_mem_guardian",
+                            f"{BASE_DIR}/.venv/bin/python {BASE_DIR}/mem_guardian.py", "2000"],
+                           capture_output=True, text=True, cwd=BASE_DIR)
+        log_event("RESTART", "flask_settings", component="mem_guardian",
+                  remote_addr=request.remote_addr)
+        ok = _tmux_running("vmm_mem_guardian")
+        return jsonify({"success": ok, "message": "Memory guardian restarted" if ok
+                        else f"Memory guardian did not start: {r.stdout}{r.stderr}"})
+    return jsonify({"success": False, "message": f"unknown component {component!r}"}), 400
 
 
 @app.route("/start_qa", methods=["POST"])

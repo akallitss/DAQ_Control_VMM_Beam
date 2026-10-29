@@ -28,6 +28,7 @@ Two users here:
 
 import os
 
+import gui_settings as _gs
 from run_config_beam import BASE_DATA_DIR, SITE
 
 P2_READOUT_DIR = '/local/p2/p2-readout'
@@ -48,6 +49,8 @@ P2_SETUP = P2_SETUPS.get(SITE)
 # 9x faster on the 255 MB flood file (24 s vs 223 s). Set 'legacy' to go back
 # (legacy imports vmm_decode from /local/p2/p2soft/vmm-analysis via a .pth).
 PROCESSOR_ENGINE = 'p2'
+# changed from the GUI Settings tab, if set there (gui_settings.py)
+PROCESSOR_ENGINE = _gs.value('processor_engine', PROCESSOR_ENGINE)
 # Where the p2 engine writes its stores. 'hits_store' replaces the legacy
 # output; 'hits_store_p2' lets both run side by side for a comparison.
 P2_STORE_INNER = 'hits_store'
@@ -58,6 +61,7 @@ P2_STORE_INNER = 'hits_store'
 # (With the old QA script they were needed: dropping them made every QA job
 # fail on 2026-10-28.)
 P2_KEEP_COLUMNS = False
+P2_KEEP_COLUMNS = _gs.value('p2_keep_columns', P2_KEEP_COLUMNS)
 
 # --- Online QA ---------------------------------------------------------------
 # With the p2 engine, qa_watcher runs p2-monitor-qa (plots from counts_chip.npz,
@@ -67,6 +71,7 @@ P2_KEEP_COLUMNS = False
 # each sub-run.
 P2_QA = PROCESSOR_ENGINE == 'p2'
 P2_QA_PLOT_POLICY = 'always'
+P2_QA_PLOT_POLICY = _gs.value('qa_plot_policy', P2_QA_PLOT_POLICY)
 
 # --- live monitor (GUI Live tab) -------------------------------------------
 LIVE_TMUX = 'vmm_live'
@@ -92,17 +97,29 @@ LIVE_OPTIONS = {
 # every packet: the kernel delivers each datagram to both). The GUI's Live tab
 # can pick either at start; this is the default.
 LIVE_SOURCE = 'file'
+LIVE_SOURCE = _gs.value('live_source', LIVE_SOURCE)
 # The FEC's destination (data NIC address and port), per site. Measured on the
 # lab box on 2026-10-28: 192.168.1.13:6006 -> 192.168.1.16:6006, nothing else
 # bound to 6006.
 LIVE_UDP_ADDRESS = {
     'lab': '192.168.1.16:6006',
 }.get(SITE)
+LIVE_UDP_ADDRESS = _gs.value('live_udp_address', LIVE_UDP_ADDRESS)
 # A socket buffer holds only ~4 MB, so the network reader polls more often with
 # a smaller read: about the same CPU budget as the file reader (~3-4 MB/s
 # decoded at most), but moderate rates are read completely. What it cannot
 # read, the kernel drops and counts; rates are scaled by the fraction read.
 LIVE_UDP_OPTIONS = {**LIVE_OPTIONS, 'interval': 1, 'max_read_mb': 4}
+
+# changed from the GUI Settings tab, if set there (gui_settings.py)
+for _k, _key in (('window', 'live_window_s'), ('interval', 'live_interval_s'),
+                 ('max_read_mb', 'live_max_read_mb'), ('max_behind_mb', 'live_max_behind_mb'),
+                 ('rss_limit_mb', 'live_rss_limit_mb'), ('plot_every', 'live_plot_every_s')):
+    LIVE_OPTIONS[_k] = _gs.value(_key, LIVE_OPTIONS[_k])
+for _k, _key in (('interval', 'live_udp_interval_s'), ('max_read_mb', 'live_udp_max_read_mb')):
+    LIVE_UDP_OPTIONS[_k] = _gs.value(_key, LIVE_UDP_OPTIONS[_k])
+for _k in ('window', 'max_behind_mb', 'rss_limit_mb', 'plot_every'):
+    LIVE_UDP_OPTIONS[_k] = LIVE_OPTIONS[_k]
 
 
 def p2_available():

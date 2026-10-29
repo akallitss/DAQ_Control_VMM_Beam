@@ -87,6 +87,11 @@ if p2cfg.P2_QA:
         'plot_policy': p2cfg.P2_QA_PLOT_POLICY,
     })
 
+# Guards changed from the GUI Settings tab, if set there (gui_settings.py)
+for _k, _key in (('memory_kill_pct', 'qa_memory_kill_pct'), ('max_attempts', 'qa_max_attempts'),
+                 ('cpu_nice', 'qa_cpu_nice'), ('qa_threads', 'qa_threads')):
+    CONFIG[_k] = p2cfg._gs.value(_key, CONFIG[_k])
+
 if __name__ == '__main__':
     out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', 'qa_config.json')
     os.makedirs(os.path.dirname(out_path), exist_ok=True)

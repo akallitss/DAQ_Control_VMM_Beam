@@ -7,6 +7,11 @@ config/.live_status.json.tmp
 config/processor_state_p2.json
 live_png/
 
+# Settings changed from the GUI's Settings tab (gui_settings.py), per machine
+config/gui_settings.json
+config/gui_settings_history.jsonl
+config/.gui_settings*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

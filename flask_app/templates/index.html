@@ -666,6 +666,40 @@
   </div>
 </div>
 
+<div class="tab-pane fade" id="settings">
+  <div class="panel mb-3">
+    <div class="panel-header">
+      <span class="panel-title">Settings</span>
+      <span class="panel-header-note">Change how runs are taken, processed and monitored
+        without editing code. The values in the code stay the defaults; every change is
+        validated, logged, and takes effect where shown.</span>
+    </div>
+    <div class="panel-body">
+      <div id="set-info" class="text-muted" style="font-size:0.85rem;">Loading…</div>
+      <div class="mt-2" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+        <span class="text-muted" style="font-size:0.85rem;">Apply saved settings now:</span>
+        <button class="btn btn-outline-info btn-sm" data-restart="processor">Restart Processor</button>
+        <button class="btn btn-outline-info btn-sm" data-restart="qa">Restart QA</button>
+        <button class="btn btn-outline-info btn-sm" data-restart="guardian">Restart Memory Guardian</button>
+        <span class="text-muted" style="font-size:0.8rem;">Live monitor: Stop and Start it
+          in the Live tab. Run settings: used by the next Start Run.</span>
+      </div>
+    </div>
+  </div>
+  <div id="set-groups"></div>
+  <div class="panel mt-3">
+    <div class="panel-header"><span class="panel-title">Recent changes</span></div>
+    <div class="panel-body">
+      <div class="table-responsive">
+        <table class="table table-dark table-sm align-middle mb-0">
+          <thead><tr><th>When</th><th>Who</th><th>Setting</th><th>From</th><th>To</th></tr></thead>
+          <tbody id="set-history"><tr><td colspan="5" class="text-muted">No changes yet</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="tab-pane fade" id="disk-space">
   <div class="panel mb-3">
     <div class="panel-header">
@@ -3467,6 +3501,130 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
   const tab = document.querySelector('a[href="#live"]');
   if (tab) tab.addEventListener("shown.bs.tab", poll);
   setInterval(() => { if (pane.classList.contains("active")) poll(); }, 5000);
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Settings tab: /settings (gui_settings.py). Each group saves only the fields
+// that were edited; the server validates everything and writes nothing on error.
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const fmt = v => v === null || v === undefined ? "–" : (typeof v === "boolean" ? (v ? "yes" : "no") : String(v));
+  let data = null;
+
+  function input(s) {
+    const id = `set-${s.key}`;
+    if (s.type === "choice")
+      return `<select id="${id}" class="form-select form-select-sm" style="width:auto;">` +
+        s.choices.map(c => `<option value="${esc(c)}"${c === s.value ? " selected" : ""}>${esc(c)}</option>`).join("") +
+        `</select>`;
+    if (s.type === "bool")
+      return `<input id="${id}" type="checkbox" class="form-check-input"${s.value ? " checked" : ""}>`;
+    if (s.type === "hostport")
+      return `<input id="${id}" type="text" class="form-control form-control-sm" style="width:12rem;" value="${esc(s.value || "")}">`;
+    const step = s.type === "float" ? "any" : "1";
+    return `<input id="${id}" type="number" class="form-control form-control-sm" style="width:8rem;"
+              min="${s.min}" max="${s.max}" step="${step}" value="${esc(s.value)}">`;
+  }
+
+  function read(s) {
+    const el = $(`set-${s.key}`);
+    if (s.type === "bool") return el.checked;
+    if (s.type === "int" || s.type === "float") return el.value === "" ? "" : Number(el.value);
+    return el.value;
+  }
+
+  function render(d) {
+    data = d;
+    const r = d.running || {};
+    $("set-info").innerHTML =
+      `site <b>${esc(d.site)}</b> · next run <b>run_${d.next_run ?? "?"}</b> · ` +
+      `run state <b>${esc(d.run_state || "–")}</b> · chip config applied ` +
+      `<b>${esc(d.chip_config_applied || "–")}</b> · running: ` +
+      ["vmm_processor", "vmm_qa_watcher", "vmm_live", "vmm_mem_guardian"]
+        .map(n => `${n.replace("vmm_", "")} ${r[n] ? "✓" : "✗"}`).join(", ") +
+      (d.hv_targets ? "" : " · HV is held on banco (HV-scan plans unavailable)");
+    $("set-groups").innerHTML = Object.entries(d.groups).map(([g, title]) => {
+      const rows = d.settings.filter(s => s.group === g).map(s => `<tr>
+          <td style="min-width:16rem;">${esc(s.label)}
+            ${s.help ? `<div class="text-muted" style="font-size:0.75rem;">${esc(s.help)}</div>` : ""}</td>
+          <td>${input(s)}</td>
+          <td class="text-muted" style="font-size:0.8rem;">default ${esc(fmt(s.default))}
+            ${s.changed ? `<br><span class="badge bg-info text-dark">changed</span>
+              <a href="#" class="ms-1" data-reset="${s.key}" style="font-size:0.75rem;">back to default</a>` : ""}</td>
+          <td class="text-muted" style="font-size:0.75rem;">${esc(s.applies)}</td></tr>`).join("");
+      return `<div class="panel mb-3"><div class="panel-header"><span class="panel-title">${esc(title)}</span></div>
+        <div class="panel-body"><div class="table-responsive">
+          <table class="table table-dark table-sm align-middle mb-2">
+            <thead><tr><th>Setting</th><th>Value</th><th></th><th>Takes effect at</th></tr></thead>
+            <tbody>${rows}</tbody></table></div>
+          <button class="btn btn-info btn-sm" data-save="${g}">Save ${esc(title.toLowerCase())}</button>
+          <span id="set-msg-${g}" class="ms-2" style="font-size:0.85rem;"></span></div></div>`;
+    }).join("");
+    $("set-history").innerHTML = d.history.length
+      ? d.history.map(h => `<tr><td>${esc(h.time)}</td><td>${esc(h.who)}</td>
+          <td>${esc((d.settings.find(s => s.key === h.key) || {}).label || h.key)}</td>
+          <td>${esc(fmt(h.old))}</td><td>${esc(h.new === null ? "default" : fmt(h.new))}</td></tr>`).join("")
+      : '<tr><td colspan="5" class="text-muted">No changes yet</td></tr>';
+  }
+
+  async function load() {
+    try { render(await (await fetch("/settings")).json()); }
+    catch (e) { $("set-info").textContent = "Could not load the settings: " + e; }
+  }
+
+  async function post(changes, msgEl) {
+    const res = await fetch("/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+                                           body: JSON.stringify({ changes }) });
+    const d = await res.json();
+    if (d.success) {
+      showPopup(d.message, "#17a2b8");
+      await load();
+    } else if (msgEl) {
+      msgEl.className = "ms-2 text-danger";
+      msgEl.textContent = (d.errors || [d.message]).join(" ");
+    } else {
+      showPopup((d.errors || [d.message]).join(" "), "#dc3545");
+    }
+  }
+
+  $("set-groups").addEventListener("click", async ev => {
+    const save = ev.target.closest("[data-save]");
+    const reset = ev.target.closest("[data-reset]");
+    if (save) {
+      const g = save.dataset.save, changes = {};
+      data.settings.filter(s => s.group === g).forEach(s => {
+        const v = read(s);
+        if (String(v) !== String(s.value)) changes[s.key] = v;
+      });
+      const msg = $(`set-msg-${g}`);
+      if (!Object.keys(changes).length) { msg.className = "ms-2 text-muted"; msg.textContent = "Nothing changed."; return; }
+      const label = k => data.settings.find(s => s.key === k);
+      const list = Object.entries(changes).map(([k, v]) =>
+        `  ${label(k).label}: ${fmt(label(k).value)} → ${fmt(v)}`).join("\n");
+      if (!confirm(`Save these settings?\n\n${list}`)) return;
+      await post(changes, msg);
+    } else if (reset) {
+      ev.preventDefault();
+      const s = data.settings.find(x => x.key === reset.dataset.reset);
+      if (!confirm(`Set "${s.label}" back to its default (${fmt(s.default)})?`)) return;
+      await post({ [s.key]: null }, null);
+    }
+  });
+
+  document.querySelectorAll("[data-restart]").forEach(b => b.addEventListener("click", async () => {
+    const what = b.textContent.replace("Restart ", "");
+    if (!confirm(`Restart the ${what} now? A job it is running is stopped and re-queued.`)) return;
+    const d = await (await fetch(`/settings/restart/${b.dataset.restart}`, { method: "POST" })).json();
+    showPopup(d.message, d.success ? "#17a2b8" : "#dc3545");
+    setTimeout(load, 1500);
+  }));
+
+  const tab = document.querySelector('a[href="#settings"]');
+  if (tab) tab.addEventListener("shown.bs.tab", load);
 })();
 </script>
 

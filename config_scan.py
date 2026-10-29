@@ -260,11 +260,16 @@ def active_run_plan():
     plan, each 'config scan' run would silently take that plan's points at that
     plan's voltages, and the whole night would be the wrong measurement.
     """
+    plan = None
     for line in open(os.path.join(REPO, 'run_config_beam.py')):
         s = line.strip()
         if s.startswith('RUN_PLAN') and '=' in s and not s.startswith('#'):
-            return s.split('=', 1)[1].split('#')[0].strip().strip('\'"')
-    return None
+            plan = s.split('=', 1)[1].split('#')[0].strip().strip('\'"')
+            break
+    # run_config_beam.py applies the GUI Settings tab's run plan on top of the
+    # literal (RUN_PLAN = _gs.value('run_plan', RUN_PLAN)); so must this.
+    import gui_settings
+    return gui_settings.value('run_plan', plan)
 
 
 def verify_started_run(cfg, expect_min):

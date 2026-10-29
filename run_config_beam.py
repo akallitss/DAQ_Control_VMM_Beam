@@ -313,15 +313,11 @@ CONFIG_SCAN_SUBRUN_MIN = 55                          # minutes of data per confi
 # generated run still uses the constant. On 2026-07-31 that produced a schedule
 # planned at 38 min per config where each run was really 55, which would have
 # overrun 08:00 by more than three hours.
-_SCAN_MIN_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), 'config', 'scan_subrun_min')
-try:
-    with open(_SCAN_MIN_PATH) as _f:
-        _v = int(_f.read().strip())
-    if _v > 0:
-        CONFIG_SCAN_SUBRUN_MIN = _v
-except Exception:
-    pass
+# The GUI's Settings tab edits that same file (gui_settings.SCAN_MIN_PATH);
+# gui_settings.value() reads it, so all three agree.
+import gui_settings as _gs  # noqa: E402
+
+CONFIG_SCAN_SUBRUN_MIN = _gs.value('config_scan_subrun_min', CONFIG_SCAN_SUBRUN_MIN)
 
 # RUN_PLAN='trigger_test': one short run to confirm the trigger configuration
 # before committing beam time to a scan. Fixed HV at the ORIGINAL P2 operating
@@ -613,6 +609,19 @@ if SITE == 'lab':
 # Site-overridable ('capture_duration_s'): the lab runs longer files than the
 # beam does. QA latency and the capture guard's trip time both scale with it.
 CAPTURE_DURATION_S = _SITE_CFG.get('capture_duration_s', 44.4)
+
+# ---------------------------------------------------------------------------
+# Values changed from the GUI's Settings tab (config/gui_settings.json). The
+# literals above stay the defaults; see gui_settings.py.
+RUN_PLAN = _gs.value('run_plan', RUN_PLAN)
+SCAN_SUBRUN_MIN = _gs.value('scan_subrun_min', SCAN_SUBRUN_MIN)
+LAB_MEASUREMENT = _gs.value('lab_measurement', LAB_MEASUREMENT)
+LAB_N_SUBRUNS = _gs.value('lab_n_subruns', LAB_N_SUBRUNS)
+LAB_SUBRUN_MIN = _gs.value('lab_subrun_min', LAB_SUBRUN_MIN)
+TRIGGER_TEST_MIN = _gs.value('trigger_test_min', TRIGGER_TEST_MIN)
+OPERATING_LONG_N_SUBRUNS = _gs.value('operating_long_n_subruns', OPERATING_LONG_N_SUBRUNS)
+OPERATING_LONG_SUBRUN_MIN = _gs.value('operating_long_subrun_min', OPERATING_LONG_SUBRUN_MIN)
+CAPTURE_DURATION_S = _gs.value('capture_duration_s', CAPTURE_DURATION_S)
 
 
 class Config(RunConfigBase):

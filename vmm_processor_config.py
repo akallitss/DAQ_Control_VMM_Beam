@@ -86,6 +86,16 @@ CONFIG = {
     'threads':          4,   # numpy/BLAS thread cap
 }
 
+# Guards changed from the GUI Settings tab, if set there (gui_settings.py)
+import gui_settings as _gs  # noqa: E402
+
+for _k, _key in (('memory_kill_pct', 'proc_memory_kill_pct'),
+                 ('stall_timeout_s', 'proc_stall_timeout_s'),
+                 ('hard_timeout_s', 'proc_hard_timeout_s'),
+                 ('max_attempts', 'proc_max_attempts'),
+                 ('cpu_nice', 'proc_cpu_nice'), ('threads', 'proc_threads')):
+    CONFIG[_k] = _gs.value(_key, CONFIG[_k])
+
 # --- decode engine -----------------------------------------------------------
 # p2_readout_config.PROCESSOR_ENGINE picks the worker. 'p2' swaps only the
 # worker (p2-monitor-reduce from the p2-readout venv, with the site's p2-mapping

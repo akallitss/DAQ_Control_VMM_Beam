@@ -161,6 +161,36 @@ DEFAULT_CFG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "config", "mem_guardian.json")
 
 
+def file_config(path=DEFAULT_CFG_PATH):
+    """DEFAULTS updated by config/mem_guardian.json, without the GUI's values."""
+    cfg = dict(DEFAULTS)
+    try:
+        cfg.update(json.load(open(path)))
+    except (OSError, ValueError):
+        pass
+    return cfg
+
+
+def _apply_gui_settings(cfg):
+    """Thresholds changed from the GUI Settings tab (gui_settings.py), if any.
+
+    Never stops the guardian: on any problem it keeps the file/default values.
+    """
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import gui_settings
+        kill = gui_settings.value("guardian_kill_avail_mb", cfg["kill_avail_mb"])
+        warn = gui_settings.value("guardian_warn_avail_mb", cfg["warn_avail_mb"])
+        if warn > kill:
+            if (kill, warn) != (cfg["kill_avail_mb"], cfg["warn_avail_mb"]):
+                _log(f"GUI settings: kill<{kill}MB warn<{warn}MB")
+            cfg["kill_avail_mb"], cfg["warn_avail_mb"] = kill, warn
+        else:
+            _log(f"GUI settings ignored: warn {warn}MB must be above kill {kill}MB")
+    except Exception as e:
+        _log(f"GUI settings not read ({e}); keeping file/default thresholds")
+
+
 def main():
     cfg = dict(DEFAULTS)
     # config/mem_guardian.json is read even when no path is given on the command
@@ -178,6 +208,7 @@ def main():
             _log(f"could not read config {path} ({e}); using defaults")
     else:
         _log(f"no config at {path}; using defaults")
+    _apply_gui_settings(cfg)
 
     _log(f"START kill<{cfg['kill_avail_mb']}MB warn<{cfg['warn_avail_mb']}MB "
          f"poll={cfg['poll_s']}s  (MemAvailable now {mem_available_mb()}MB)")
