@@ -109,6 +109,12 @@ SCHEMA = {
                        'applies': NEXT_RUN, **_i(-200, 200), 'plans': ['hv_scan'], 'help': ''},
     'hv_scan_points': {'group': 'run', 'label': 'Voltage scan: number of points',
                        'applies': NEXT_RUN, **_i(1, 50), 'plans': ['hv_scan'], 'help': ''},
+    'hv_scan_voltages': {'group': 'run', 'label': 'Voltage scan: explicit voltages (V)',
+                         'applies': NEXT_RUN, 'type': 'intlist', 'min': 0, 'max': 900,
+                         'plans': ['hv_scan'], 'optional': True,
+                         'help': 'Comma-separated, in order (e.g. 450, 440, 420, 400) for '
+                                 'uneven steps. Leave empty to use first point / step / '
+                                 'number of points.'},
     'hv_scan_min_per_point': {'group': 'run', 'label': 'Voltage scan: minutes per point',
                               'applies': NEXT_RUN, **_i(1, 600), 'plans': ['hv_scan'],
                               'help': 'Every point the same length, so points compare.'},
@@ -258,6 +264,14 @@ def coerce(key, v):
             v = str(v)
             if v not in d['choices']:
                 raise ValueError
+        elif t == 'intlist':
+            if isinstance(v, str):
+                v = [x.strip() for x in v.split(',') if x.strip()]
+            v = [int(x) for x in v]
+            if not v or any(not d['min'] <= x <= d['max'] for x in v):
+                raise ValueError
+            if len(set(v)) != len(v):
+                raise ValueError
         elif t == 'list':
             if isinstance(v, str):
                 v = [x.strip() for x in v.split(',') if x.strip()]
@@ -275,6 +289,8 @@ def coerce(key, v):
         raise ValueError(f"{d['label']}: {v!r} is not a valid "
                          + (f"choice ({', '.join(d['choices'])})" if t == 'choice'
                             else 'non-empty list without repeats' if t == 'list'
+                            else (f"comma-separated list of whole numbers {d['min']}-{d['max']}"
+                                  " without repeats") if t == 'intlist'
                             else 'HOST:PORT (e.g. 192.168.1.16:6006)' if t == 'hostport'
                             else t))
     if t in ('int', 'float') and not d['min'] <= v <= d['max']:
@@ -297,17 +313,21 @@ def check_together(vals, hv_targets=True, stations=None, ceilings=None):
                         f"({', '.join(stations)}).")
         step, n, v0 = (vals.get('hv_scan_step_v'), vals.get('hv_scan_points'),
                        vals.get('hv_scan_start_v'))
-        if step == 0 and (n or 0) > 1:
-            errs.append('Voltage scan: the step is 0, so every point would be the same.')
-        if None not in (step, n, v0):
-            last = v0 + (n - 1) * step
-            role = 'drift' if vals.get('hv_scan_mode') == 'drift' else 'mesh'
-            top = (ceilings or {}).get(role)
-            if last < 0:
-                errs.append(f'Voltage scan: the last point would be {last} V.')
-            if top is not None and max(v0, last) > top:
-                errs.append(f'Voltage scan: {max(v0, last)} V is above the {role} ceiling '
-                            f'({top:g} V).')
+        role = 'drift' if vals.get('hv_scan_mode') == 'drift' else 'mesh'
+        top = (ceilings or {}).get(role)
+        explicit = vals.get('hv_scan_voltages') or []
+        if explicit:
+            pts = list(explicit)
+        elif None not in (step, n, v0):
+            if step == 0 and n > 1:
+                errs.append('Voltage scan: the step is 0, so every point would be the same.')
+            pts = [v0 + i * step for i in range(n)]
+        else:
+            pts = []
+        if pts and min(pts) < 0:
+            errs.append(f'Voltage scan: a point would be {min(pts)} V.')
+        if pts and top is not None and max(pts) > top:
+            errs.append(f'Voltage scan: {max(pts)} V is above the {role} ceiling ({top:g} V).')
     kill, warn = vals.get('guardian_kill_avail_mb'), vals.get('guardian_warn_avail_mb')
     if kill is not None and warn is not None and warn <= kill:
         errs.append(f'Memory guardian: the warn threshold ({warn} MB) must be above the '

@@ -360,6 +360,8 @@ HV_SCAN_START_V = 450
 HV_SCAN_STEP_V = -10
 HV_SCAN_POINTS = 5
 HV_SCAN_MIN_PER_POINT = 12
+# explicit voltages, in order (uneven steps); empty = the start/step/points rule
+HV_SCAN_VOLTAGES = ()
 
 # ---------------------------------------------------------------------------
 # RUN_PLAN='lab_source': the lab measurement. N identical sub-runs at whatever
@@ -636,6 +638,7 @@ HV_SCAN_START_V = _gs.value('hv_scan_start_v', HV_SCAN_START_V)
 HV_SCAN_STEP_V = _gs.value('hv_scan_step_v', HV_SCAN_STEP_V)
 HV_SCAN_POINTS = _gs.value('hv_scan_points', HV_SCAN_POINTS)
 HV_SCAN_MIN_PER_POINT = _gs.value('hv_scan_min_per_point', HV_SCAN_MIN_PER_POINT)
+HV_SCAN_VOLTAGES = tuple(_gs.value('hv_scan_voltages', list(HV_SCAN_VOLTAGES)))
 
 
 class Config(RunConfigBase):
@@ -776,8 +779,9 @@ class Config(RunConfigBase):
                 raise SystemExit(f'hv_scan: detectors {list(HV_SCAN_DETECTORS)} not all '
                                  f'stations of the setup ({list(P2_HV)})')
             points = []
-            for i in range(HV_SCAN_POINTS):
-                v = HV_SCAN_START_V + i * HV_SCAN_STEP_V
+            steps = (list(HV_SCAN_VOLTAGES) if HV_SCAN_VOLTAGES else
+                     [HV_SCAN_START_V + i * HV_SCAN_STEP_V for i in range(HV_SCAN_POINTS)])
+            for i, v in enumerate(steps):
                 volts = {d: dict(OPERATING_HV[d]) for d in P2_HV}
                 for d in HV_SCAN_DETECTORS:
                     if HV_SCAN_MODE == 'drift':

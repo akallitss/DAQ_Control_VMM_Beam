@@ -50,9 +50,14 @@ from datetime import datetime, timedelta
 
 VMM_FLASK = 'http://localhost:5002'
 DREAM_FLASK = 'http://128.141.21.144:5001'
-REPO = '/local/p2/DAQ_Control_VMM_Beam'
-LOG = '/local/p2/config_scan.log'
+REPO = os.path.dirname(os.path.abspath(__file__))   # /local/p2/DAQ_Control_VMM_Beam on the box
+# CONFIG_SCAN_LOG redirects the log: the GUI's "Check" runs a --dry-run into a
+# scratch log, so a check never shows up as a scan in the real one.
+LOG = os.environ.get('CONFIG_SCAN_LOG', '/local/p2/config_scan.log')
 NO_AUTO_RECOVERY = os.path.join(REPO, 'config', 'no_auto_recovery')
+# "Stop after the current run" (GUI Setup tab, or `touch` it): checked before
+# each config is started; the run in progress finishes normally.
+STOP_FLAG = os.path.join(REPO, 'config', 'config_scan_stop')
 HV_HOLD = os.path.join(REPO, 'config', 'hv_hold')
 
 STEP_TIMEOUT_S = 300
@@ -555,8 +560,16 @@ def main():
         log(f'   disabled capture_guard auto-recovery via {NO_AUTO_RECOVERY}')
 
     done, failed = [], []
+    if not a.dry_run and os.path.exists(STOP_FLAG):
+        os.remove(STOP_FLAG)                 # a stop request left by an earlier scan
     try:
-        for cfg in configs:
+        for i, cfg in enumerate(configs):
+            if not a.dry_run and os.path.exists(STOP_FLAG):
+                os.remove(STOP_FLAG)
+                log(f'STOP requested: not starting {cfg} or the '
+                    f'{len(configs) - i - 1} after it')
+                failed += [(c, 'stopped') for c in configs[i:]]
+                break
             # Hold the crate biased between runs — only the chip config changes,
             # so cycling HV every time is pure cost. Released before the LAST
             # config so that run powers the crate down normally. Also released

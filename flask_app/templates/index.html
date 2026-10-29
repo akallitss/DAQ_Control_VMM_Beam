@@ -693,6 +693,41 @@
     </div>
   </div>
 
+  <div class="panel mb-3">
+    <div class="panel-header"><span class="panel-title">Config scan</span>
+      <span class="panel-header-note">A sequence of runs, one per chip configuration: for
+        each config, apply → warm reset (all hybrids ready) → run → next. Driven by
+        config_scan.py, which refuses a config it cannot finish in time.</span></div>
+    <div class="panel-body">
+      <div class="row g-3">
+        <div class="col-lg-6">
+          <div style="font-size:0.85rem;" class="mb-1"><b>Available configs</b>
+            <span class="text-muted" id="cs-count"></span></div>
+          <input id="cs-filter" class="form-control form-control-sm mb-1" placeholder="filter, e.g. peaktime200 thr">
+          <div id="cs-avail" style="max-height:260px; overflow-y:auto; font-size:0.8rem;"></div>
+        </div>
+        <div class="col-lg-6">
+          <div style="font-size:0.85rem;" class="mb-1"><b>Scan, in this order</b>
+            <span class="text-muted">(click a config on the left to add it)</span></div>
+          <div id="cs-chosen" style="max-height:260px; overflow-y:auto; font-size:0.8rem;"></div>
+          <div class="mt-2" style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap; font-size:0.85rem;">
+            <span>minutes per config <input id="cs-min" type="number" min="2" max="600" class="form-control form-control-sm d-inline-block" style="width:5rem;"></span>
+            <span>finish by <input id="cs-until" type="time" class="form-control form-control-sm d-inline-block" style="width:7rem;"></span>
+          </div>
+          <div id="cs-plan" class="text-muted mt-1" style="font-size:0.8rem;"></div>
+        </div>
+      </div>
+      <div class="mt-2" style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+        <button class="btn btn-info btn-sm" id="cs-check">Check (dry run)</button>
+        <button class="btn btn-success btn-sm" id="cs-start" disabled>Start scan</button>
+        <button class="btn btn-outline-warning btn-sm" id="cs-stop-after">Stop after the current run</button>
+        <button class="btn btn-outline-danger btn-sm" id="cs-stop-now">Stop now</button>
+      </div>
+      <div id="cs-result" class="mt-2" style="font-size:0.85rem;"></div>
+      <div id="cs-progress" class="mt-3"></div>
+    </div>
+  </div>
+
   <div class="panel mb-3 d-none" id="su-editor">
     <div class="panel-header"><span class="panel-title">Change the stand</span>
       <span class="panel-header-note">Saved as a new dated entry, in force from the moment
@@ -3830,6 +3865,9 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
     else if (s.type === "list")
       input = stations.map(st => `<label class="me-3"><input type="checkbox" class="form-check-input"
                  data-k="${s.key}" data-item="${esc(st)}"${(v || []).includes(st) ? " checked" : ""}> ${esc(st)}</label>`).join("");
+    else if (s.type === "intlist")
+      input = `<input id="${id}" data-k="${s.key}" type="text" class="form-control form-control-sm"
+                 style="width:16rem;" placeholder="e.g. 450, 440, 420, 400" value="${esc((v || []).join(", "))}">`;
     else
       input = `<input id="${id}" data-k="${s.key}" type="number" class="form-control form-control-sm"
                  style="width:8rem;" min="${s.min}" max="${s.max}" step="${s.type === "float" ? "any" : 1}" value="${esc(v)}">`;
@@ -3847,8 +3885,10 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
     else if (p === "trigger_test") s = `${val("trigger_test_min")} min`;
     else if (p === "operating_long") s = `${val("operating_long_n_subruns")} × ${val("operating_long_subrun_min")} min = ${t(val("operating_long_n_subruns") * val("operating_long_subrun_min"))}`;
     else if (p === "hv_scan") {
-      const n = val("hv_scan_points"), v0 = val("hv_scan_start_v"), dv = val("hv_scan_step_v");
-      const pts = Array.from({length: Math.min(n, 50)}, (_, i) => v0 + i * dv);
+      const list = val("hv_scan_voltages");
+      const pts = Array.isArray(list) && list.length ? list
+        : Array.from({length: Math.min(val("hv_scan_points"), 50)}, (_, i) => val("hv_scan_start_v") + i * val("hv_scan_step_v"));
+      const n = pts.length;
       s = `${n} points × ${val("hv_scan_min_per_point")} min = ${t(n * val("hv_scan_min_per_point"))}; ` +
           `${val("hv_scan_mode") === "drift" ? "drift" : "mesh"}: ${pts.join(", ")} V on ${fmt(val("hv_scan_detectors"))}`;
     } else s = `${val("scan_subrun_min")} min per point (points fixed in the code)`;
@@ -3869,7 +3909,12 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
     const s = runS.find(x => x.key === k);
     if (s.type === "list")
       draft[k] = [...document.querySelectorAll(`[data-k="${k}"]`)].filter(c => c.checked).map(c => c.dataset.item);
-    else if (s.type === "int" || s.type === "float") draft[k] = el.value === "" ? "" : Number(el.value);
+    else if (s.type === "intlist") {
+      const t = el.value.trim();
+      // empty = back to the start/step/points rule (the server resets the key)
+      draft[k] = t === "" ? "" : t.split(",").map(x => x.trim()).filter(x => x !== "").map(Number);
+      if (t === "" && !(s.value || []).length) { delete draft[k]; renderRun(); return; }
+    } else if (s.type === "int" || s.type === "float") draft[k] = el.value === "" ? "" : Number(el.value);
     else draft[k] = el.value;
     if (JSON.stringify(draft[k]) === JSON.stringify(s.value)) delete draft[k];
     renderRun();
@@ -4050,6 +4095,141 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
 
   const tab = document.querySelector('a[href="#setup"]');
   if (tab) tab.addEventListener("shown.bs.tab", () => { loadRun(); loadSetup(); });
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Setup tab: config scan panel (/config_scan): choose configs, check with the
+// script's dry run, start/stop config_scan.py, follow its progress.
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const short = f => f.replace(/^p2b-config-cern-ext_/, "").replace(/\.txt$/, "");
+  let st = null, chosen = [], checked = false;
+
+  function plan() {
+    const m = Number($("cs-min").value) || 0, n = chosen.length, oh = (st && st.overhead_min) || 6;
+    const total = n * (m + oh);
+    const end = new Date(Date.now() + total * 60000);
+    $("cs-plan").textContent = n ? `${n} config(s) × (${m} min + ~${oh} min apply/reset/start) = ` +
+      `${total >= 60 ? (total / 60).toFixed(1) + " h" : total + " min"}; done around ` +
+      `${end.toTimeString().slice(0, 5)} if started now` : "";
+    if (!$("cs-until").value && n) $("cs-until").value = new Date(Date.now() + (total + 10) * 60000).toTimeString().slice(0, 5);
+  }
+
+  function renderLists() {
+    const f = $("cs-filter").value.toLowerCase().split(/\s+/).filter(Boolean);
+    const avail = st.configs.filter(c => f.every(w => c.toLowerCase().includes(w)));
+    $("cs-count").textContent = `(${avail.length} of ${st.configs.length})`;
+    $("cs-avail").innerHTML = avail.map(c => `<div class="py-1 border-bottom border-secondary"
+        style="cursor:pointer;" data-add="${esc(c)}" title="${esc(c)}">+ ${esc(short(c))}</div>`).join("");
+    $("cs-chosen").innerHTML = chosen.length ? chosen.map((c, i) => `<div class="py-1 border-bottom border-secondary"
+        style="display:flex; gap:0.4rem; align-items:center;" title="${esc(c)}">
+        <span class="text-muted" style="width:1.6rem;">${i + 1}.</span><span style="flex:1;">${esc(short(c))}</span>
+        <button class="btn btn-outline-secondary btn-sm py-0" data-up="${i}" ${i ? "" : "disabled"}>↑</button>
+        <button class="btn btn-outline-secondary btn-sm py-0" data-down="${i}" ${i < chosen.length - 1 ? "" : "disabled"}>↓</button>
+        <button class="btn btn-outline-danger btn-sm py-0" data-rm="${i}">×</button></div>`).join("")
+      : '<div class="text-muted">none yet</div>';
+    plan();
+  }
+
+  function dirty() { checked = false; $("cs-start").disabled = true; }
+
+  $("cs-filter").addEventListener("input", renderLists);
+  ["cs-min", "cs-until"].forEach(id => $(id).addEventListener("input", () => { dirty(); plan(); }));
+  $("cs-avail").addEventListener("click", ev => {
+    const c = ev.target.closest("[data-add]");
+    if (c) { chosen.push(c.dataset.add); dirty(); renderLists(); }
+  });
+  $("cs-chosen").addEventListener("click", ev => {
+    const b = ev.target.closest("button");
+    if (!b) return;
+    const i = Number(b.dataset.up ?? b.dataset.down ?? b.dataset.rm);
+    if (b.dataset.rm !== undefined) chosen.splice(i, 1);
+    else {
+      const j = b.dataset.up !== undefined ? i - 1 : i + 1;
+      [chosen[i], chosen[j]] = [chosen[j], chosen[i]];
+    }
+    dirty(); renderLists();
+  });
+
+  const body = () => JSON.stringify({ configs: chosen, minutes: Number($("cs-min").value), until: $("cs-until").value });
+
+  $("cs-check").addEventListener("click", async () => {
+    $("cs-result").innerHTML = '<span class="text-muted">checking…</span>';
+    const d = await (await fetch("/config_scan/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: body() })).json();
+    checked = d.success && !st.running;
+    $("cs-start").disabled = !checked;
+    $("cs-result").innerHTML = (d.success ? '<div class="text-success">The scan would run as follows (dry run, nothing touched):</div>'
+                                          : `<div class="text-danger">${(d.errors || []).map(esc).join("<br>")}</div>`) +
+      (d.notes || []).map(n => `<div class="text-warning">${esc(n)}</div>`).join("") +
+      (d.output && d.output.length ? `<pre class="mb-0" style="font-size:0.75rem; max-height:200px; overflow:auto;">${esc(d.output.join("\n"))}</pre>` : "");
+  });
+
+  $("cs-start").addEventListener("click", async () => {
+    if (!checked) return;
+    if (!confirm(`Start the config scan now?\n\n${chosen.length} config(s), ${$("cs-min").value} min each, ` +
+                 `finishing by ${$("cs-until").value}.\nEach config: apply → warm reset → run. It runs unattended.`)) return;
+    const d = await (await fetch("/config_scan/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: body() })).json();
+    if (d.success) { showPopup(d.message, "#28a745"); dirty(); }
+    else $("cs-result").innerHTML = `<div class="text-danger">${(d.errors || []).map(esc).join("<br>")}</div>`;
+    load();
+  });
+
+  async function stop(mode) {
+    const msg = mode === "now"
+      ? "Interrupt the config scan now? No further config is started; the run in progress continues to its end (use Stop Run to end it)."
+      : "Stop the config scan after the current run? The run in progress finishes normally.";
+    if (!confirm(msg)) return;
+    const d = await (await fetch("/config_scan/stop", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                         body: JSON.stringify({ mode }) })).json();
+    showPopup(d.message, d.success ? "#ffc107" : "#dc3545");
+    load();
+  }
+  $("cs-stop-after").addEventListener("click", () => stop("after_run"));
+  $("cs-stop-now").addEventListener("click", () => stop("now"));
+
+  function renderProgress() {
+    const p = st.progress;
+    $("cs-stop-after").disabled = !st.running || st.stop_requested;
+    $("cs-stop-now").disabled = !st.running;
+    if (st.running) $("cs-start").disabled = true;
+    if (!p) { $("cs-progress").innerHTML = '<span class="text-muted">No scan in the log yet.</span>'; return; }
+    const badge = {queued: "bg-secondary", running: "bg-info text-dark", done: "bg-success",
+                   failed: "bg-danger", skipped: "bg-warning text-dark", stopped: "bg-secondary"};
+    $("cs-progress").innerHTML =
+      `<div style="font-size:0.85rem;"><b>${st.running ? "Scan running" : "Last scan"}</b>
+         <span class="text-muted">${esc(p.header)}</span>
+         ${st.stop_requested ? '<span class="badge bg-warning text-dark ms-1">stop after current run requested</span>' : ""}</div>
+       <div class="table-responsive"><table class="table table-dark table-sm align-middle mb-1">
+         <thead><tr><th>#</th><th>Config</th><th>State</th><th>Run</th><th>Detail</th></tr></thead><tbody>` +
+      p.rows.map((r, i) => `<tr><td>${i + 1}</td><td title="${esc(r.cfg)}">${esc(short(r.cfg))}</td>
+         <td><span class="badge ${badge[r.state] || "bg-secondary"}">${esc(r.state)}</span></td>
+         <td>${esc(r.run || "")}</td><td class="text-muted" style="font-size:0.8rem;">${esc(r.detail)}</td></tr>`).join("") +
+      `</tbody></table></div>
+       <details><summary class="text-muted" style="font-size:0.8rem;">log</summary>
+         <pre style="font-size:0.75rem; max-height:220px; overflow:auto;">${esc(p.tail.join("\n"))}</pre></details>`;
+  }
+
+  async function load() {
+    st = await (await fetch("/config_scan")).json();
+    $("cs-min").min = st.min_minutes;
+    if (!$("cs-min").value) {
+      try {
+        const s = (await (await fetch("/settings")).json()).settings.find(x => x.key === "config_scan_subrun_min");
+        $("cs-min").value = s ? s.value : 30;
+      } catch (e) { $("cs-min").value = 30; }
+    }
+    renderLists();
+    renderProgress();
+  }
+
+  const pane = $("setup");
+  const tab = document.querySelector('a[href="#setup"]');
+  if (tab) tab.addEventListener("shown.bs.tab", load);
+  setInterval(() => { if (pane.classList.contains("active") && st && st.running) load(); }, 10000);
 })();
 </script>
 

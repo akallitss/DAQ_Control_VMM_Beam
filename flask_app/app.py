@@ -34,6 +34,7 @@ from daq_status import (get_vmm_daq_status, get_hv_control_status,
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Add parent dir to path
 from run_config_beam import Config, BASE_DATA_DIR, SITE, IS_BEAM_SITE
 import importlib
+import shlex
 import gui_settings
 import p2_readout_config as p2cfg
 from get_run_events import get_total_events_for_run
@@ -913,7 +914,10 @@ def setup_entry():
             f"This machine has no editable setup copy in {setup_source.SETUPS_DIR}."]}), 409
     try:
         entry = _entry_from_request(data)
-        entry.update(valid_from=now(), author=f"Setup tab, {request.remote_addr}")
+        vf, last = now(), load_setup(ref).cabling[-1].valid_from
+        if vf <= last:                     # two saves within the same second
+            vf = last + timedelta(seconds=1)
+        entry.update(valid_from=vf, author=f"Setup tab, {request.remote_addr}")
         text = add_entry(ref, entry)
     except ValueError as e:
         return jsonify({"success": False, "errors": [str(e)]}), 400
@@ -1018,6 +1022,190 @@ def setup_get():
                "ceilings": hv.get("ceilings"), "rows": hv_rows} if s.hv else None,
         "history": history,
     })
+
+
+# ---------------------------------------------------------------------------
+# Config scan panel (Setup tab): choose chip configs and run config_scan.py,
+# the sequencer that takes one run per config (select -> apply -> warm reset
+# -> run -> next), instead of typing its command line in a tmux session.
+# ---------------------------------------------------------------------------
+CONFIG_SCAN_PY = f"{BASE_DIR}/config_scan.py"
+CONFIG_SCAN_PYTHON = f"{BASE_DIR}/.venv/bin/python"
+CONFIG_SCAN_LOG = "/local/p2/config_scan.log"
+CONFIG_SCAN_STOP = f"{BASE_DIR}/config/config_scan_stop"
+CONFIG_SCAN_TMUX = "vmm_config_scan"
+CONFIG_SCAN_OVERHEAD_MIN = 6        # config_scan.OVERHEAD_MIN: apply, warm reset, start
+
+
+def _effective_run_plan():
+    """RUN_PLAN the next run would take: the GUI's value, else the code literal."""
+    return gui_settings.overrides().get("run_plan", _settings_defaults().get("run_plan"))
+
+
+def _config_scan_pids():
+    r = subprocess.run(["pgrep", "-f", "config_scan.py --until"], capture_output=True, text=True)
+    return [int(p) for p in r.stdout.split() if p.strip().isdigit()]
+
+
+def _config_scan_progress(max_lines=4000):
+    """The last scan in the log: its configs with state, and its last lines."""
+    try:
+        with open(CONFIG_SCAN_LOG, errors="replace") as f:
+            lines = f.readlines()[-max_lines:]
+    except OSError:
+        return None
+    start = max((i for i, l in enumerate(lines) if "| CONFIG SCAN START:" in l), default=None)
+    if start is None:
+        return None
+    rows, cur, ended, header = {}, None, False, lines[start].split("| ", 1)[-1].strip()
+    order = []
+    for l in lines[start:]:
+        msg = l.split("| ", 1)[-1].rstrip("\n")
+        m = msg.strip()
+        if m.startswith("queued: "):
+            c = m[len("queued: "):]
+            order.append(c)
+            rows[c] = {"cfg": c, "state": "queued", "run": None, "detail": ""}
+        elif m.startswith("=== ") and m.endswith(" ==="):
+            cur = m[4:].rsplit(" (", 1)[0]
+            if cur in rows:
+                rows[cur]["state"] = "running"
+        elif cur in rows and m.startswith("started run_"):
+            rows[cur]["run"] = m.split()[1]
+        elif cur in rows and " finished " in m:
+            rows[cur].update(state="done", detail=m.split(" finished ", 1)[1].lstrip("— "))
+        elif m.startswith("SKIP "):
+            c = m[5:].split(":", 1)[0]
+            if c in rows:
+                rows[c].update(state="skipped", detail=m.split(":", 1)[1].strip())
+        elif m.startswith("STOP requested"):
+            for r in rows.values():
+                if r["state"] == "queued":
+                    r["state"] = "stopped"
+        elif cur in rows and rows[cur]["state"] == "running" and (
+                "refusing" in m or "failed" in m or "ABORTING" in m or "STOPPING" in m):
+            rows[cur].update(state="failed", detail=m)
+        elif m.startswith("CONFIG SCAN END"):
+            ended = True
+            for r in rows.values():
+                if r["state"] == "running":
+                    r["state"] = "failed"
+    return {"header": header, "ended": ended, "rows": [rows[c] for c in order],
+            "tail": [l.rstrip("\n") for l in lines[start:]][-25:]}
+
+
+def _config_scan_request(data):
+    configs = [str(c).strip() for c in (data.get("configs") or []) if str(c).strip()]
+    if not configs:
+        raise ValueError("choose at least one chip configuration")
+    known = set(chip.ext_files())
+    unknown = [c for c in configs if c not in known]
+    if unknown:
+        raise ValueError(f"not in config_ext: {', '.join(unknown)}")
+    try:
+        minutes = int(data.get("minutes"))
+    except (TypeError, ValueError):
+        raise ValueError("minutes per config must be a whole number")
+    least = 5 if IS_BEAM_SITE else 2
+    if not least <= minutes <= 600:
+        raise ValueError(f"minutes per config must be {least}-600")
+    until = str(data.get("until", "")).strip()
+    if not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", until):
+        raise ValueError("finish by must be a time HH:MM")
+    return configs, minutes, until
+
+
+def _config_scan_cmd(configs, minutes, until, dry_run=False):
+    return ([CONFIG_SCAN_PYTHON, CONFIG_SCAN_PY, "--until", until,
+             "--configs", ",".join(configs), "--minutes", str(minutes)]
+            + (["--dry-run"] if dry_run else []))
+
+
+@app.route("/config_scan")
+def config_scan_status():
+    return jsonify({"configs": chip.ext_files(), "running": bool(_config_scan_pids()),
+                    "stop_requested": os.path.exists(CONFIG_SCAN_STOP),
+                    "progress": _config_scan_progress(), "overhead_min": CONFIG_SCAN_OVERHEAD_MIN,
+                    "min_minutes": 5 if IS_BEAM_SITE else 2, "run_state": _run_state()})
+
+
+@app.route("/config_scan/check", methods=["POST"])
+def config_scan_check():
+    """The script's own --dry-run, into a scratch log: what it would do, nothing touched."""
+    try:
+        configs, minutes, until = _config_scan_request(request.get_json(silent=True) or {})
+    except ValueError as e:
+        return jsonify({"success": False, "errors": [str(e)]}), 400
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        env = {**os.environ, "CONFIG_SCAN_LOG": os.path.join(d, "dry.log")}
+        r = subprocess.run(_config_scan_cmd(configs, minutes, until, dry_run=True),
+                           capture_output=True, text=True, timeout=60, env=env, cwd=BASE_DIR)
+    out = [l.split("| ", 1)[-1] for l in r.stdout.splitlines()]
+    notes = []
+    if _effective_run_plan() != "config_scan":
+        notes.append(f"The run type is '{_effective_run_plan()}'; Start will set it to "
+                     "'config_scan' (the scan refuses any other).")
+    ok = r.returncode == 0 and not any(l.startswith(("Only ", "REFUSING")) for l in out)
+    return jsonify({"success": ok, "output": out, "notes": notes,
+                    "errors": [] if ok else [out[-1] if out else r.stderr.strip()[-300:]]})
+
+
+@app.route("/config_scan/start", methods=["POST"])
+def config_scan_start():
+    try:
+        configs, minutes, until = _config_scan_request(request.get_json(silent=True) or {})
+    except ValueError as e:
+        return jsonify({"success": False, "errors": [str(e)]}), 400
+    if _config_scan_pids():
+        return jsonify({"success": False, "errors": ["A config scan is already running."]}), 409
+    state = _run_state()
+    if state not in RUN_IDLE_STATES:
+        return jsonify({"success": False, "errors": [
+            f"A run is in progress ({state}); start the scan when it has ended."]}), 409
+    # the scan only runs with RUN_PLAN config_scan; set it the way the tab does
+    if _effective_run_plan() != "config_scan":
+        gui_settings.save({"run_plan": "config_scan"}, who=request.remote_addr or "gui")
+        log_event("SETTING", "flask_config_scan", key="run_plan", new="config_scan",
+                  remote_addr=request.remote_addr)
+    if os.path.exists(CONFIG_SCAN_STOP):
+        os.remove(CONFIG_SCAN_STOP)
+    subprocess.run(["tmux", "kill-session", "-t", CONFIG_SCAN_TMUX], capture_output=True)
+    cmd = " ".join(shlex.quote(a) for a in _config_scan_cmd(configs, minutes, until))
+    subprocess.run(["tmux", "new-session", "-d", "-s", CONFIG_SCAN_TMUX, "-c", BASE_DIR,
+                    "bash", "-c", f"{cmd}; echo; echo '[config scan ended - press Enter]'; read"],
+                   check=True)
+    log_event("CONFIG_SCAN_START", "flask_config_scan", n=len(configs), minutes=minutes,
+              until=until, configs=",".join(configs), remote_addr=request.remote_addr)
+    return jsonify({"success": True, "message":
+                    f"Config scan started: {len(configs)} config(s) x {minutes} min, "
+                    f"finishing by {until} (tmux {CONFIG_SCAN_TMUX})."})
+
+
+@app.route("/config_scan/stop", methods=["POST"])
+def config_scan_stop():
+    """after_run: no further config is started; now: interrupt the sequencer
+    (its cleanup runs). The run in progress is not stopped either way; use
+    Stop Run for that."""
+    mode = (request.get_json(silent=True) or {}).get("mode", "after_run")
+    pids = _config_scan_pids()
+    if not pids:
+        return jsonify({"success": False, "message": "No config scan is running."}), 400
+    if mode == "now":
+        import signal
+        for p in pids:
+            try:
+                os.kill(p, signal.SIGINT)
+            except OSError:
+                pass
+        log_event("CONFIG_SCAN_STOP", "flask_config_scan", mode="now", remote_addr=request.remote_addr)
+        return jsonify({"success": True, "message": "Config scan interrupted. The run in "
+                        "progress continues to its end; use Stop Run to end it now."})
+    with open(CONFIG_SCAN_STOP, "w") as f:
+        f.write(f"requested from the GUI by {request.remote_addr}\n")
+    log_event("CONFIG_SCAN_STOP", "flask_config_scan", mode="after_run",
+              remote_addr=request.remote_addr)
+    return jsonify({"success": True, "message": "The scan will stop after the current run."})
 
 
 @app.route("/settings/restart/<component>", methods=["POST"])
