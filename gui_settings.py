@@ -41,9 +41,9 @@ QA = 'next Start QA'
 LIVE = 'next Start of the Live monitor'
 GUARDIAN = 'restart of the memory guardian'
 
-PLANS = ['config_scan', 'lab_source', 'trigger_test', 'operating_long',
+PLANS = ['config_scan', 'lab_source', 'trigger_test', 'operating_long', 'hv_scan',
          'mesh_then_drift', 'mesh_then_drift_common', 'retake_run25']
-HV_PLANS = ('mesh_then_drift', 'mesh_then_drift_common', 'retake_run25')
+HV_PLANS = ('mesh_then_drift', 'mesh_then_drift_common', 'retake_run25', 'hv_scan')
 
 
 def _i(lo, hi):
@@ -61,34 +61,57 @@ def _c(*choices):
 # key -> definition. group/label/help are shown in the tab.
 SCHEMA = {
     # --- run ------------------------------------------------------------------
-    'run_plan': {'group': 'run', 'label': 'Run plan', 'applies': NEXT_RUN, **_c(*PLANS),
-                 'help': "What a Start Run takes: 'config_scan' one sub-run at fixed HV "
-                         "(the chip config is the variable), 'lab_source' N identical "
-                         "sub-runs, 'trigger_test', 'operating_long'; HV-scan plans only "
-                         "where this machine sets the HV."},
+    'run_plan': {'group': 'run', 'label': 'Run type', 'applies': NEXT_RUN, **_c(*PLANS),
+                 'help': "What a Start Run records: 'lab_source' N identical sub-runs "
+                         "(cosmics, source, pulser); 'config_scan' one sub-run per chip "
+                         "configuration at fixed HV; 'hv_scan' a voltage scan defined "
+                         "below; 'trigger_test' and 'operating_long' as at the beam. "
+                         "Voltage scans only where this DAQ sets the HV."},
     'config_scan_subrun_min': {'group': 'run', 'label': 'config_scan: minutes per run',
                                'applies': NEXT_RUN, **_i(1, 600), 'file': SCAN_MIN_PATH,
                                'help': "Stored in config/scan_subrun_min, which config_scan.py "
-                                       "also writes when it schedules a night."},
+                                       "also writes when it schedules a night.",
+                               'plans': ['config_scan']},
     'lab_measurement': {'group': 'run', 'label': 'lab_source: what is measured',
                         'applies': NEXT_RUN,
                         **_c('cosmics', 'fe55', 'am241', 'pulser', 'noise'),
                         'help': 'Names the sub-runs (cosmics_00, ...) and is recorded in '
-                                'every run config.'},
+                                'every run config as what produced the hits.'},
     'lab_n_subruns': {'group': 'run', 'label': 'lab_source: number of sub-runs',
-                      'applies': NEXT_RUN, **_i(1, 100), 'help': ''},
+                      'applies': NEXT_RUN, **_i(1, 100), 'help': '', 'plans': ['lab_source']},
     'lab_subrun_min': {'group': 'run', 'label': 'lab_source: minutes per sub-run',
                        'applies': NEXT_RUN, **_i(1, 600),
                        'help': 'Each sub-run boundary is an acquisition stop/start, the known '
-                               'non-ready-hybrid risk: 30-60 min is sensible overnight.'},
+                               'non-ready-hybrid risk: 30-60 min is sensible overnight.',
+                       'plans': ['lab_source']},
     'trigger_test_min': {'group': 'run', 'label': 'trigger_test: minutes', 'applies': NEXT_RUN,
-                         **_i(1, 120), 'help': ''},
+                         **_i(1, 120), 'help': '', 'plans': ['trigger_test']},
     'operating_long_n_subruns': {'group': 'run', 'label': 'operating_long: number of sub-runs',
-                                 'applies': NEXT_RUN, **_i(1, 50), 'help': ''},
+                                 'applies': NEXT_RUN, **_i(1, 50), 'help': '',
+                                 'plans': ['operating_long']},
     'operating_long_subrun_min': {'group': 'run', 'label': 'operating_long: minutes per sub-run',
-                                  'applies': NEXT_RUN, **_i(1, 600), 'help': ''},
-    'scan_subrun_min': {'group': 'run', 'label': 'HV scans: minutes per point',
-                        'applies': NEXT_RUN, **_i(1, 600), 'help': ''},
+                                  'applies': NEXT_RUN, **_i(1, 600), 'help': '',
+                                  'plans': ['operating_long']},
+    'scan_subrun_min': {'group': 'run', 'label': 'Beam-test HV scans: minutes per point',
+                        'applies': NEXT_RUN, **_i(1, 600), 'help': '',
+                        'plans': ['mesh_then_drift', 'mesh_then_drift_common', 'retake_run25']},
+    'hv_scan_detectors': {'group': 'run', 'label': 'Voltage scan: detectors stepped',
+                          'applies': NEXT_RUN, 'type': 'list', 'plans': ['hv_scan'],
+                          'help': 'The others stay at their operating point.'},
+    'hv_scan_mode': {'group': 'run', 'label': 'Voltage scan: what moves', 'applies': NEXT_RUN,
+                     **_c('mesh_and_drift', 'mesh', 'drift'), 'plans': ['hv_scan'],
+                     'help': "'mesh_and_drift' steps both by the same amount (each detector "
+                             "keeps its operating gap); 'mesh' or 'drift' steps one only."},
+    'hv_scan_start_v': {'group': 'run', 'label': 'Voltage scan: first point (V)',
+                        'applies': NEXT_RUN, **_i(0, 900), 'plans': ['hv_scan'],
+                        'help': 'Of the mesh (or of the drift in drift mode).'},
+    'hv_scan_step_v': {'group': 'run', 'label': 'Voltage scan: step (V, negative = down)',
+                       'applies': NEXT_RUN, **_i(-200, 200), 'plans': ['hv_scan'], 'help': ''},
+    'hv_scan_points': {'group': 'run', 'label': 'Voltage scan: number of points',
+                       'applies': NEXT_RUN, **_i(1, 50), 'plans': ['hv_scan'], 'help': ''},
+    'hv_scan_min_per_point': {'group': 'run', 'label': 'Voltage scan: minutes per point',
+                              'applies': NEXT_RUN, **_i(1, 600), 'plans': ['hv_scan'],
+                              'help': 'Every point the same length, so points compare.'},
     'capture_duration_s': {'group': 'run', 'label': 'Seconds per capture file',
                            'applies': NEXT_RUN, **_f(10, 3600),
                            'help': 'dumpcap starts a new pcapng this often. QA latency and '
@@ -235,6 +258,13 @@ def coerce(key, v):
             v = str(v)
             if v not in d['choices']:
                 raise ValueError
+        elif t == 'list':
+            if isinstance(v, str):
+                v = [x.strip() for x in v.split(',') if x.strip()]
+            if not isinstance(v, (list, tuple)) or not v or \
+                    not all(isinstance(x, str) and x for x in v) or len(set(v)) != len(v):
+                raise ValueError
+            v = list(v)
         elif t == 'hostport':
             v = str(v).strip()
             m = re.fullmatch(r'(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}):(\d{1,5})', v)
@@ -244,6 +274,7 @@ def coerce(key, v):
     except (ValueError, TypeError):
         raise ValueError(f"{d['label']}: {v!r} is not a valid "
                          + (f"choice ({', '.join(d['choices'])})" if t == 'choice'
+                            else 'non-empty list without repeats' if t == 'list'
                             else 'HOST:PORT (e.g. 192.168.1.16:6006)' if t == 'hostport'
                             else t))
     if t in ('int', 'float') and not d['min'] <= v <= d['max']:
@@ -251,9 +282,32 @@ def coerce(key, v):
     return v
 
 
-def check_together(vals, hv_targets=True):
-    """Checks across settings, on the values that would be in force. List of errors."""
+def check_together(vals, hv_targets=True, stations=None, ceilings=None):
+    """Checks across settings, on the values that would be in force. List of errors.
+
+    stations: the detectors of the stand now (for the voltage-scan list);
+    ceilings: {'mesh': V, 'drift': V} from the setup file.
+    """
     errs = []
+    if vals.get('run_plan') == 'hv_scan':
+        dets = vals.get('hv_scan_detectors') or []
+        bad = [d for d in dets if stations is not None and d not in stations]
+        if bad:
+            errs.append(f"Voltage scan: {', '.join(bad)} is not a detector of the setup "
+                        f"({', '.join(stations)}).")
+        step, n, v0 = (vals.get('hv_scan_step_v'), vals.get('hv_scan_points'),
+                       vals.get('hv_scan_start_v'))
+        if step == 0 and (n or 0) > 1:
+            errs.append('Voltage scan: the step is 0, so every point would be the same.')
+        if None not in (step, n, v0):
+            last = v0 + (n - 1) * step
+            role = 'drift' if vals.get('hv_scan_mode') == 'drift' else 'mesh'
+            top = (ceilings or {}).get(role)
+            if last < 0:
+                errs.append(f'Voltage scan: the last point would be {last} V.')
+            if top is not None and max(v0, last) > top:
+                errs.append(f'Voltage scan: {max(v0, last)} V is above the {role} ceiling '
+                            f'({top:g} V).')
     kill, warn = vals.get('guardian_kill_avail_mb'), vals.get('guardian_warn_avail_mb')
     if kill is not None and warn is not None and warn <= kill:
         errs.append(f'Memory guardian: the warn threshold ({warn} MB) must be above the '
@@ -276,7 +330,7 @@ def _atomic_write(path, text):
     os.replace(tmp, path)
 
 
-def save(changes, who='gui', effective=None, hv_targets=True):
+def save(changes, who='gui', effective=None, hv_targets=True, stations=None, ceilings=None):
     """Apply {key: value or None}; None resets the key to the code default.
 
     Validates every value and the combination first; writes nothing on any
@@ -301,7 +355,7 @@ def save(changes, who='gui', effective=None, hv_targets=True):
     after = dict(effective or {})
     for k, v in typed.items():
         after[k] = v if v is not None else _DEFAULTS.get(k, after.get(k))
-    errs = check_together(after, hv_targets=hv_targets)
+    errs = check_together(after, hv_targets=hv_targets, stations=stations, ceilings=ceilings)
     if errs:
         return False, errs, {}
 

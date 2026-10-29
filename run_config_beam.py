@@ -347,6 +347,20 @@ OPERATING_LONG_P2_HV = dict(SCAN_COMMON_P2_HV)
 OPERATING_LONG_N_SUBRUNS = 2
 OPERATING_LONG_SUBRUN_MIN = 30   # 2026-08-01: 2 x 30 = the 1 h efficiency run
 
+# RUN_PLAN='hv_scan': a voltage scan defined from the GUI (Setup tab -> Run):
+# the chosen detectors step one electrode -- 'mesh', 'drift', or
+# 'mesh_and_drift' (both by the same step, keeping each detector's operating
+# gap) -- from HV_SCAN_START_V by HV_SCAN_STEP_V (negative = down) for
+# HV_SCAN_POINTS points of HV_SCAN_MIN_PER_POINT minutes. Everything else
+# stays at its operating point; ceilings are enforced per point. Needs a site
+# whose run sets the HV (not the lab: banco holds the crate there).
+HV_SCAN_DETECTORS = ('P2_IN', 'P2_MID', 'P2_OUT')
+HV_SCAN_MODE = 'mesh_and_drift'
+HV_SCAN_START_V = 450
+HV_SCAN_STEP_V = -10
+HV_SCAN_POINTS = 5
+HV_SCAN_MIN_PER_POINT = 12
+
 # ---------------------------------------------------------------------------
 # RUN_PLAN='lab_source': the lab measurement. N identical sub-runs at whatever
 # the HV is (banco holds it; see HV_TARGETS), named after what is being measured
@@ -483,6 +497,9 @@ import setup_source as _setup_source  # noqa: E402
 
 SETUP = _setup_source.load(SITE)
 SETUP_REF = _setup_source.setup_ref(SITE)   # what p2_readout_config passes on
+# The stand NOW (a run is configured at its start): the detectors, trigger and
+# cabling of the dated entry in force. Old runs keep the entry of their time.
+STAND = SETUP.at('now')
 _HV = SETUP.hv or {}
 
 
@@ -500,7 +517,7 @@ DRIFT_CEILING_V = _num(_HV.get('ceilings', {}).get('drift', 900))
 # the combined-run trigger sends to Dream to ramp. Where the setup does not
 # set the HV here (the lab: banco holds the crate) the stations carry no
 # channels and HV_TARGETS is False.
-P2_HV = {det: dict(_HV.get('channels', {}).get(det, {})) for det in SETUP.detectors}
+P2_HV = {det: dict(_HV.get('channels', {}).get(det, {})) for det in STAND.detectors}
 # HV-only references (at sps the uRWELL telescope, read out by DREAM): carried
 # in every sub-run's targets at their operating point; scans never step them
 # (scan templates iterate P2_HV only).
@@ -519,7 +536,7 @@ GAS_MIXTURE = ('Ar/Iso 95/5 (UNCONFIRMED 2026-10-22)' if SITE == 'lab'
 # The physical chamber standing at each station (the setup's detector alias;
 # lab only: in the beam test MID was det1 and OUT det3, IN det2/det4/det5 by
 # run; the hybrids H1-H9 did not move, the chambers did).
-LAB_CHAMBERS = {det: d['alias'] for det, d in SETUP.detectors.items() if 'alias' in d}
+LAB_CHAMBERS = {det: d['alias'] for det, d in STAND.detectors.items() if 'alias' in d}
 
 # VMM readout cabling in force NOW (a run is configured at its start), per
 # station: connector -> (hybrid, bottom VMM, top VMM), and the cable on each
@@ -528,9 +545,9 @@ LAB_CHAMBERS = {det: d['alias'] for det, d in SETUP.detectors.items() if 'alias'
 # HITACHI -> SAMPTEC on 2026-08-01). The cable is recorded because the
 # hybrid/VMM numbering does not change when a cable is swapped: without it a
 # cable change would leave no trace in run_config.json.
-_CABLING = SETUP.cabling_at('now')
-P2_VMM_CABLING = {det: {} for det in SETUP.detectors}
-P2_VMM_CABLES = {det: {} for det in SETUP.detectors}
+_CABLING = STAND.cabling[0]
+P2_VMM_CABLING = {det: {} for det in STAND.detectors}
+P2_VMM_CABLES = {det: {} for det in STAND.detectors}
 for _row in sorted(_CABLING.hybrids, key=lambda r: (r['detector'], r['connector'])):
     _c = f"c{_row['connector']}"
     P2_VMM_CABLING[_row['detector']][_c] = (_row['hybrid'], _row['bottom_vmm'],
@@ -579,15 +596,22 @@ if SITE == 'lab':
                    'note': 'no trigger hybrid at the lab stand; H0 not used '
                            '(self-triggered cosmics)'}
 
-# TRIGGER_VMM keeps its measurement notes here, but the trigger channel itself
-# must be the setup file's; refuse to configure a run if the two disagree.
+# The trigger in force is the setup file's (it can be switched on/off from the
+# Setup tab, as a dated entry). TRIGGER_VMM above keeps its measurement notes
+# when it describes that same channel; otherwise it is rebuilt from the file.
 _tc = TRIGGER_VMM.get('trigger_channel')
 _mine = (TRIGGER_VMM.get('hybrid'), _tc['vmm'], _tc['channel']) if _tc else None
-_setup_trig = ((SETUP.trigger['hybrid'], SETUP.trigger['vmm'], SETUP.trigger['ch'])
-               if SETUP.trigger else None)
-if _mine != _setup_trig:
-    raise SystemExit(f'trigger channel disagrees: run_config_beam.TRIGGER_VMM says '
-                     f'(hybrid, vmm, ch) = {_mine}, setup {SETUP.name} says {_setup_trig}')
+_st = STAND.trigger
+if _mine != ((_st['hybrid'], _st['vmm'], _st['ch']) if _st else None):
+    TRIGGER_VMM = ({'hybrid': _st['hybrid'], 'vmms': [_st['vmm']],
+                    'trigger_channel': {'vmm': _st['vmm'], 'channel': _st['ch']},
+                    'note': f'external trigger on hybrid {_st["hybrid"]}, VMM {_st["vmm"]} '
+                            f'ch {_st["ch"]} (setup {SETUP.name}, entry from '
+                            f'{_CABLING.valid_from:%Y-%m-%d %H:%M})'}
+                   if _st else
+                   {'hybrid': None, 'vmms': [], 'trigger_channel': None,
+                    'note': f'no external trigger (setup {SETUP.name}, entry from '
+                            f'{_CABLING.valid_from:%Y-%m-%d %H:%M})'})
 
 # Capture: seconds per pcapng file (dumpcap ring-buffer rotation interval).
 # Site-overridable ('capture_duration_s'): the lab runs longer files than the
@@ -606,6 +630,12 @@ TRIGGER_TEST_MIN = _gs.value('trigger_test_min', TRIGGER_TEST_MIN)
 OPERATING_LONG_N_SUBRUNS = _gs.value('operating_long_n_subruns', OPERATING_LONG_N_SUBRUNS)
 OPERATING_LONG_SUBRUN_MIN = _gs.value('operating_long_subrun_min', OPERATING_LONG_SUBRUN_MIN)
 CAPTURE_DURATION_S = _gs.value('capture_duration_s', CAPTURE_DURATION_S)
+HV_SCAN_DETECTORS = tuple(_gs.value('hv_scan_detectors', list(HV_SCAN_DETECTORS)))
+HV_SCAN_MODE = _gs.value('hv_scan_mode', HV_SCAN_MODE)
+HV_SCAN_START_V = _gs.value('hv_scan_start_v', HV_SCAN_START_V)
+HV_SCAN_STEP_V = _gs.value('hv_scan_step_v', HV_SCAN_STEP_V)
+HV_SCAN_POINTS = _gs.value('hv_scan_points', HV_SCAN_POINTS)
+HV_SCAN_MIN_PER_POINT = _gs.value('hv_scan_min_per_point', HV_SCAN_MIN_PER_POINT)
 
 
 class Config(RunConfigBase):
@@ -738,6 +768,35 @@ class Config(RunConfigBase):
                     for role, (card, ch) in roles.items():
                         hvs.setdefault(str(card), {})[str(ch)] = OPERATING_HV[det][role]
             return hvs
+
+        def _hv_scan_points():
+            """RUN_PLAN='hv_scan': the scan defined by the HV_SCAN_* settings."""
+            unknown = [d for d in HV_SCAN_DETECTORS if d not in P2_HV]
+            if unknown or not HV_SCAN_DETECTORS:
+                raise SystemExit(f'hv_scan: detectors {list(HV_SCAN_DETECTORS)} not all '
+                                 f'stations of the setup ({list(P2_HV)})')
+            points = []
+            for i in range(HV_SCAN_POINTS):
+                v = HV_SCAN_START_V + i * HV_SCAN_STEP_V
+                volts = {d: dict(OPERATING_HV[d]) for d in P2_HV}
+                for d in HV_SCAN_DETECTORS:
+                    if HV_SCAN_MODE == 'drift':
+                        volts[d]['drift'] = v
+                    else:
+                        gap = OPERATING_HV[d]['drift'] - OPERATING_HV[d]['mesh']
+                        volts[d]['mesh'] = v
+                        if HV_SCAN_MODE == 'mesh_and_drift':
+                            volts[d]['drift'] = v + gap
+                for d, roles in volts.items():
+                    for role, vv in roles.items():
+                        ceiling = MESH_CEILING_V if role == 'mesh' else DRIFT_CEILING_V
+                        if not 0 <= vv <= ceiling:
+                            raise SystemExit(f'hv_scan point {i + 1}: {d} {role} = {vv} V '
+                                             f'is outside 0-{ceiling} V')
+                points.append({'sub_run_name': f'hvscan_{HV_SCAN_MODE}_{v}V',
+                               'run_time': HV_SCAN_MIN_PER_POINT, 'post_pause_s': 0,
+                               'hvs': _scan_hvs(volts)})
+            return points
 
         def _scan_hvs(p2_volts):
             """Full ten-channel target map for one scan point.
@@ -894,6 +953,8 @@ class Config(RunConfigBase):
                         'post_pause_s': 0,
                         'hvs': _operating_hvs(),
                     } for i in range(LAB_N_SUBRUNS)],
+                # Voltage scan defined from the GUI (HV_SCAN_* above).
+                'hv_scan': lambda: _hv_scan_points(),
                 # Long physics run, everything at the operating point.
                 'operating_long':
                     lambda: [{
@@ -917,7 +978,7 @@ class Config(RunConfigBase):
             # no-crate site wants.
             if not HV_TARGETS and plan in ('mesh_then_drift',
                                            'mesh_then_drift_common',
-                                           'retake_run25'):
+                                           'retake_run25', 'hv_scan'):
                 raise SystemExit(
                     f"RUN_PLAN {plan!r} steps HV, but site {SITE!r} sets no HV "
                     f"(hv_targets False — the crate is not on this machine). "
@@ -1031,7 +1092,7 @@ class Config(RunConfigBase):
         # (P2_VMM_CABLING above). The uRWELL references are deliberately NOT
         # detectors here — Dream reads them; only their HV rides along in the
         # sub-run targets (URWELL_HV).
-        _P2_Z_MM = {det: d['z_mm'] for det, d in SETUP.detectors.items()}  # setup file
+        _P2_Z_MM = {det: d['z_mm'] for det, d in STAND.detectors.items()}  # setup file
         self.detectors = [
             {
                 'name': det,
@@ -1063,7 +1124,7 @@ class Config(RunConfigBase):
                     },
                 },
             }
-            for det in SETUP.detectors
+            for det in STAND.detectors
         ]
 
         if not self.write_all_detectors_to_json:

@@ -105,3 +105,28 @@ Still carrying their own copies (old QA path): `vmm_qa/vmm_stations.py`
 The GUI's **Setup** tab shows the file read-only: detectors, HV map and
 operating point, every dated cabling entry with what changed from the previous
 one, and the file's git history.
+
+### Changing the stand and defining the run (Setup tab)
+
+- **Run** (what the next Start Run records): measurement (cosmics, Fe55, Am241,
+  pulser, noise), run type, seconds per capture file, number and length of
+  sub-runs, and for `hv_scan` the detectors stepped, what moves (mesh, drift, or
+  both keeping each detector's operating gap), first voltage, signed step,
+  number of points and minutes per point. Stored as GUI settings
+  (gui_settings.py, group `run`); checked against the stand (detectors exist,
+  voltages under the setup's ceilings; no voltage scan where this DAQ does not
+  set the HV, i.e. the lab). Calibration runs are not defined yet.
+- **Stand** ("Change the stand…"): detectors (station, chamber, z), external
+  trigger (on/off, hybrid, VMM, channel) and the cabling, connector by
+  connector with its bottom and top half (VMM ID and strip order each; hybrid,
+  FEC and cable per connector). "Check and preview" validates the whole file and
+  lists the changes; "Save" adds a dated entry in force from now (p2-mapping
+  0.5.0 `edit.add_entry`: inserted as text, comments kept, re-checked) and
+  commits it to /local/p2/p2-setups with the note. Refused while a run is in
+  progress: the processor and live monitor apply the entry in force at each
+  packet's time. The run configuration, processor, QA and live monitor all follow
+  the new entry; earlier runs keep theirs.
+
+vmm_qa/vmm_stations.py and vmm_qa/vmm_scan_curves.py keep their own copies on
+purpose (standalone offline analysis, e.g. on lxplus); rate_guard only uses
+vmm_stations' decoder, not its cabling.

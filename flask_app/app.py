@@ -711,6 +711,13 @@ def _settings_effective(defaults):
     return {k: ov.get(k, defaults.get(k)) for k in gui_settings.SCHEMA}
 
 
+def _stations_or_none():
+    try:
+        return _stand_now()[0]
+    except BaseException:
+        return None
+
+
 def _next_run_number():
     try:
         with open(os.path.join(BASE_DIR, "config", "run_highwater.txt")) as f:
@@ -740,6 +747,7 @@ def settings_get():
         "site": SITE, "hv_targets": bool(getattr(sys.modules.get("run_config_beam"),
                                                  "HV_TARGETS", True)),
         "next_run": _next_run_number(), "chip_config_applied": applied,
+        "stations": _stations_or_none(),
         "run_state": daq_state,
         "running": {n: _tmux_running(n) for n in
                     (PROC_TMUX, QA_TMUX, p2cfg.LIVE_TMUX, "vmm_mem_guardian")},
@@ -754,9 +762,14 @@ def settings_post():
         return jsonify({"success": False, "errors": ["nothing to change"]}), 400
     defaults = _settings_defaults()
     hv = bool(getattr(sys.modules.get("run_config_beam"), "HV_TARGETS", True))
+    try:
+        stations, ceilings, _ = _stand_now()
+    except BaseException:
+        stations, ceilings = None, None
     ok, errors, applied = gui_settings.save(
         changes, who=request.remote_addr or "gui",
-        effective=_settings_effective(defaults), hv_targets=hv)
+        effective=_settings_effective(defaults), hv_targets=hv,
+        stations=stations, ceilings=ceilings)
     if not ok:
         return jsonify({"success": False, "errors": errors}), 400
     for k, (old, new) in applied.items():
@@ -795,6 +808,157 @@ def _cabling_changes(prev, cur):
             if d:
                 out.append(f"{name(k)}: " + ", ".join(d))
     return out
+
+
+RUN_IDLE_STATES = ("WAITING", "Run Complete", "ERROR")
+
+
+def _design_connectors(design):
+    try:
+        from p2_mapping import routing
+        return routing.design(design)["n_connectors"]
+    except Exception:
+        return None
+
+
+def _run_state():
+    try:
+        return get_daq_control_status().get("status")
+    except Exception:
+        return None
+
+
+def _stand_now():
+    """(stations, ceilings, hv_targets) of the stand in force now, for checks."""
+    import setup_source
+    s = setup_source.load(SITE).at("now")
+    hv = s.hv or {}
+    return list(s.detectors), hv.get("ceilings") or {}, bool(hv.get("set_here", True))
+
+
+def _entry_from_request(data):
+    """The new stand entry from the Setup tab's form, typed and trimmed."""
+    def as_int(v, what):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            raise ValueError(f"{what}: {v!r} is not a whole number")
+
+    dets = []
+    for d in data.get("detectors") or []:
+        name = str(d.get("name", "")).strip()
+        if not name:
+            raise ValueError("every detector needs a station name")
+        row = {"name": name}
+        if str(d.get("alias", "")).strip():
+            row["alias"] = str(d["alias"]).strip()
+        try:
+            row["z_mm"] = float(d.get("z_mm"))
+        except (TypeError, ValueError):
+            raise ValueError(f"{name}: z must be a number (mm)")
+        dets.append(row)
+    if not dets:
+        raise ValueError("the stand needs at least one detector")
+    trig = data.get("trigger")
+    if trig:
+        trig = {k: as_int(trig.get(k), f"trigger {k}") for k in ("hybrid", "vmm", "ch")}
+    rows = []
+    for r in data.get("hybrids") or []:
+        where = f"{r.get('detector')} c{r.get('connector')}"
+        row = {"detector": str(r.get("detector", "")).strip(),
+               "connector": as_int(r.get("connector"), f"{where} connector"),
+               "hybrid": as_int(r.get("hybrid"), f"{where} hybrid"),
+               "bottom_vmm": as_int(r.get("bottom_vmm"), f"{where} bottom VMM"),
+               "top_vmm": as_int(r.get("top_vmm"), f"{where} top VMM")}
+        for v, what in ((row["bottom_vmm"], "bottom VMM"), (row["top_vmm"], "top VMM")):
+            if not 0 <= v <= 31:
+                raise ValueError(f"{where}: {what} {v} is outside 0-31")
+        if r.get("fec") not in (None, "", "any"):
+            row["fec"] = as_int(r["fec"], f"{where} FEC")
+        if str(r.get("cable", "")).strip():
+            row["cable"] = str(r["cable"]).strip()
+        for k in ("bottom_order", "top_order"):
+            if r.get(k) and r[k] != "reverse":
+                row[k] = r[k]
+        rows.append(row)
+    if not rows:
+        raise ValueError("the stand needs at least one cabled connector")
+    note = str(data.get("note", "")).strip()
+    return {"note": note, "detectors": dets, "trigger": trig or None, "hybrids": rows}
+
+
+@app.route("/setup/entry", methods=["POST"])
+def setup_entry():
+    """Preview ({"preview": true}) or save a new dated stand entry.
+
+    Saved = written into this machine's setup file (p2_mapping.edit.add_entry:
+    inserted as text, the whole file re-checked) and committed to its git
+    repository with the note. Valid from now. Refused while a run is taking
+    data: the processor and live monitor apply the entry in force at each
+    packet's time, so a mid-run change would mislabel the rest of the run.
+    """
+    import setup_source
+    from p2_mapping.edit import add_entry, now, write_atomic
+    from p2_mapping.setups import _parse, load_setup
+    import yaml
+    data = request.get_json(silent=True) or {}
+    preview = bool(data.get("preview"))
+    state = _run_state()
+    if not preview and state not in RUN_IDLE_STATES:
+        return jsonify({"success": False, "errors": [
+            f"A run is in progress ({state}): change the stand after it ends."]}), 409
+    ref = setup_source.setup_ref(SITE)
+    if not ref or not os.path.isfile(ref) or not ref.startswith(setup_source.SETUPS_DIR):
+        return jsonify({"success": False, "errors": [
+            f"This machine has no editable setup copy in {setup_source.SETUPS_DIR}."]}), 409
+    try:
+        entry = _entry_from_request(data)
+        entry.update(valid_from=now(), author=f"Setup tab, {request.remote_addr}")
+        text = add_entry(ref, entry)
+    except ValueError as e:
+        return jsonify({"success": False, "errors": [str(e)]}), 400
+
+    old = load_setup(ref).at("now")
+    new_setup = _parse(yaml.safe_load(text), ref)
+    new = new_setup.at(entry["valid_from"])
+    changes = _cabling_changes(old.cabling[0], new.cabling[0])
+    for d in sorted(set(old.detectors) | set(new.detectors)):
+        a, b = old.detectors.get(d), new.detectors.get(d)
+        if a is None:
+            changes.insert(0, f"{d} added (chamber {b.get('alias', '–')}, z {b.get('z_mm')} mm)")
+        elif b is None:
+            changes.insert(0, f"{d} removed")
+        elif a != b:
+            changes.insert(0, f"{d}: " + ", ".join(
+                f"{k} {a.get(k)} -> {b.get(k)}" for k in sorted(set(a) | set(b))
+                if a.get(k) != b.get(k)))
+    if old.trigger != new.trigger:
+        changes.insert(0, f"trigger: {old.trigger or 'none'} -> {new.trigger or 'none'}")
+    if not changes:
+        return jsonify({"success": False, "errors": [
+            "Nothing differs from the stand in force now."]}), 400
+    if preview:
+        return jsonify({"success": True, "preview": True, "changes": changes,
+                        "valid_from": entry["valid_from"].isoformat(timespec="minutes")})
+
+    write_atomic(ref, text)
+    d = os.path.dirname(ref)
+    msg = entry["note"] + "\n\n" + "\n".join(f"- {c}" for c in changes)
+    r = subprocess.run(["git", "-C", d, "-c", f"user.name=Setup tab ({request.remote_addr})",
+                        "-c", "user.email=vmm-daq@localhost", "commit", "-q", "-m", msg,
+                        "--", os.path.basename(ref)], capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        subprocess.run(["git", "-C", d, "checkout", "-q", "--", os.path.basename(ref)],
+                       capture_output=True, timeout=30)
+        return jsonify({"success": False, "errors": [
+            f"Not saved: the change could not be committed ({r.stderr.strip()[:200]}); "
+            "the file was restored."]}), 500
+    log_event("SETUP_ENTRY", "flask_setup", setup=os.path.basename(ref),
+              valid_from=entry["valid_from"].isoformat(timespec="minutes"),
+              note=entry["note"], remote_addr=request.remote_addr)
+    return jsonify({"success": True, "changes": changes,
+                    "message": f"Stand saved, in force from "
+                               f"{entry['valid_from']:%Y-%m-%d %H:%M} ({len(changes)} change(s))."})
 
 
 @app.route("/setup")
@@ -844,6 +1008,12 @@ def setup_get():
                     "processor, QA and live monitor": p2cfg.P2_SETUP},
         "detectors": [{"name": k, **v} for k, v in s.detectors.items()],
         "trigger": s.trigger, "cabling": entries,
+        "stand_now": ({"detectors": [{"name": k, **v} for k, v in s.at("now").detectors.items()],
+                       "trigger": s.at("now").trigger,
+                       "hybrids": [dict(r) for r in current.hybrids]} if current else None),
+        "n_connectors": _design_connectors(s.design),
+        "run_state": _run_state(),
+        "run_active": _run_state() not in RUN_IDLE_STATES,
         "hv": {"set_here": hv.get("set_here"), "note": hv.get("note", ""),
                "ceilings": hv.get("ceilings"), "rows": hv_rows} if s.hv else None,
         "history": history,

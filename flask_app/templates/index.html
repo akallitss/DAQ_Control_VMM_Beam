@@ -670,11 +670,70 @@
   <div class="panel mb-3">
     <div class="panel-header">
       <span class="panel-title">Setup</span>
-      <span class="panel-header-note">The stand as its setup file describes it: detectors,
-        readout cabling (dated) and HV. Read-only for now. Every run configuration, the
-        processor, the QA and the live monitor read this one file.</span>
+      <span class="panel-header-note">What the next run records, and the stand it is
+        recorded with: detectors, trigger, readout cabling (dated) and HV. Every run
+        configuration, the processor, the QA and the live monitor read the same setup file.</span>
     </div>
-    <div class="panel-body" id="su-head" style="font-size:0.85rem;">Loading…</div>
+    <div class="panel-body">
+      <div id="su-head" style="font-size:0.85rem;">Loading…</div>
+      <button id="su-edit-btn" class="btn btn-info btn-sm mt-2">Change the stand…</button>
+      <span id="su-edit-why" class="text-muted ms-2" style="font-size:0.8rem;"></span>
+    </div>
+  </div>
+
+  <div class="panel mb-3">
+    <div class="panel-header"><span class="panel-title">Run: what the next Start Run records</span>
+      <span class="panel-header-note" id="su-run-summary"></span></div>
+    <div class="panel-body">
+      <div id="su-run"></div>
+      <button id="su-run-save" class="btn btn-info btn-sm">Save run settings</button>
+      <span id="su-run-msg" class="ms-2" style="font-size:0.85rem;"></span>
+      <div class="text-muted mt-2" style="font-size:0.8rem;">Calibration runs: not defined
+        yet (tell us what they need: pulser amplitudes, channels, test-pulse DAC steps…).</div>
+    </div>
+  </div>
+
+  <div class="panel mb-3 d-none" id="su-editor">
+    <div class="panel-header"><span class="panel-title">Change the stand</span>
+      <span class="panel-header-note">Saved as a new dated entry, in force from the moment
+        you save; earlier runs keep the stand of their time. Checked in full before it is
+        written, and committed to the setup file's history with your note.</span></div>
+    <div class="panel-body">
+      <div class="row g-3">
+        <div class="col-lg-6">
+          <div style="font-size:0.85rem;" class="mb-1"><b>Detectors under test</b>
+            <span class="text-muted">(station name, which chamber stands there, position)</span></div>
+          <table class="table table-dark table-sm align-middle mb-1">
+            <thead><tr><th>Station</th><th>Chamber</th><th>z (mm)</th><th></th></tr></thead>
+            <tbody id="ed-dets"></tbody></table>
+          <button class="btn btn-outline-info btn-sm" id="ed-add-det">+ detector</button>
+        </div>
+        <div class="col-lg-6">
+          <div style="font-size:0.85rem;" class="mb-1"><b>External trigger</b></div>
+          <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap; font-size:0.85rem;">
+            <label><input type="checkbox" id="ed-trig-on" class="form-check-input"> used</label>
+            <span>hybrid <input id="ed-trig-h" type="number" min="0" class="form-control form-control-sm d-inline-block" style="width:5rem;"></span>
+            <span>VMM <input id="ed-trig-v" type="number" min="0" max="31" class="form-control form-control-sm d-inline-block" style="width:5rem;"></span>
+            <span>channel <input id="ed-trig-c" type="number" min="0" max="63" class="form-control form-control-sm d-inline-block" style="width:5rem;"></span>
+          </div>
+          <div class="text-muted mt-1" style="font-size:0.75rem;">At the beam: H0, VMM 0, channel 44. Its VMM must not also be cabled to a detector.</div>
+        </div>
+      </div>
+      <div style="font-size:0.85rem;" class="mt-3 mb-1"><b>Readout cabling</b>
+        <span class="text-muted">: each detector connector has a bottom and a top half, read by
+        the bottom and top VMM of the hybrid its cable goes to</span></div>
+      <div id="ed-cabling"></div>
+      <div class="mt-3">
+        <label style="font-size:0.85rem;" for="ed-note"><b>What changed and why</b> (required; becomes the history entry)</label>
+        <textarea id="ed-note" class="form-control form-control-sm" rows="2"></textarea>
+      </div>
+      <div class="mt-2" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+        <button class="btn btn-info btn-sm" id="ed-preview">Check and preview</button>
+        <button class="btn btn-success btn-sm" id="ed-save" disabled>Save new stand</button>
+        <button class="btn btn-outline-secondary btn-sm" id="ed-cancel">Cancel</button>
+      </div>
+      <div id="ed-result" class="mt-2" style="font-size:0.85rem;"></div>
+    </div>
   </div>
   <div class="row g-3">
     <div class="col-lg-5">
@@ -717,9 +776,10 @@
   <div class="panel mb-3">
     <div class="panel-header">
       <span class="panel-title">Settings</span>
-      <span class="panel-header-note">Change how runs are taken, processed and monitored
-        without editing code. The values in the code stay the defaults; every change is
-        validated, logged, and takes effect where shown.</span>
+      <span class="panel-header-note">Change how data are processed and monitored without
+        editing code. What a run records (type, durations, voltage scans) and the stand
+        itself are in the Setup tab. The values in the code stay the defaults; every
+        change is validated, logged, and takes effect where shown.</span>
     </div>
     <div class="panel-body">
       <div id="set-info" class="text-muted" style="font-size:0.85rem;">Loading…</div>
@@ -3594,7 +3654,8 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
       ["vmm_processor", "vmm_qa_watcher", "vmm_live", "vmm_mem_guardian"]
         .map(n => `${n.replace("vmm_", "")} ${r[n] ? "✓" : "✗"}`).join(", ") +
       (d.hv_targets ? "" : " · HV is held on banco (HV-scan plans unavailable)");
-    $("set-groups").innerHTML = Object.entries(d.groups).map(([g, title]) => {
+    // the run settings live in the Setup tab (what is recorded, with the stand)
+    $("set-groups").innerHTML = Object.entries(d.groups).filter(([g]) => g !== "run").map(([g, title]) => {
       const rows = d.settings.filter(s => s.group === g).map(s => `<tr>
           <td style="min-width:16rem;">${esc(s.label)}
             ${s.help ? `<div class="text-muted" style="font-size:0.75rem;">${esc(s.help)}</div>` : ""}</td>
@@ -3742,6 +3803,253 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
   }
   const tab = document.querySelector('a[href="#setup"]');
   if (tab) tab.addEventListener("shown.bs.tab", load);
+  window.setupTabReload = load;
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Setup tab: the Run section (/settings, group 'run') and the stand editor
+// (/setup/entry: preview, then save as a new dated entry).
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const fmt = v => v === null || v === undefined ? "–" : Array.isArray(v) ? v.join(", ") : String(v);
+
+  // ---------------- Run section ----------------
+  let runS = null, stations = [], draft = {};
+  const val = k => (k in draft ? draft[k] : runS.find(s => s.key === k).value);
+
+  function runField(s) {
+    const id = `run-${s.key}`, v = val(s.key);
+    let input;
+    if (s.type === "choice")
+      input = `<select id="${id}" data-k="${s.key}" class="form-select form-select-sm" style="width:auto;">` +
+        s.choices.map(c => `<option${c === v ? " selected" : ""}>${esc(c)}</option>`).join("") + `</select>`;
+    else if (s.type === "list")
+      input = stations.map(st => `<label class="me-3"><input type="checkbox" class="form-check-input"
+                 data-k="${s.key}" data-item="${esc(st)}"${(v || []).includes(st) ? " checked" : ""}> ${esc(st)}</label>`).join("");
+    else
+      input = `<input id="${id}" data-k="${s.key}" type="number" class="form-control form-control-sm"
+                 style="width:8rem;" min="${s.min}" max="${s.max}" step="${s.type === "float" ? "any" : 1}" value="${esc(v)}">`;
+    return `<tr><td style="min-width:15rem;">${esc(s.label)}${s.help ? `<div class="text-muted" style="font-size:0.75rem;">${esc(s.help)}</div>` : ""}</td>
+      <td>${input}</td><td class="text-muted" style="font-size:0.8rem;">default ${esc(fmt(s.default))}
+      ${s.changed || s.key in draft ? '<span class="badge bg-info text-dark ms-1">changed</span>' : ""}</td></tr>`;
+  }
+
+  function summary() {
+    const p = val("run_plan"), cap = val("capture_duration_s");
+    const t = m => m >= 60 ? `${(m / 60).toFixed(m % 60 ? 1 : 0)} h` : `${m} min`;
+    let s = "";
+    if (p === "lab_source") s = `${val("lab_n_subruns")} × ${val("lab_subrun_min")} min of ${val("lab_measurement")} = ${t(val("lab_n_subruns") * val("lab_subrun_min"))}`;
+    else if (p === "config_scan") s = `one run of ${val("config_scan_subrun_min")} min at the applied chip config`;
+    else if (p === "trigger_test") s = `${val("trigger_test_min")} min`;
+    else if (p === "operating_long") s = `${val("operating_long_n_subruns")} × ${val("operating_long_subrun_min")} min = ${t(val("operating_long_n_subruns") * val("operating_long_subrun_min"))}`;
+    else if (p === "hv_scan") {
+      const n = val("hv_scan_points"), v0 = val("hv_scan_start_v"), dv = val("hv_scan_step_v");
+      const pts = Array.from({length: Math.min(n, 50)}, (_, i) => v0 + i * dv);
+      s = `${n} points × ${val("hv_scan_min_per_point")} min = ${t(n * val("hv_scan_min_per_point"))}; ` +
+          `${val("hv_scan_mode") === "drift" ? "drift" : "mesh"}: ${pts.join(", ")} V on ${fmt(val("hv_scan_detectors"))}`;
+    } else s = `${val("scan_subrun_min")} min per point (points fixed in the code)`;
+    return `${s} · one capture file every ${cap} s`;
+  }
+
+  function renderRun() {
+    const plan = val("run_plan");
+    const shown = runS.filter(s => !s.plans || s.plans.includes(plan));
+    $("su-run").innerHTML = `<div class="table-responsive"><table class="table table-dark table-sm align-middle mb-2">
+      <tbody>${shown.map(runField).join("")}</tbody></table></div>`;
+    $("su-run-summary").textContent = summary();
+  }
+
+  $("su-run").addEventListener("change", ev => {
+    const el = ev.target, k = el.dataset.k;
+    if (!k) return;
+    const s = runS.find(x => x.key === k);
+    if (s.type === "list")
+      draft[k] = [...document.querySelectorAll(`[data-k="${k}"]`)].filter(c => c.checked).map(c => c.dataset.item);
+    else if (s.type === "int" || s.type === "float") draft[k] = el.value === "" ? "" : Number(el.value);
+    else draft[k] = el.value;
+    if (JSON.stringify(draft[k]) === JSON.stringify(s.value)) delete draft[k];
+    renderRun();
+  });
+
+  $("su-run-save").addEventListener("click", async () => {
+    const msg = $("su-run-msg");
+    if (!Object.keys(draft).length) { msg.className = "ms-2 text-muted"; msg.textContent = "Nothing changed."; return; }
+    const list = Object.entries(draft).map(([k, v]) =>
+      `  ${runS.find(s => s.key === k).label}: ${fmt(runS.find(s => s.key === k).value)} → ${fmt(v)}`).join("\n");
+    if (!confirm(`Save these run settings (used by the next Start Run)?\n\n${list}\n\n${summary()}`)) return;
+    const d = await (await fetch("/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                body: JSON.stringify({ changes: draft }) })).json();
+    if (d.success) { showPopup(d.message, "#17a2b8"); msg.textContent = ""; draft = {}; await loadRun(); }
+    else { msg.className = "ms-2 text-danger"; msg.textContent = (d.errors || [d.message]).join(" "); }
+  });
+
+  async function loadRun() {
+    const d = await (await fetch("/settings")).json();
+    runS = d.settings.filter(s => s.group === "run");
+    stations = d.stations || [];
+    renderRun();
+  }
+
+  // ---------------- stand editor ----------------
+  let setupData = null, ed = null, previewed = false;
+
+  function edRender() {
+    $("ed-dets").innerHTML = ed.dets.map((x, i) => `<tr>
+      <td><input data-d="${i}" data-f="name" class="form-control form-control-sm" value="${esc(x.name)}"></td>
+      <td><input data-d="${i}" data-f="alias" class="form-control form-control-sm" value="${esc(x.alias)}" placeholder="e.g. det3"></td>
+      <td><input data-d="${i}" data-f="z_mm" type="number" step="any" class="form-control form-control-sm" style="width:7rem;" value="${esc(x.z_mm)}"></td>
+      <td><button class="btn btn-outline-danger btn-sm" data-deldet="${i}" title="remove this detector and its connectors">×</button></td></tr>`).join("");
+    const t = ed.trig;
+    $("ed-trig-on").checked = !!t.on;
+    ["h", "v", "c"].forEach(k => { $(`ed-trig-${k}`).value = t[k] ?? ""; $(`ed-trig-${k}`).disabled = !t.on; });
+    const nconn = setupData.n_connectors || 8;
+    const order = (i, half) => `<select data-c="${i}" data-f="${half}_order" class="form-select form-select-sm" style="width:auto;">` +
+      ["reverse", "linear"].map(o => `<option${(ed.conns[i][half + "_order"] || "reverse") === o ? " selected" : ""}>${o}</option>`).join("") + `</select>`;
+    $("ed-cabling").innerHTML = ed.dets.map(det => {
+      const idx = ed.conns.map((c, i) => [c, i]).filter(([c]) => c.detector === det.name)
+                    .sort((a, b) => a[0].connector - b[0].connector);
+      const rows = idx.map(([c, i]) => `
+        <tr><td rowspan="2"><select data-c="${i}" data-f="connector" class="form-select form-select-sm" style="width:auto;">` +
+          Array.from({length: nconn}, (_, k) => k + 1).map(n => `<option value="${n}"${n === Number(c.connector) ? " selected" : ""}>c${n}</option>`).join("") +
+          `</select></td>
+          <td rowspan="2">H <input data-c="${i}" data-f="hybrid" type="number" min="0" class="form-control form-control-sm d-inline-block" style="width:4.5rem;" value="${esc(c.hybrid)}"></td>
+          <td rowspan="2"><input data-c="${i}" data-f="fec" class="form-control form-control-sm" style="width:4.5rem;" value="${esc(c.fec ?? "")}" placeholder="any"></td>
+          <td rowspan="2"><input data-c="${i}" data-f="cable" class="form-control form-control-sm" style="width:9rem;" value="${esc(c.cable)}"></td>
+          <td>c${esc(c.connector)}_bottom</td>
+          <td>VMM <input data-c="${i}" data-f="bottom_vmm" type="number" min="0" max="31" class="form-control form-control-sm d-inline-block" style="width:4.5rem;" value="${esc(c.bottom_vmm)}"></td>
+          <td>${order(i, "bottom")}</td>
+          <td rowspan="2"><button class="btn btn-outline-danger btn-sm" data-delconn="${i}">×</button></td></tr>
+        <tr><td>c${esc(c.connector)}_top</td>
+          <td>VMM <input data-c="${i}" data-f="top_vmm" type="number" min="0" max="31" class="form-control form-control-sm d-inline-block" style="width:4.5rem;" value="${esc(c.top_vmm)}"></td>
+          <td>${order(i, "top")}</td></tr>`).join("");
+      return `<div class="mb-2"><div style="font-size:0.85rem;"><b>${esc(det.name)}</b>
+          <span class="text-muted">${det.alias ? "chamber " + esc(det.alias) : ""}</span></div>
+        <div class="table-responsive"><table class="table table-dark table-sm align-middle mb-1">
+          <thead><tr><th>Connector</th><th>Hybrid</th><th>FEC</th><th>Cable</th><th>Half</th><th>VMM ID</th><th>Strip order</th><th></th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="8" class="text-muted">no connector cabled</td></tr>'}</tbody></table></div>
+        <button class="btn btn-outline-info btn-sm" data-addconn="${esc(det.name)}">+ connector on ${esc(det.name)}</button></div>`;
+    }).join("");
+  }
+
+  function edChanged() {
+    previewed = false;
+    $("ed-save").disabled = true;
+    $("ed-result").innerHTML = "";
+  }
+
+  $("su-editor").addEventListener("input", ev => {
+    const el = ev.target;
+    if (el.dataset.d !== undefined) {
+      const x = ed.dets[Number(el.dataset.d)], f = el.dataset.f, old = x.name;
+      x[f] = el.value;
+      if (f === "name") ed.conns.forEach(c => { if (c.detector === old) c.detector = el.value; });
+    } else if (el.dataset.c !== undefined) {
+      ed.conns[Number(el.dataset.c)][el.dataset.f] = el.value;
+    } else if (el.id === "ed-trig-on") {
+      ed.trig.on = el.checked;
+      if (el.checked && ed.trig.h === undefined) Object.assign(ed.trig, {h: 0, v: 0, c: 44});
+    } else if (el.id.startsWith("ed-trig-")) {
+      ed.trig[el.id.slice(-1)] = el.value;
+    } else if (el.id !== "ed-note") return;
+    edChanged();
+    // selects and the checkbox redraw at once; text fields redraw when left
+    // (the 'change' listener below), so typing keeps the cursor
+    if (el.dataset.f === "connector" || el.id === "ed-trig-on") edRender();
+  });
+  $("su-editor").addEventListener("change", ev => {
+    const f = ev.target.dataset.f;
+    if (f === "name" || f === "alias") edRender();
+  });
+
+  $("su-editor").addEventListener("click", ev => {
+    const b = ev.target;
+    if (b.dataset.deldet !== undefined) {
+      const name = ed.dets[Number(b.dataset.deldet)].name;
+      if (!confirm(`Remove ${name} and its connectors from the stand?`)) return;
+      ed.dets.splice(Number(b.dataset.deldet), 1);
+      ed.conns = ed.conns.filter(c => c.detector !== name);
+    } else if (b.dataset.delconn !== undefined) {
+      ed.conns.splice(Number(b.dataset.delconn), 1);
+    } else if (b.dataset.addconn !== undefined) {
+      const used = ed.conns.filter(c => c.detector === b.dataset.addconn).map(c => Number(c.connector));
+      const free = Array.from({length: setupData.n_connectors || 8}, (_, k) => k + 1).find(n => !used.includes(n)) || 1;
+      ed.conns.push({detector: b.dataset.addconn, connector: free, hybrid: "", bottom_vmm: "", top_vmm: "", cable: "", fec: ""});
+    } else if (b.id === "ed-add-det") {
+      ed.dets.push({name: `DET${ed.dets.length + 1}`, alias: "", z_mm: 0});
+    } else return;
+    edChanged();
+    edRender();
+  });
+
+  function payload(preview) {
+    return { preview, note: $("ed-note").value, detectors: ed.dets,
+             trigger: ed.trig.on ? {hybrid: ed.trig.h, vmm: ed.trig.v, ch: ed.trig.c} : null,
+             hybrids: ed.conns };
+  }
+
+  async function send(preview) {
+    const res = await fetch("/setup/entry", { method: "POST", headers: { "Content-Type": "application/json" },
+                                             body: JSON.stringify(payload(preview)) });
+    return res.json();
+  }
+
+  $("ed-preview").addEventListener("click", async () => {
+    const d = await send(true);
+    if (d.success) {
+      previewed = true;
+      $("ed-save").disabled = false;
+      $("ed-result").innerHTML = `<div class="text-success">Checks passed. From ${esc(d.valid_from)} (when you save) the stand would change:</div>
+        <ul class="mb-0">${d.changes.map(c => `<li>${esc(c)}</li>`).join("")}</ul>`;
+    } else {
+      $("ed-result").innerHTML = `<div class="text-danger">${(d.errors || []).map(esc).join("<br>")}</div>`;
+    }
+  });
+
+  $("ed-save").addEventListener("click", async () => {
+    if (!previewed) return;
+    if (!confirm("Save this as the new stand, in force from now? Runs started from now on, and the processor and live monitor, will use it.")) return;
+    const d = await send(false);
+    if (d.success) {
+      showPopup(d.message, "#28a745");
+      $("su-editor").classList.add("d-none");
+      if (window.setupTabReload) await window.setupTabReload();
+      await loadSetup();
+    } else {
+      $("ed-result").innerHTML = `<div class="text-danger">${(d.errors || []).map(esc).join("<br>")}</div>`;
+      $("ed-save").disabled = true;
+    }
+  });
+
+  $("ed-cancel").addEventListener("click", () => $("su-editor").classList.add("d-none"));
+
+  $("su-edit-btn").addEventListener("click", () => {
+    const s = setupData.stand_now;
+    ed = { dets: s.detectors.map(x => ({name: x.name, alias: x.alias || "", z_mm: x.z_mm})),
+           trig: s.trigger ? {on: true, h: s.trigger.hybrid, v: s.trigger.vmm, c: s.trigger.ch} : {on: false},
+           conns: s.hybrids.map(r => ({...r, fec: r.fec ?? ""})) };
+    $("ed-note").value = "";
+    edChanged();
+    edRender();
+    $("su-editor").classList.remove("d-none");
+    $("su-editor").scrollIntoView({behavior: "smooth"});
+  });
+
+  async function loadSetup() {
+    setupData = await (await fetch("/setup")).json();
+    const why = setupData.error ? "the setup file cannot be read"
+      : !setupData.editable_copy ? `this machine has no editable copy in ${setupData.setups_dir}`
+      : setupData.run_active ? `a run is in progress (${setupData.run_state}): change the stand after it ends`
+      : !setupData.stand_now ? "no cabling entry is in force now" : "";
+    $("su-edit-btn").disabled = !!why;
+    $("su-edit-why").textContent = why;
+  }
+
+  const tab = document.querySelector('a[href="#setup"]');
+  if (tab) tab.addEventListener("shown.bs.tab", () => { loadRun(); loadSetup(); });
 })();
 </script>
 
