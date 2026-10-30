@@ -411,7 +411,7 @@ def main():
     ap.add_argument('--tag', required=True, help='scan name: in config names, state file and notes')
     ap.add_argument('--ch-limit-hz', type=float, default=50.0, help='mask a detector channel above this rate')
     ap.add_argument('--max-mb-min', type=float, default=30.0, help='a probe above this volume is not clean')
-    ap.add_argument('--max-masks-per-chip', type=int, default=8,
+    ap.add_argument('--max-masks-per-chip', type=int, default=20,
                     help='a chip needing more masked channels is held at its last clean K')
     ap.add_argument('--max-iter', type=int, default=4, help='probes per point')
     ap.add_argument('--base', default=BASE)
