@@ -16,8 +16,9 @@ detector sdt lines are never touched. At each scan point K:
   5. measure the long run (--minutes) with the clean config. If the rate guard stops it, the masks are
              updated from the stopped run and the point is resumed for the remaining time.
 
-Masks found at a point are needed at that point and every lower one; a point taken later at a higher K
-gets only the masks found at or above it (and its probe adds any it still needs). Everything is written to
+Masks are per point: each point starts from the base masks (plus those found at the same K in an earlier
+pass) and its probes add what it needs. Noise is not monotonic in threshold on every chip (the VMM 4/7/9
+bursts), so masks are not carried from one K to another. Everything is written to
 a state file (one JSON per scan, --state) and a logbook note per decision, so the analysis can use the pad
 set that was live at every point.
 
@@ -153,13 +154,13 @@ class State:
         os.replace(tmp, self.path)
 
     def masks_at(self, k, base_masks):
-        """Masks needed at K: the base ones plus everything found at K or above (a channel noisy at a
-        higher threshold is noisy at a lower one). Held chips keep the masks they had at their floor."""
+        """Masks at K: the base ones plus those found at this same K (a point revisited in a later pass
+        starts from them). Masks found at other K are NOT carried over: the VMM 4/7/9 bursts are not monotonic
+        in threshold (VMM 9 bursts at K=+64 and is quiet at K=0, run_133 vs run_130), so each point's probes
+        find what that point needs. Held chips keep the masks they had at their floor."""
         m = {c: set(v) for c, v in base_masks.items()}
-        for kk, found in self.found.items():
-            if kk >= k:
-                for c, chs in found.items():
-                    m.setdefault(c, set()).update(chs)
+        for c, chs in self.found.get(k, {}).items():
+            m.setdefault(c, set()).update(chs)
         for c, h in self.hold.items():
             if k < h['k']:
                 m[c] = set(base_masks.get(c, set())) | set(h['masks'])
@@ -413,7 +414,7 @@ def main():
     ap.add_argument('--max-mb-min', type=float, default=30.0, help='a probe above this volume is not clean')
     ap.add_argument('--max-masks-per-chip', type=int, default=20,
                     help='a chip needing more masked channels is held at its last clean K')
-    ap.add_argument('--max-iter', type=int, default=4, help='probes per point')
+    ap.add_argument('--max-iter', type=int, default=5, help='probes per point')
     ap.add_argument('--base', default=BASE)
     ap.add_argument('--dry-run', action='store_true', help='write configs, config_scan --dry-run, no runs')
     ap.add_argument('--replay', help='only print the mask decision for an existing run')
