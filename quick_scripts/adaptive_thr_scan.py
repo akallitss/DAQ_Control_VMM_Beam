@@ -233,17 +233,24 @@ def _count(files):
     import p2_decode
     hits, live = {}, 0.0
     for f in files:
-        h, meta = p2_decode.decode(f)
+        # streamed chunk by chunk: a loud probe is one 300+ MB file, and a whole-file decode of it was
+        # killed at the 2 GB cap (run_136, 31 Oct 03:53)
+        meta = {}
+        n = np.zeros(64 * 20, dtype=np.int64)
+        for h in p2_decode.iter_chunks(f, meta=meta):
+            # a chunk is a dict of the raw column arrays; hit_valid is derived (as decode() does)
+            p2_decode.derive(h)
+            good = np.asarray(h['hit_valid'], dtype=bool)
+            if good.any():
+                v = np.asarray(h['vmm'])[good].astype(np.int64)
+                c = np.asarray(h['ch'])[good].astype(np.int64)
+                ok = (v >= 0) & (v < 20) & (c >= 0) & (c < 64)
+                n += np.bincount(v[ok] * 64 + c[ok], minlength=64 * 20)
+            del h
         live += float((meta.get('capture') or {}).get('live_time_s') or 0.0)
-        h = h[h.hit_valid]
-        if len(h):
-            v = h.vmm.to_numpy().astype(np.int64)
-            c = h.ch.to_numpy().astype(np.int64)
-            n = np.bincount(v * 64 + c, minlength=64 * 20)
-            for k in np.nonzero(n)[0]:
-                d = hits.setdefault(str(k // 64), {})
-                d[str(k % 64)] = d.get(str(k % 64), 0) + int(n[k])
-        del h
+        for k in np.nonzero(n)[0]:
+            d = hits.setdefault(str(k // 64), {})
+            d[str(k % 64)] = d.get(str(k % 64), 0) + int(n[k])
     print(json.dumps({'live_s': live, 'hits': hits}))
 
 
@@ -323,7 +330,13 @@ def do_point(st, k, base, a, prev_clean_k):
             return None
         trip = tripped(run, t0)
         mb = sum(os.path.getsize(f) for f in run_files(run)) / 1e6
-        rates = channel_rates(run_files(run))
+        try:
+            rates = channel_rates(run_files(run))
+        except Exception as e:
+            log(f'   probe {run}: could not decode ({e}); point K={k:+d} skipped')
+            rec['status'] = 'probe decode failed'
+            st.save()
+            return None
         mbmin = mb / max(rates['live_s'] / 60, 0.5)
         new, summary = decide(rates, masks, a)
         n_new = sum(len(v) for v in new.values())
@@ -385,7 +398,11 @@ def do_point(st, k, base, a, prev_clean_k):
         left -= max(int(ran), 1)
         log(f'   long run {run} stopped by the rate guard; {left} min left at K={k:+d}')
         files = run_files(run)[-3:]
-        rates = channel_rates(files)
+        try:
+            rates = channel_rates(files)
+        except Exception as e:
+            log(f'   could not decode the stopped run ({e}); not resuming this point')
+            break
         new, summary = decide(rates, st.masks_at(k, base[3]), a)
         if not new:
             log('   no channel over the limit in the last captures; not resuming this point')
