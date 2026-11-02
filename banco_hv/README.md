@@ -25,11 +25,32 @@ Channel map (user, 2026-11-02; N1471 hardware max-V 900/600/950/650 agrees with 
 
 - `GET /hv_live?token=...` serves the same JSON contract as `docs/dream_side/hv_live.py`, keyed by label, so `hv_dream_shim.py` writes every sub-run's `hv_monitor.csv` with no VMM-side code change.
 - `GET /hv_all?token=...` serves all 8 channels with raw status words.
-- `GET /?token=...` serves an auto-refreshing table for a browser.
+- `GET /` is the **HV Control page** (also the VMM GUI's "HV Control" tab, via the flask `/hvctl/` proxy); `GET /table` is the plain read-only table. Requests from banco itself (localhost) need no token.
 - `GET /hv_history?minutes=N&token=...` serves the last N minutes (up to 24 h, in memory, seeded from today's CSV at start) as `{time, voltage, current, power}`. The VMM flask proxies it as `/hv_data_live`, and the GUI's HV Monitor panel plots it when "Show" is set to "Live (banco)" (non-beam sites only).
 - Writes `~/hv_serial_logs/hv_serial_YYYY-MM-DD.csv` every 10 s, whether or not a run is polling.
 
 Units: V and µA, magnitudes (both modules are negative polarity).
+
+## Control
+
+The page is read-only until unlocked with `control_password` (banco `~/lab_hv_monitor/hv_serial_live.json`; empty = control disabled). Unlocked, each detector channel has ON / OFF / Edit (Vset, current limit, ramp up/down, CAEN trip time / power-down RAMP|KILL / Imon range, iseg trip time [ms] / trip action 0-4) and there is an ALL OFF button. Every change asks for confirmation showing old → new.
+
+Enforced by the service before anything is sent (config `limits`):
+
+| check | limit |
+|---|---|
+| Vset on Drift electrodes | ≤ 1000 V |
+| Vset on Mesh electrodes | ≤ 500 V |
+| switching ON | setpoint must already be within that limit |
+| current limit | 0 < I ≤ 100 µA |
+| ramp up / down | 1-50 V/s |
+| unlabelled channels (NHR ch2, ch3) | locked |
+
+Every attempt, accepted or refused (including wrong passwords), goes to `~/hv_serial_logs/hv_actions.jsonl` with time, source (banco page or VMM GUI + client), channel, old and new value; the page lists the latest ones.
+
+**N1471:** set commands need its front-panel switch on **REMOTE**; on LOCAL it answers `LOC:ERR` and the page says so. Monitoring works in either mode. The iseg NHR takes commands at any time.
+
+Command syntax (checked against the `hvps` library, github.com/lobis/hvps): CAEN `$BD:00,CMD:SET,CH:n,PAR:VSET,VAL:700.0` / `PAR:ON` / `PAR:OFF` → `#BD:00,CMD:OK`; iseg `:VOLT 430.000,(@0);*OPC?` / `:VOLT ON,(@0);*OPC?` → echo, then `1`. Voltages are sent as magnitudes; the channel's polarity gives the sign.
 
 ## Deploy / restart (on banco)
 
