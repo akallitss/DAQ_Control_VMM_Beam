@@ -12,18 +12,14 @@ import os
 from run_config_beam import BASE_DATA_DIR, SITE
 
 BASE_DATA = BASE_DATA_DIR
-# The pcapng QA lives in this repo (vmm_qa/vmm_pcapng_qa.py) and runs with this
-# repo's venv — no external analysis repository needed at the beam.
 DAQ_REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 
 CONFIG = {
     # Top-level directory containing all run_N/ subdirectories
     'runs_dir': f'{BASE_DATA}runs/',
 
-    # Scripts and the venv to run them with. Absolute so a tmux login shell,
-    # which resets PATH and drops the venv, still resolves them.
-    'qa_python':    f'{DAQ_REPO_DIR}/.venv/bin/python',
-    'qa_script':    f'{DAQ_REPO_DIR}/vmm_qa/vmm_pcapng_qa.py',
+    # The trend dashboard script (qa_python and qa_script, p2-monitor-qa, are set
+    # below from p2_readout_config). Absolute so a tmux login shell still finds it.
     'trend_script': f'{DAQ_REPO_DIR}/vmm_qa/vmm_trend.py',
 
     # Subdirectory of each subrun holding the DECODED STORES. qa_watcher no
@@ -37,19 +33,16 @@ CONFIG = {
     # <run>/<subrun>/_trend.png. The flask Online QA gallery reads this tree.
     'qa_out_base': f'{BASE_DATA}analysis/',
 
-    # Passed through to vmm_pcapng_qa.py
+    # Passed through to the QA script (p2-monitor-qa accepts and ignores them)
     'data_format': 'SRS',   # 'SRS' (continuous) or 'TRG' (external trigger markers)
     'calibration': None,    # vmm-sdat calibration JSON path; None = no calibration
 
-    # How often to render the full 36-PNG QA set:
-    #   'subrun' - first store of each sub-run (default). Those plots are how the
-    #              mapping and offset problems were found, and a sub-run boundary
-    #              is exactly where conditions change (each scan point is one),
-    #              but at ~43 s each they cannot run on every capture.
-    #   'always' - every store. Only with headroom to spare.
+    # How often to render the per-capture QA plots (p2_readout_config's
+    # P2_QA_PLOT_POLICY, 'always' by default, replaces this below):
+    #   'subrun' - first store of each sub-run; 'always' - every store;
     #   'never'  - trend dashboard only.
-    # Any capture can still be rendered on demand:
-    #   vmm_qa/vmm_pcapng_qa.py <store_dir> --out-dir <dir>
+    # Any store can be rendered on demand:
+    #   /local/p2/p2-readout/venv/bin/p2-monitor-qa <store_dir> --out-dir <dir>
     'plot_policy': 'subrun',
 
     # Trend dashboard: the scalars of every capture plotted against time. This
@@ -75,17 +68,16 @@ CONFIG = {
     'qa_threads':        4,          # numpy/BLAS thread cap; null = len(cpu_affinity)
 }
 
-# p2 engine: plots from the stored histograms (p2-monitor-qa, same file names
-# and events.json), cheap enough for every capture. See p2_readout_config.py.
+# The QA script: p2-monitor-qa, plots and events.json from the stored histograms,
+# cheap enough for every capture. See p2_readout_config.py.
 import p2_readout_config as p2cfg  # noqa: E402
 
-if p2cfg.P2_QA:
-    CONFIG.update({
-        'qa_python': p2cfg.P2_PYTHON,
-        'qa_script': f'{p2cfg.P2_BIN}/p2-monitor-qa',
-        'store_inner_dir': p2cfg.P2_STORE_INNER,
-        'plot_policy': p2cfg.P2_QA_PLOT_POLICY,
-    })
+CONFIG.update({
+    'qa_python': p2cfg.P2_PYTHON,
+    'qa_script': f'{p2cfg.P2_BIN}/p2-monitor-qa',
+    'store_inner_dir': p2cfg.P2_STORE_INNER,
+    'plot_policy': p2cfg.P2_QA_PLOT_POLICY,
+})
 
 # Guards changed from the GUI Settings tab, if set there (gui_settings.py)
 for _k, _key in (('memory_kill_pct', 'qa_memory_kill_pct'), ('max_attempts', 'qa_max_attempts'),

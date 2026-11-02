@@ -341,6 +341,11 @@ looking wrong answer rather than an error.
 
 ### 5.5 Online QA (`qa_watcher.py` → `vmm_qa/vmm_pcapng_qa.py`)
 
+> **Superseded.** Since 2026-10-28 the processor and the QA run the p2 readout
+> packages (`p2-monitor-reduce`, `p2-monitor-qa`); `vmm_pcapng_qa.py` and
+> `vmm_reduce.py` were removed on 2026-11-02. See `docs/P2_READOUT_INTEGRATION.md`.
+> This section describes the earlier design.
+
 The watcher polls the whole `runs/` tree (not just the current run), skipping
 stale runs (no new files for `stale_run_days`) and honouring include/exclude
 lists. For each finalized, not-yet-done file it launches:
@@ -459,7 +464,7 @@ disabling one is a key in `monitor_config.json`.
 | What does a run *do*? | `daq_control.py` (~250 lines, read top to bottom) |
 | What are the conditions? | `run_config_beam.py` (`SITES`, then `Config._set_defaults`) |
 | How is data written? | `vmm_daq_control.py` (`start_captures`, `DumpcapCapture`) |
-| How is data read? | `vmm_qa/vmm_pcapng_qa.py` (docstring lists every hit column) |
+| How is data read? | the p2-decode package (`p2_decode.schema` lists every hit column) |
 | When is a file ready? | `qa_watcher.py::_finalized_pcapngs` |
 | How does the GUI know anything? | `flask_app/daq_status.py` |
 | How does anything stop? | grep for `.stop_run`, `.stop_subrun`, `.stop_vmm`, `.pause_run` |

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Sum VMM hit counts for a run from the per-pcapng events.json summaries that
-vmm_qa/vmm_pcapng_qa.py writes under the analysis tree:
+the QA (p2-monitor-qa) writes under the analysis tree:
 
     <analysis_dir>/<run>/<subrun>/<pcap_base>/events.json
 

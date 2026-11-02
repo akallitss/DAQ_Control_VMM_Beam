@@ -42,16 +42,11 @@ P2_BIN = f'{P2_READOUT_DIR}/venv/bin'
 from run_config_beam import SETUP_REF as P2_SETUP  # noqa: E402
 
 # --- processor -------------------------------------------------------------
-# 'legacy' = vmm_qa/vmm_reduce.py (this repo's venv); 'p2' = p2-monitor-reduce.
-# 'p2' since 2026-10-28, after validation on the lab DAQ box: identical
-# counts.npz and scalars to the legacy reduce on run_124 and run_123 captures,
-# 9x faster on the 255 MB flood file (24 s vs 223 s). Set 'legacy' to go back
-# (legacy imports vmm_decode from /local/p2/p2soft/vmm-analysis via a .pth).
-PROCESSOR_ENGINE = 'p2'
-# changed from the GUI Settings tab, if set there (gui_settings.py)
-PROCESSOR_ENGINE = _gs.value('processor_engine', PROCESSOR_ENGINE)
-# Where the p2 engine writes its stores. 'hits_store' replaces the legacy
-# output; 'hits_store_p2' lets both run side by side for a comparison.
+# The processor's worker is p2-monitor-reduce (vmm_processor_config.py). It
+# replaced the in-repo vmm_qa/vmm_reduce.py on 2026-10-28 after giving identical
+# counts.npz and scalars on run_123/run_124 captures (24 s vs 223 s on a 255 MB
+# flood file); the old worker and its QA script were removed on 2026-11-02.
+# Where the stores are written:
 P2_STORE_INNER = 'hits_store'
 # Keep the per-hit columns? They cost ~3.4x the capture on disk and triple the
 # reduce time on this box (1.1 GB capture: 36 s without, 114 s with). With the
@@ -63,12 +58,10 @@ P2_KEEP_COLUMNS = False
 P2_KEEP_COLUMNS = _gs.value('p2_keep_columns', P2_KEEP_COLUMNS)
 
 # --- Online QA ---------------------------------------------------------------
-# With the p2 engine, qa_watcher runs p2-monitor-qa (plots from counts_chip.npz,
-# same file names and events.json as vmm_qa/vmm_pcapng_qa.py) instead of the
-# per-hit script. It costs about the same for any capture size (~8 s, ~260 MB
-# for a 21 MB capture), so every capture gets its plots, not only the first of
-# each sub-run.
-P2_QA = PROCESSOR_ENGINE == 'p2'
+# qa_watcher runs p2-monitor-qa: the per-capture QA plots and events.json from
+# the stored histograms (counts_chip.npz). It costs about the same for any
+# capture size (~8 s, ~260 MB for a 21 MB capture), so every capture gets its
+# plots, not only the first of each sub-run.
 P2_QA_PLOT_POLICY = 'always'
 P2_QA_PLOT_POLICY = _gs.value('qa_plot_policy', P2_QA_PLOT_POLICY)
 

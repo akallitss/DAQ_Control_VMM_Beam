@@ -18,7 +18,7 @@ Split of responsibility with qa_watcher:
     processor_watcher   reads pcapng, writes hits_store        (this file)
     qa_watcher          reads hits_store, writes plots         (never sees pcapng)
 
-The handoff is an atomic rename: vmm_reduce builds each store under
+The handoff is an atomic rename: the worker builds each store under
 "<name>.partial" and renames it into place only when everything succeeded. A
 directory appearing under hits_store/ is therefore complete by construction, so
 the two watchers never race over a half-written store and qa_watcher needs no
@@ -39,7 +39,7 @@ Config keys (see vmm_processor_config.py to generate the JSON):
   data_format         : 'SRS' or 'TRG'
   calibration         : vmm-sdat calibration JSON path, or null
   do_efficiency       : fold trigger-referenced efficiency into scalars.json
-  eff_window          : coincidence window in ns (matches vmm_pcapng_qa default)
+  eff_window          : coincidence window in ns, passed to the worker
   keep_columns        : keep the per-hit .npy columns. False keeps only
                         counts.npz + scalars.json -- the columns are
                         regenerable from the pcapng in ~0.5 s
@@ -50,8 +50,7 @@ Config keys (see vmm_processor_config.py to generate the JSON):
   memory_kill_pct / max_attempts / cpu_nice / cpu_affinity / threads
   stall_timeout_s     : kill a decode whose store stops growing (default 300)
   hard_timeout_s      : absolute cap on one decode (default 3600)
-  engine, worker_args : 'legacy' (vmm_reduce.py) or 'p2' (p2-monitor-reduce,
-                        same calling convention); extra worker arguments
+  engine, worker_args : 'p2' (p2-monitor-reduce); extra worker arguments
 """
 
 import json
@@ -105,7 +104,10 @@ def run_watcher(config: dict):
 
     here = Path(__file__).parent
     python_exe = config.get('python', str(here / '.venv' / 'bin' / 'python'))
-    worker = Path(config.get('worker', str(here / 'vmm_qa' / 'vmm_reduce.py')))
+    if not config.get('worker'):
+        sys.exit('[processor] no worker in the config: regenerate it with '
+                 'vmm_processor_config.py (Start Processor does)')
+    worker = Path(config['worker'])
     state_path = Path(config.get('state_file', here / 'config' / 'processor_state.json'))
     reset_signal = Path(config.get('reset_signal', here / 'config' / 'processor_reset.json'))
 

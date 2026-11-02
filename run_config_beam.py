@@ -7,7 +7,7 @@ Clone of the Dream beam configuration (DAQ_Control_Dream_Beam) for the VMM
 readout: raw UDP from the front-ends is captured into rotating .pcapng files
 per network interface (dumpcap), with optional ALINX slow control (alinx-sc)
 around each sub-run. No fdf/ROOT reconstruction — online QA runs directly on
-the finalized pcapng files (vmm_qa/vmm_pcapng_qa.py).
+the finalized pcapng files (p2-monitor-reduce and p2-monitor-qa).
 
 Site switching: config/site.txt on the machine (fallback: SITE below).
   'local' — full simulation on this machine (fake CAEN HV + fake TTi LV + fake

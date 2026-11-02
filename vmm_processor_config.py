@@ -32,10 +32,8 @@ CONFIG = {
     # Subdirectory the decoded column stores are written into
     'store_inner_dir': 'hits_store',
 
-    # Scripts and the venv to run them with. Absolute so a tmux login shell,
-    # which resets PATH and drops the venv, still resolves them.
-    'python': f'{DAQ_REPO_DIR}/.venv/bin/python',
-    'worker': f'{DAQ_REPO_DIR}/vmm_qa/vmm_reduce.py',
+    # The worker and the Python it runs with are the p2 engine's, set below from
+    # p2_readout_config (p2-monitor-reduce in the p2-readout venv).
 
     # dumpcap rotation interval; a capture with no higher-seq sibling and no
     # .capture_done marker finalizes after 2x this.
@@ -53,7 +51,7 @@ CONFIG = {
     # against nothing. Set it True by hand for a lab run that DOES have a
     # scintillator trigger on hybrid 0.
     'do_efficiency': bool(IS_BEAM_SITE),
-    'eff_window': 1000.0,   # ns; matches vmm_pcapng_qa.py's --eff-window default
+    'eff_window': 1000.0,   # ns; passed to the worker (p2-monitor-reduce accepts it)
 
     # --- what is kept on disk -------------------------------------------------
     # The pcapng is PRIMARY DATA and is never removed by default. The option
@@ -97,31 +95,25 @@ for _k, _key in (('memory_kill_pct', 'proc_memory_kill_pct'),
     CONFIG[_k] = _gs.value(_key, CONFIG[_k])
 
 # --- decode engine -----------------------------------------------------------
-# p2_readout_config.PROCESSOR_ENGINE picks the worker. 'p2' swaps only the
-# worker (p2-monitor-reduce from the p2-readout venv, with the site's p2-mapping
-# setup); the watcher, and with it every guard above, stays the same. It gets
-# its own state file, so switching engines or running both side by side never
-# makes one skip captures the other has done.
+# The worker is p2-monitor-reduce from the p2-readout venv, with the site's
+# p2-mapping setup (p2_readout_config). The old in-repo worker
+# (vmm_qa/vmm_reduce.py) was removed on 2026-11-02.
 import p2_readout_config as p2cfg  # noqa: E402
 
-CONFIG['engine'] = p2cfg.PROCESSOR_ENGINE
-if p2cfg.PROCESSOR_ENGINE == 'p2':
-    _ok, _why = p2cfg.p2_available()
-    if not _ok:
-        raise SystemExit(f'processor engine p2 selected but unusable: {_why}')
-    CONFIG.update({
-        'python': p2cfg.P2_PYTHON,
-        'worker': f'{p2cfg.P2_BIN}/p2-monitor-reduce',
-        # --mapping-optional: a capture whose time no cabling entry covers is
-        # still reduced (electronics view) instead of failing every attempt
-        'worker_args': ['--setup', p2cfg.P2_SETUP, '--mapping-optional'],
-        'store_inner_dir': p2cfg.P2_STORE_INNER,
-        'keep_columns': p2cfg.P2_KEEP_COLUMNS,
-        'state_file': os.path.join(DAQ_REPO_DIR, 'config', 'processor_state_p2.json'),
-    })
-elif p2cfg.PROCESSOR_ENGINE != 'legacy':
-    raise SystemExit(f"unknown processor engine {p2cfg.PROCESSOR_ENGINE!r} "
-                     "(expected 'legacy' or 'p2')")
+_ok, _why = p2cfg.p2_available()
+if not _ok:
+    raise SystemExit(f'the processor needs the p2 readout packages: {_why}')
+CONFIG.update({
+    'engine': 'p2',
+    'python': p2cfg.P2_PYTHON,
+    'worker': f'{p2cfg.P2_BIN}/p2-monitor-reduce',
+    # --mapping-optional: a capture whose time no cabling entry covers is
+    # still reduced (electronics view) instead of failing every attempt
+    'worker_args': ['--setup', p2cfg.P2_SETUP, '--mapping-optional'],
+    'store_inner_dir': p2cfg.P2_STORE_INNER,
+    'keep_columns': p2cfg.P2_KEEP_COLUMNS,
+    'state_file': os.path.join(DAQ_REPO_DIR, 'config', 'processor_state_p2.json'),
+})
 
 if __name__ == '__main__':
     out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
