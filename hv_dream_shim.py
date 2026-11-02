@@ -53,6 +53,7 @@ import threading
 import time
 import urllib.request
 import urllib.parse
+import urllib.error
 from datetime import datetime
 
 from Server import Server
@@ -360,11 +361,145 @@ class RemoteHVLogger:
                       f'config/dream_bridge.json and the service on banco.')
 
 
+# ---------------------------------------------------------------------------
+# Lab (from 2026-11-02): the chambers run from USB supplies on banco, driven by
+# banco_hv/hv_serial_live.py. When config/dream_bridge.json has 'hv_control',
+# each sub-run's targets ('hvs', {card: {channel: V}}; card numbers mapped to
+# banco's module names by hv_control.cards) are SET through that service's
+# validated control API, and the sub-run starts only once every channel reads
+# back ON and within tolerance for settle_s. 0 V means: switch that channel OFF.
+# banco does all limit checking (per-electrode Vmax, locked channels) and logs
+# every action; a refusal, a trip or a timeout skips the sub-run.
+# ---------------------------------------------------------------------------
+LAB_SET_DEFAULTS = {'tolerance_v': 3.0, 'poll_s': 5, 'timeout_s': 900,
+                    'settle_s': 30, 'http_timeout_s': 30}
+STOP_RUN_FLAG = os.path.join(BASE_DIR, '.stop_run')
+
+
+def _banco(bridge, path, body=None, timeout=30):
+    url = bridge['hv_live_url'].rstrip('/')
+    if not url.endswith('/hv_live'):
+        raise ValueError('hv_live_url must end in /hv_live')
+    url = url[:-len('/hv_live')] + '/' + path
+    token = bridge.get('hv_live_token')
+    if token:
+        url += '?' + urllib.parse.urlencode({'token': token})
+    data = None
+    headers = {'X-HV-Client': 'vmm-daq run (hv_dream_shim)'}
+    if body is not None:
+        data = json.dumps({**body, 'password': bridge['hv_control'].get('password', '')}).encode()
+        headers['Content-Type'] = 'application/json'
+    req = urllib.request.Request(url, data=data, headers=headers,
+                                 method='POST' if body is not None else 'GET')
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:   # refusals come back as 4xx with a message
+        try:
+            return json.loads(e.read().decode())
+        except Exception:
+            return {'ok': False, 'message': f'HTTP {e.code}'}
+
+
+def _lab_targets(bridge, sub_run):
+    """{banco hw name ('N1471:0'): volts} from the sub-run's hvs, zeros kept."""
+    cards = {str(k): v for k, v in bridge['hv_control'].get('cards', {}).items()}
+    out = {}
+    for card, chans in (sub_run.get('hvs') or {}).items():
+        if str(card) not in cards:
+            raise ValueError(f'card {card} is not in dream_bridge.json hv_control.cards {cards}')
+        for ch, v in chans.items():
+            if v is not None:
+                out[f'{cards[str(card)]}:{ch}'] = float(v)
+    return out
+
+
+def _lab_gate(bridge, sub_run):
+    name = sub_run.get('sub_run_name', '?')
+    opts = {**LAB_SET_DEFAULTS, **bridge['hv_control']}
+    fail = lambda why: (print(f'[shim] {name}: HV NOT SET — {why}; sub-run skipped')
+                        or f'HV SET FAILED {name} — {why}')
+    try:
+        targets = _lab_targets(bridge, sub_run)
+        st = _banco(bridge, 'api/state', timeout=opts['http_timeout_s'])
+        chans = {c['hw']: c for c in st.get('channels', [])}
+        missing = [hw for hw in targets if hw not in chans]
+        if missing:
+            return fail(f'banco does not know {missing} ({st.get("errors") or st.get("message")})')
+        labels = {hw: chans[hw].get('label') or hw for hw in targets}
+        print(f'[shim] {name}: setting HV on banco: ' +
+              ', '.join(f'{labels[hw]} {v:g} V' for hw, v in targets.items()))
+        # 0) refuse the whole sub-run BEFORE touching anything if a target is
+        # over banco's limit or on a locked channel, so a bad plan never leaves
+        # half the channels moved. (banco checks every call again anyway.)
+        bad = [f'{labels[hw]} {v:g} V > {chans[hw]["vmax"]} V' for hw, v in targets.items()
+               if chans[hw].get('vmax') is not None and v > chans[hw]['vmax']]
+        bad += [f'{hw} is locked on banco' for hw in targets if not chans[hw].get('settable')]
+        if bad:
+            return fail('targets refused before sending: ' + '; '.join(bad))
+        # 1) setpoints, 2) on/off — banco validates each and reads back.
+        for hw, v in targets.items():
+            c = chans[hw]
+            if v > 0 and abs(float(c.get('v0', -1)) - v) > 0.05:
+                r = _banco(bridge, 'api/set', {'hw': hw, 'param': 'v0', 'value': v},
+                           timeout=opts['http_timeout_s'])
+                if not r.get('ok'):
+                    return fail(f'{labels[hw]} Vset {v:g} V refused: {r.get("message")}')
+        for hw, v in targets.items():
+            want = 1 if v > 0 else 0
+            if int(chans[hw].get('power', 0)) != want:
+                r = _banco(bridge, 'api/set', {'hw': hw, 'param': 'power', 'value': want},
+                           timeout=opts['http_timeout_s'])
+                if not r.get('ok'):
+                    return fail(f'{labels[hw]} {"ON" if want else "OFF"} refused: {r.get("message")}')
+        # 3) wait for the readback, then hold it for settle_s
+        deadline = time.time() + opts['timeout_s']
+        stable_since = None
+        last_note = 0
+        while time.time() < deadline:
+            if os.path.exists(STOP_RUN_FLAG):
+                return fail('Stop Run requested while ramping')
+            st = _banco(bridge, 'api/state', timeout=opts['http_timeout_s'])
+            chans = {c['hw']: c for c in st.get('channels', [])}
+            off_now, away = [], []
+            for hw, v in targets.items():
+                c = chans.get(hw, {})
+                if v > 0 and not c.get('power'):
+                    off_now.append(f'{labels[hw]} ({c.get("status_text") or c.get("status")})')
+                elif abs(float(c.get('vmon', 1e9)) - v) > opts['tolerance_v']:
+                    away.append(f'{labels[hw]} {float(c.get("vmon", 0)):.1f}/{v:g} V')
+            if off_now:
+                # a channel we switched on is off again: a trip, or someone at the module
+                return fail('channel(s) not ON: ' + ', '.join(off_now))
+            if away or st.get('errors'):
+                stable_since = None
+                if time.time() - last_note >= 30:
+                    print(f'[shim] {name}: ramping — ' + (', '.join(away) or str(st.get('errors'))))
+                    last_note = time.time()
+            else:
+                stable_since = stable_since or time.time()
+                if time.time() - stable_since >= opts['settle_s']:
+                    print(f'[shim] {name}: HV at target and stable for '
+                          f'{opts["settle_s"]:g} s — starting the capture')
+                    return f'HV Set {name}'
+            time.sleep(opts['poll_s'])
+        return fail(f'readback not within {opts["tolerance_v"]:g} V of target after '
+                    f'{opts["timeout_s"]:g} s')
+    except Exception as e:
+        return fail(f'{type(e).__name__}: {e}')
+
+
 def gate_start(sub_run):
     """Blocking per-subrun gate. Returns the reply for daq_control — contains
     'HV Set' ONLY when the subrun may start."""
     global _first_gate
     name = sub_run.get('sub_run_name', '?')
+    bridge = _load_json(BRIDGE_CONFIG_PATH)
+    if bridge.get('hv_control') and sub_run.get('hvs'):
+        # Lab: this DAQ sets the HV itself, through banco (no Dream run exists
+        # there, so there is no combined state to wait for).
+        _first_gate = False
+        return _lab_gate(bridge, sub_run)
     state = _combined_state()
     first = _first_gate
     _first_gate = False

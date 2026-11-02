@@ -155,12 +155,14 @@ SITES = {
         # toggle in the GUI, disables the beam alert rules, and switches the
         # capture guard to its no-beam discriminator (see capture_guard.py).
         'beam': False,
-        # No HV channel map on this machine: banco owns the crate and we do not
-        # know (and must not invent) its card/channel numbering, so sub-runs
-        # carry no HV targets and nothing here claims to set a voltage. Fill
-        # 'hv_channels'/'hv_operating' below the day the lab crate mapping is
-        # known and HV targets come back automatically.
-        'hv_targets': False,
+        # 2026-11-02: the lab CAEN crate is out of service; the chambers run
+        # from two USB supplies on banco (banco_hv/hv_serial_live.py), which
+        # the DAQ CAN set. The channel map and operating point live in the lab
+        # setup file (hv.channels / hv.operating, card 0 = N1471, card 1 =
+        # NHR); hv_dream_shim.py sets each sub-run's targets through banco and
+        # waits for the readback before the capture starts. The setup file's
+        # hv.set_here still has the last word (see HV_TARGETS below).
+        'hv_targets': True,
         # 120 s per pcapng rather than the 600 s of loop_daq.sh: online QA
         # latency and the capture guard's empty-file trip both scale with this,
         # so a 10-minute file means a dead readout goes unnoticed for 20 min.
@@ -509,6 +511,9 @@ SETUP_REF = _setup_source.setup_ref(SITE)   # what p2_readout_config passes on
 # cabling of the dated entry in force. Old runs keep the entry of their time.
 STAND = SETUP.at('now')
 _HV = SETUP.hv or {}
+# The setup file can still say "not set here" (hv.set_here false): then no
+# sub-run carries HV targets, whatever the site says.
+HV_TARGETS = HV_TARGETS and bool(_HV.get('set_here', True))
 
 
 def _num(v):
@@ -645,6 +650,16 @@ HV_SCAN_STEP_V = _gs.value('hv_scan_step_v', HV_SCAN_STEP_V)
 HV_SCAN_POINTS = _gs.value('hv_scan_points', HV_SCAN_POINTS)
 HV_SCAN_MIN_PER_POINT = _gs.value('hv_scan_min_per_point', HV_SCAN_MIN_PER_POINT)
 HV_SCAN_VOLTAGES = tuple(_gs.value('hv_scan_voltages', list(HV_SCAN_VOLTAGES)))
+# Lab: the voltages a run sets, per detector and electrode, from the Setup tab's
+# Run section ('Run HV', keys hv_<detector>_<electrode>); the defaults are the
+# setup file's operating point. At a non-beam site this IS the operating point
+# every plan works from: lab_source / config_scan / trigger_test /
+# operating_long run at it, hv_scan steps from it. (At the beam the plans keep
+# their own fixed points below; the Run HV settings are not shown there.)
+if not IS_BEAM_SITE:
+    OPERATING_HV = {det: {role: _num(_gs.value(f'hv_{det}_{role}', v))
+                          for role, v in roles.items()}
+                    for det, roles in OPERATING_HV.items()}
 
 
 class Config(RunConfigBase):
@@ -808,6 +823,13 @@ class Config(RunConfigBase):
                                'hvs': _scan_hvs(volts)})
             return points
 
+        def _fixed(beam_point):
+            """Fixed-HV plans: at the beam the plan's own point on every
+            station; in the lab each station at its Run HV (OPERATING_HV)."""
+            if IS_BEAM_SITE:
+                return {det: dict(beam_point) for det in P2_HV}
+            return {det: dict(OPERATING_HV[det]) for det in P2_HV}
+
         def _scan_hvs(p2_volts):
             """Full ten-channel target map for one scan point.
 
@@ -939,8 +961,7 @@ class Config(RunConfigBase):
                         'sub_run_name': f'cfg_{_chip_tag(_applied_chip_file())}',
                         'run_time': CONFIG_SCAN_SUBRUN_MIN,
                         'post_pause_s': 0,
-                        'hvs': _scan_hvs({det: dict(CONFIG_SCAN_P2_HV)
-                                          for det in P2_HV}),
+                        'hvs': _scan_hvs(_fixed(CONFIG_SCAN_P2_HV)),
                     }],
                 # Short trigger-configuration check at the P2 operating point.
                 # Named after the chip config in force so the check is tied to
@@ -950,8 +971,7 @@ class Config(RunConfigBase):
                         'sub_run_name': f'trigtest_{_chip_tag(_applied_chip_file())}',
                         'run_time': TRIGGER_TEST_MIN,
                         'post_pause_s': 0,
-                        'hvs': _scan_hvs({det: dict(TRIGGER_TEST_P2_HV)
-                                          for det in P2_HV}),
+                        'hvs': _scan_hvs(_fixed(TRIGGER_TEST_P2_HV)),
                     }],
                 # Lab measurement (Fe55 / cosmics): N identical sub-runs at
                 # whatever HV banco is holding. Named after the source so the
@@ -971,8 +991,7 @@ class Config(RunConfigBase):
                         'sub_run_name': f'operating_{i:02d}',
                         'run_time': OPERATING_LONG_SUBRUN_MIN,
                         'post_pause_s': 0,
-                        'hvs': _scan_hvs({det: dict(OPERATING_LONG_P2_HV)
-                                          for det in P2_HV}),
+                        'hvs': _scan_hvs(_fixed(OPERATING_LONG_P2_HV)),
                     } for i in range(OPERATING_LONG_N_SUBRUNS)],
             }
 
@@ -994,6 +1013,15 @@ class Config(RunConfigBase):
                     f"(hv_targets False — the crate is not on this machine). "
                     f"Use 'lab_source' for a source/cosmics run or 'config_scan' "
                     f"for a chip-config scan, and set the voltages on banco.")
+            # The beam-test scans step from the beam's operating point and
+            # its literals (450/750...); in the lab they would put beam
+            # voltages on the lab chambers. hv_scan is the lab's scan.
+            if not IS_BEAM_SITE and plan in ('mesh_then_drift',
+                                             'mesh_then_drift_common',
+                                             'retake_run25'):
+                raise SystemExit(
+                    f"RUN_PLAN {plan!r} is a beam-test scan with beam voltages; at "
+                    f"site {SITE!r} use 'hv_scan' (steps from the Run HV) instead.")
             points = _PLANS[plan]()
 
             if cont:
@@ -1066,7 +1094,14 @@ class Config(RunConfigBase):
         # digging through detectors[].vmm_map (where the per-connector cable
         # types live).
         self.cabling_note = CABLING_NOTE
-        if not IS_BEAM_SITE:
+        if not IS_BEAM_SITE and HV_TARGETS:
+            self.lab_hv_note = ('HV SET BY THE DAQ per sub-run (sub_runs[].hvs, '
+                                '{card: {channel: V}}; card 0 = CAEN N1471, card 1 = '
+                                'iseg NHR on banco) and logged in each sub-run\'s '
+                                'hv_monitor.csv. Run HV: ' +
+                                '; '.join(f'{d} ' + ' / '.join(f'{r} {v} V' for r, v in p.items())
+                                          for d, p in OPERATING_HV.items()))
+        elif not IS_BEAM_SITE:
             # Nothing in the DAQ sets or reads this HV, so it is stated, not
             # measured: the real V and I of all six channels go in the logbook
             # at the start and end of every run.

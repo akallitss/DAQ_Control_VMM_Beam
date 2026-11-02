@@ -115,14 +115,14 @@ SCHEMA = {
                      'help': "'mesh_and_drift' steps both by the same amount (each detector "
                              "keeps its operating gap); 'mesh' or 'drift' steps one only."},
     'hv_scan_start_v': {'group': 'run', 'label': 'Voltage scan: first point (V)',
-                        'applies': NEXT_RUN, **_i(0, 900), 'plans': ['hv_scan'],
+                        'applies': NEXT_RUN, **_i(0, 1000), 'plans': ['hv_scan'],
                         'help': 'Of the mesh (or of the drift in drift mode).'},
     'hv_scan_step_v': {'group': 'run', 'label': 'Voltage scan: step (V, negative = down)',
                        'applies': NEXT_RUN, **_i(-200, 200), 'plans': ['hv_scan'], 'help': ''},
     'hv_scan_points': {'group': 'run', 'label': 'Voltage scan: number of points',
                        'applies': NEXT_RUN, **_i(1, 50), 'plans': ['hv_scan'], 'help': ''},
     'hv_scan_voltages': {'group': 'run', 'label': 'Voltage scan: explicit voltages (V)',
-                         'applies': NEXT_RUN, 'type': 'intlist', 'min': 0, 'max': 900,
+                         'applies': NEXT_RUN, 'type': 'intlist', 'min': 0, 'max': 1000,
                          'plans': ['hv_scan'], 'optional': True,
                          'help': 'Comma-separated, in order (e.g. 450, 440, 420, 400) for '
                                  'uneven steps. Leave empty to use first point / step / '
@@ -130,6 +130,19 @@ SCHEMA = {
     'hv_scan_min_per_point': {'group': 'run', 'label': 'Voltage scan: minutes per point',
                               'applies': NEXT_RUN, **_i(1, 600), 'plans': ['hv_scan'],
                               'help': 'Every point the same length, so points compare.'},
+    # Lab (non-beam sites): the voltages every sub-run is set to before its
+    # capture starts (hv_dream_shim -> banco_hv). Defaults: the setup file's
+    # hv.operating. 'lab_only' hides them at the beam, where the plans keep
+    # their own fixed points. Ceilings (setup hv.ceilings) are checked in
+    # check_together; banco enforces its own limits again.
+    **{f'hv_{det}_{role}': {
+        'group': 'run', 'label': f'Run HV: {det} {role} (V)', 'applies': NEXT_RUN,
+        **_i(0, 1000), 'lab_only': True,
+        'plans': ['lab_source', 'config_scan', 'trigger_test', 'operating_long', 'hv_scan'],
+        'help': ('Set on banco before each sub-run; the capture starts once the '
+                 'readback is there. hv_scan steps from these.'
+                 if (det, role) == ('P2_IN', 'mesh') else '')}
+       for det in ('P2_IN', 'P2_MID', 'P2_OUT') for role in ('mesh', 'drift')},
     'capture_duration_s': {'group': 'run', 'label': 'Seconds per capture file',
                            'applies': NEXT_RUN, **_f(10, 3600),
                            'help': 'dumpcap starts a new pcapng this often. QA latency and '
@@ -326,7 +339,7 @@ def coerce(key, v):
     return v
 
 
-def check_together(vals, hv_targets=True, stations=None, ceilings=None):
+def check_together(vals, hv_targets=True, stations=None, ceilings=None, beam=True):
     """Checks across settings, on the values that would be in force. List of errors.
 
     stations: the detectors of the stand now (for the voltage-scan list);
@@ -360,6 +373,20 @@ def check_together(vals, hv_targets=True, stations=None, ceilings=None):
     if kill is not None and warn is not None and warn <= kill:
         errs.append(f'Memory guardian: the warn threshold ({warn} MB) must be above the '
                     f'kill threshold ({kill} MB).')
+    if not beam:
+        for k, v in vals.items():
+            m = re.match(r'hv_(.+)_(mesh|drift)$', k)
+            top = (ceilings or {}).get(m.group(2)) if m else None
+            if m and v is not None and top is not None and v > top:
+                errs.append(f'Run HV: {m.group(1)} {m.group(2)} {v} V is above the '
+                            f'{m.group(2)} ceiling of the setup ({top:g} V).')
+        for d in ('P2_IN', 'P2_MID', 'P2_OUT'):
+            me, dr = vals.get(f'hv_{d}_mesh'), vals.get(f'hv_{d}_drift')
+            if me is not None and dr is not None and dr < me:
+                errs.append(f'Run HV: {d} drift ({dr} V) is below its mesh ({me} V).')
+        if vals.get('run_plan') in ('mesh_then_drift', 'mesh_then_drift_common', 'retake_run25'):
+            errs.append(f"Run plan {vals['run_plan']!r} is a beam-test scan with beam voltages; "
+                        "in the lab use 'hv_scan' (it steps from the Run HV).")
     if not hv_targets and vals.get('run_plan') in HV_PLANS:
         errs.append(f"Run plan {vals['run_plan']!r} steps the HV, but this site does not set "
                     "the HV (it is held on banco). Use 'config_scan' or 'lab_source'.")
@@ -378,7 +405,8 @@ def _atomic_write(path, text):
     os.replace(tmp, path)
 
 
-def save(changes, who='gui', effective=None, hv_targets=True, stations=None, ceilings=None):
+def save(changes, who='gui', effective=None, hv_targets=True, stations=None, ceilings=None,
+         beam=True):
     """Apply {key: value or None}; None resets the key to the code default.
 
     Validates every value and the combination first; writes nothing on any
@@ -403,7 +431,8 @@ def save(changes, who='gui', effective=None, hv_targets=True, stations=None, cei
     after = dict(effective or {})
     for k, v in typed.items():
         after[k] = v if v is not None else _DEFAULTS.get(k, after.get(k))
-    errs = check_together(after, hv_targets=hv_targets, stations=stations, ceilings=ceilings)
+    errs = check_together(after, hv_targets=hv_targets, stations=stations, ceilings=ceilings,
+                          beam=beam)
     if errs:
         return False, errs, {}
 

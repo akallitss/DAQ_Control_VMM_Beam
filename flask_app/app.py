@@ -771,7 +771,7 @@ def settings_post():
     ok, errors, applied = gui_settings.save(
         changes, who=request.remote_addr or "gui",
         effective=_settings_effective(defaults), hv_targets=hv,
-        stations=stations, ceilings=ceilings)
+        stations=stations, ceilings=ceilings, beam=bool(IS_BEAM_SITE))
     if not ok:
         return jsonify({"success": False, "errors": errors}), 400
     for k, (old, new) in applied.items():

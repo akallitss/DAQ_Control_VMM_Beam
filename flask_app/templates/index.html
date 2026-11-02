@@ -4087,12 +4087,17 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
       s = `${n} points × ${val("hv_scan_min_per_point")} min = ${t(n * val("hv_scan_min_per_point"))}; ` +
           `${val("hv_scan_mode") === "drift" ? "drift" : "mesh"}: ${pts.join(", ")} V on ${fmt(val("hv_scan_detectors"))}`;
     } else s = `${val("scan_subrun_min")} min per point (points fixed in the code)`;
+    // Lab: what each sub-run will be set to (hv_scan: the stations it does not step)
+    if (!SITE_BEAM && runS.some(x => x.key === "hv_P2_IN_mesh")) {
+      const hv = ["P2_IN", "P2_MID", "P2_OUT"].map(d => `${d} ${val(`hv_${d}_mesh`)}/${val(`hv_${d}_drift`)}`).join(", ");
+      s += ` · HV set on banco before each sub-run (mesh/drift V): ${hv}`;
+    }
     return `${s} · one capture file every ${cap} s`;
   }
 
   function renderRun() {
     const plan = val("run_plan");
-    const shown = runS.filter(s => !s.plans || s.plans.includes(plan));
+    const shown = runS.filter(s => (!s.plans || s.plans.includes(plan)) && !(s.lab_only && SITE_BEAM));
     $("su-run").innerHTML = `<div class="table-responsive"><table class="table table-dark table-sm align-middle mb-2">
       <tbody>${shown.map(runField).join("")}</tbody></table></div>`;
     $("su-run-summary").textContent = summary();
