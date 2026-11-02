@@ -147,6 +147,30 @@ class SerialDevice:
         return self._xfer(cmd)
 
 
+# CAEN N1470/N1471 channel STAT bits (CAEN manual, as encoded in the hvps library).
+CAEN_STAT_BITS = [
+    (0, 'ON', 'on'), (1, 'RUP', 'ramping up'), (2, 'RDW', 'ramping down'),
+    (3, 'OVC', 'over current (Imon >= Iset)'), (4, 'OVV', 'over voltage'),
+    (5, 'UNV', 'under voltage'), (6, 'MAXV', 'at MAXV protection'),
+    (7, 'TRIP', 'tripped (Imon >= Iset for the trip time)'),
+    (8, 'OVP', 'output power above max'), (9, 'OVT', 'over temperature'),
+    (10, 'DIS', "disabled: the channel's front-panel switch is OFF (REMOTE mode)"),
+    (11, 'KILL', 'killed from the front panel'), (12, 'ILK', 'interlock'),
+    (13, 'NOCAL', 'calibration error'),
+]
+CAEN_BLOCKING = {7: 'TRIP', 10: 'DIS', 11: 'KILL', 12: 'ILK'}
+
+
+def caen_status_text(stat):
+    names = [short for bit, short, _ in CAEN_STAT_BITS if stat >> bit & 1 and bit != 0]
+    return ' '.join(names) or 'ok'
+
+
+def caen_blocking_reason(stat):
+    return '; '.join(f'{short} = {long}' for bit, short, long in CAEN_STAT_BITS
+                     if bit in CAEN_BLOCKING and stat >> bit & 1)
+
+
 class CaenN1471(SerialDevice):
     """CAEN N1470/N1471 ASCII protocol.
 
@@ -194,6 +218,7 @@ class CaenN1471(SerialDevice):
         for i in range(len(vmon)):
             chans[i] = {'v0': vset[i], 'vmon': vmon[i], 'imon': imon[i],
                         'power': stat[i] & 1, 'status': stat[i],
+                        'status_text': caen_status_text(stat[i]),
                         'polarity': pol[i] if i < len(pol) else ''}
         return chans, {'control': ctr}
 
@@ -570,11 +595,31 @@ class Poller:
                 entry['old'] = state.get(param)
                 v = validate(param, value, label, self.cfg['limits'], dev, state)
                 entry['sent'] = v
+                if param == 'power' and v and isinstance(dev, CaenN1471):
+                    why = caen_blocking_reason(int(state.get('status', 0)))
+                    if why:   # the module would answer OK and stay off
+                        raise Refused(f'{label} cannot be switched on: {why}')
                 dev.set(idx, param, v)
                 # read back now, so the page and the log show the module's own value
                 self._refresh_settings(only=dev)
                 self.poll_once()
-                entry['new'] = self._state_of(hw).get(param)
+                new = self._state_of(hw)
+                if param == 'power' and new.get('power') != v:
+                    # an ON can take a moment to show; give it a few polls
+                    for _ in range(3):
+                        time.sleep(1.0)
+                        self.poll_once()
+                        new = self._state_of(hw)
+                        if new.get('power') == v:
+                            break
+                entry['new'] = new.get(param)
+            if param == 'power' and entry['new'] != v:
+                st = new.get('status')
+                why = caen_blocking_reason(int(st)) if isinstance(dev, CaenN1471) and st is not None else ''
+                entry['result'] = (f'NOT APPLIED: module accepted the command but the channel is '
+                                   f'still {"off" if v else "on"} (status {st}{": " + why if why else ""})')
+                self._action_log(entry)
+                return False, f'{label}: {entry["result"]}', entry
             entry['result'] = 'ok'
             self._action_log(entry)
             return True, f'{label}: {param} set to {entry["new"]}', entry

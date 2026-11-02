@@ -69,7 +69,7 @@
     <thead><tr>
       <th class="l">Detector</th><th class="l">Channel</th><th class="l">State</th>
       <th>Vmon [V]</th><th>Imon [µA]</th><th>Vset [V]</th><th>I limit [µA]</th>
-      <th>Ramp up / down [V/s]</th><th>Trip</th><th class="l">Status word</th><th></th>
+      <th>Ramp up / down [V/s]</th><th>Trip</th><th class="l">Status</th><th></th>
     </tr></thead>
     <tbody id="rows"><tr><td class="l muted" colspan="11">loading…</td></tr></tbody>
   </table>
@@ -222,6 +222,10 @@ function render() {
     if (m.control && m.control !== "REMOTE")
       warn.push(["warn", `${k} front panel is on ${m.control}: it will refuse changes until switched to REMOTE (monitoring works).`]);
   });
+  const blocked = STATE.channels.filter(c => c.label && /DIS|KILL|ILK|TRIP/.test(c.status_text || ""));
+  if (blocked.length) warn.push(["warn", `Cannot be switched on from here until fixed at the module: ` +
+    blocked.map(c => `${c.label} (${c.status_text})`).join(", ") +
+    `. DIS = the channel's own ON/OFF switch on the N1471 front panel is OFF: set it to ON (in REMOTE it only enables the channel; the computer then switches it on and off).`]);
   const box = document.getElementById("notices");
   box.querySelectorAll(".sticky").forEach(e => e.remove());
   warn.forEach(([k, t]) => { const el = document.createElement("div"); el.className = `msg ${k} sticky`; el.textContent = t; box.append(el); });
@@ -239,7 +243,7 @@ function render() {
       <td class="mono">${fmt(c.vmon, 1)}</td><td class="mono">${fmt(c.imon, 3)}</td>
       <td class="mono">${fmt(c.v0, 1)}</td><td class="mono">${fmt(c.iset, 2)}</td>
       <td class="mono">${fmt(c.rup, 0)} / ${fmt(c.rdw, 0)}</td><td class="mono">${esc(trip)}</td>
-      <td class="l mono muted">${esc(c.status)}</td><td>${btns}</td></tr>`;
+      <td class="l mono ${/DIS|KILL|TRIP|ILK/.test(c.status_text || "") ? "" : "muted"}" title="raw status word ${esc(c.status)}">${esc(c.status_text ? `${c.status_text} (${c.status})` : c.status)}</td><td>${btns}</td></tr>`;
     return row + (unlocked && openEdit.has(c.hw) ? editRow(c) : "");
   }).join("");
   // keep half-typed edits: only redraw when no edit row has focus
