@@ -9,7 +9,6 @@ Created as Cosmic_Bench_DAQ_Control/Client.py
 """
 
 import socket
-import time
 import json
 import struct
 

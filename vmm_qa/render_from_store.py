@@ -60,7 +60,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import vmm_stations as vs
-from vmm_reduce import merge_counts, NV, ADC_BINS, CH_BINS, ADC_CH_ADC_BINS
+from vmm_reduce import merge_counts, ADC_BINS, CH_BINS
 
 # Station colours, identical to the pipeline and talk figures so the whole set
 # reads as one system.

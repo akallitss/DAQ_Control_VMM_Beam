@@ -27,7 +27,6 @@ Config: optional JSON path as argv[1] (keys below); otherwise built-in defaults.
 """
 
 import os
-import re
 import sys
 import json
 import time

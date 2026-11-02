@@ -29,8 +29,7 @@ from datetime import datetime
 import requests
 
 from daq_status import (get_vmm_daq_status, get_hv_control_status,
-                        get_lv_control_status, get_daq_control_status,
-                        get_qa_watcher_status)
+                        get_lv_control_status, get_daq_control_status)
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

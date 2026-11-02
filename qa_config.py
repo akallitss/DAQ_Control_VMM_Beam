@@ -9,7 +9,7 @@ The flask UI's Start QA Watcher button reads that JSON to launch qa_watcher.py.
 import json
 import os
 
-from run_config_beam import BASE_DATA_DIR, CAPTURE_DURATION_S, SITE
+from run_config_beam import BASE_DATA_DIR, SITE
 
 BASE_DATA = BASE_DATA_DIR
 # The pcapng QA lives in this repo (vmm_qa/vmm_pcapng_qa.py) and runs with this

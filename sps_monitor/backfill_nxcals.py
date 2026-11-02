@@ -50,7 +50,7 @@ _REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO_DIR)
 
 from beam_monitor.beam_intensity_controller import (
-    BEAM_LOG_DIR, BEAM_VARIABLE, PULSE_THRESHOLD_E10)
+    BEAM_LOG_DIR, BEAM_VARIABLE)
 from sps_monitor.sps_spill_controller import (
     SPS_LOG_DIR, SPSQC_VARS, SPS_STAMP_VAR, SPS_INT_VAR, H4_STATUS_VARS,
     H4_CYCLE_VARS, EXTRACTED_DEST, EXTRACTED_SCALE_E10, PROFILE_ARCHIVE_SCOPE,
