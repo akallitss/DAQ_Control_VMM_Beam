@@ -1,0 +1,15 @@
+{
+  "_comment": "Copy to hv_serial_live.json (gitignored) and set token. labels: channel index -> label used as the /hv_live key; unlabelled channels are monitored but not served to the VMM run log.",
+  "bind": "0.0.0.0",
+  "port": 5010,
+  "token": "CHANGE_ME",
+  "poll_s": 5,
+  "log_every_s": 10,
+  "log_dir": "~/hv_serial_logs",
+  "devices": [
+    {"type": "caen_n1470", "name": "N1471", "port": "/dev/serial/by-id/usb-FTDI_USB__-__Serial-if00-port0", "board": 0,
+     "labels": {"0": "P2_IN_Drift", "1": "P2_IN_Mesh", "2": "P2_OUT_Drift", "3": "P2_OUT_Mesh"}},
+    {"type": "iseg_nhr", "name": "NHR", "port": "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_AL04II1G-if00-port0", "channels": "0-3",
+     "labels": {"0": "P2_MID_Mesh", "1": "P2_MID_Drift"}}
+  ]
+}

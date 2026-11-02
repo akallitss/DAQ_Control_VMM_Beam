@@ -278,3 +278,6 @@ config/processor_config.json
 
 # Hand-renamed leftovers of the files above (config/continuation.json.stale-*)
 config/*.stale-*
+
+# lab HV monitor on banco: real config carries the access token
+banco_hv/hv_serial_live.json
