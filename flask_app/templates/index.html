@@ -211,6 +211,20 @@
       <span class="panel-title">HV Monitor</span>
       <span class="panel-header-note" id="hv-note">latest voltage and current readings from HV control</span>
       <span class="ms-auto d-flex align-items-center gap-2">
+        <span id="hv-live-controls" class="d-none align-items-center gap-2">
+          <label for="hv-source-select" class="text-muted small mb-0">Show</label>
+          <select id="hv-source-select" class="form-select form-select-sm" style="width:auto;"
+                  title="Live = banco's USB HV supplies right now; Sub-run = the hv_monitor.csv recorded with the selected sub-run">
+            <option value="live">Live (banco)</option>
+            <option value="subrun">Sub-run</option>
+          </select>
+          <select id="hv-window-select" class="form-select form-select-sm" style="width:auto;" title="Live time window">
+            <option value="15">15 min</option>
+            <option value="60" selected>1 h</option>
+            <option value="360">6 h</option>
+            <option value="1440">24 h</option>
+          </select>
+        </span>
         <label for="hv-subrun-select" class="text-muted small mb-0">Subrun</label>
         <select id="hv-subrun-select" class="form-select form-select-sm" style="width:auto;">
           <option value="">(none)</option>
@@ -1192,10 +1206,47 @@ document.getElementById("restart-all").addEventListener("click", () => {
 // Local hv_monitor.csv first (bench sites); at sps the crate belongs to the
 // Dream DAQ, so fall back to the read-only /hv_data_dream proxy: matched run
 // when one exists (combined runs share names), else Dream's live current run.
+// Lab (non-beam) sites: the chambers run from USB supplies on banco, monitored
+// read-only by banco_hv/hv_serial_live.py. "Live" shows that monitor now,
+// whether or not a run is going; "Sub-run" shows what a sub-run recorded.
+const HV_LIVE_AVAILABLE = !SITE_BEAM;
+if (HV_LIVE_AVAILABLE) {
+    const c = document.getElementById("hv-live-controls");
+    c.classList.remove("d-none");
+    c.classList.add("d-flex");
+}
+function hvMode() {
+    return HV_LIVE_AVAILABLE ? document.getElementById("hv-source-select").value : "subrun";
+}
+
+async function fetchHVLive(note) {
+    const minutes = document.getElementById("hv-window-select").value;
+    try {
+        const res = await fetch(`/hv_data_live?minutes=${encodeURIComponent(minutes)}`);
+        const data = await res.json();
+        if (data && data.success) {
+            const p = data.power || {};
+            const on = Object.keys(p).filter(k => p[k]);
+            const errs = Object.entries(data.errors || {}).map(([k, v]) => `${k}: ${v}`);
+            note.textContent = `LIVE — banco HV monitor, newest reading ${data.latest || "STALE"}` +
+                ` · ON: ${on.length ? on.join(", ") : "none"}` +
+                (errs.length ? ` · READ ERROR ${errs.join("; ")}` : "");
+            return data;
+        }
+        note.textContent = `live HV unavailable: ${(data && data.message) || "?"}`;
+    } catch (e) {
+        note.textContent = `live HV unavailable: ${e}`;
+    }
+    return null;
+}
+
 async function fetchHVData() {
     const run = document.getElementById("run-select").value;
     const subrun = document.getElementById("hv-subrun-select").value;
     const note = document.getElementById("hv-note");
+    if (hvMode() === "live") {
+        return await fetchHVLive(note);
+    }
     try {
         const res = await fetch(`/hv_data?run=${encodeURIComponent(run)}&subrun=${encodeURIComponent(subrun)}`);
         const data = await res.json();
@@ -1204,6 +1255,12 @@ async function fetchHVData() {
             return data;
         }
     } catch (e) { /* fall through to the Dream proxy */ }
+    if (HV_LIVE_AVAILABLE) {
+        // No Dream DAQ in the lab (its bridge URL is the CERN one): asking it
+        // would only time out every 5 s.
+        note.textContent = "this sub-run recorded no HV (hv_monitor.csv) — switch Show to Live";
+        return null;
+    }
     try {
         const res = await fetch(`/hv_data_dream?run=${encodeURIComponent(run)}&subrun=${encodeURIComponent(subrun)}`);
         const data = await res.json();
@@ -1234,7 +1291,8 @@ function _hvLighten(hex, amt) {
     return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
 }
 function hvTraceColor(name) {
-    const [det, electrode] = name.split("_");
+    // Lab monitor labels carry a "P2_" prefix (P2_IN_Drift) -> key on IN/MID/OUT.
+    const [det, electrode] = name.replace(/^P2_/, "").split("_");
     const base = HV_DET_COLOR[det] || "#8b96a5";
     return (electrode || "").toLowerCase() === "drift" ? _hvLighten(base, 0.42) : base;
 }
@@ -1268,7 +1326,9 @@ async function updateHVPlots() {
 
         // uirevision keyed to run/subrun: Plotly preserves zoom/pan/legend state across
         // auto-refreshes (key unchanged) but resets the view when the subrun changes (new key).
-        const uirev = `${run}/${subrun}`;
+        const uirev = hvMode() === "live"
+            ? `live/${document.getElementById("hv-window-select").value}`
+            : `${run}/${subrun}`;
 
         // Dark styling done explicitly — plotly.js does not resolve the
         // 'plotly_dark' template name (that only works from Python).
@@ -1454,6 +1514,8 @@ document.getElementById("hv-subrun-select").addEventListener("change", () => {
     updateHVPlots();
     updateLVPlots();
 });
+document.getElementById("hv-source-select").addEventListener("change", updateHVPlots);
+document.getElementById("hv-window-select").addEventListener("change", updateHVPlots);
 
 // initial load
 loadRuns();

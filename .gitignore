@@ -294,3 +294,6 @@ config/*.stale-*
 config/lab_hv_state.txt
 config/run_highwater.txt
 config/rate_guard_tripped.json
+
+# lab HV monitor on banco: real config carries the access token
+banco_hv/hv_serial_live.json

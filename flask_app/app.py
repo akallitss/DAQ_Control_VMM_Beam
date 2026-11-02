@@ -2114,6 +2114,42 @@ def live_hits():
     return jsonify({"success": True, "run": run_name, **tot})
 
 
+@app.route("/hv_data_live")
+def hv_data_live():
+    """Live HV traces from banco's read-only USB-supply monitor
+    (banco_hv/hv_serial_live.py: N1471 + iseg NHR in the lab), proxied so the
+    browser needs neither banco's address nor its token.
+
+    Reached through config/dream_bridge.json -> hv_live_url (the same URL the
+    shim logs each sub-run from), with /hv_live swapped for /hv_history. Same
+    {time, voltage, current} shape as /hv_data, plus 'power' per channel and
+    'latest' (banco's time of the newest reading)."""
+    from urllib.parse import urlencode
+    try:
+        with open(DREAM_BRIDGE_CONFIG) as f:
+            cfg = json.load(f)
+    except Exception:
+        cfg = {}
+    url = cfg.get("hv_live_url", "")
+    if not url.rstrip("/").endswith("/hv_live"):
+        return jsonify({"success": False, "message": "no hv_live_url in config/dream_bridge.json"})
+    try:
+        minutes = max(1, min(int(request.args.get("minutes", 60)), 24 * 60))
+    except ValueError:
+        minutes = 60
+    q = {"minutes": minutes}
+    if cfg.get("hv_live_token"):
+        q["token"] = cfg["hv_live_token"]
+    hist = url.rstrip("/")[:-len("/hv_live")] + "/hv_history?" + urlencode(q)
+    try:
+        with _urlreq.urlopen(hist, timeout=4) as r:
+            d = json.loads(r.read().decode())
+        d["source"] = "banco-live"
+        return jsonify(d)
+    except Exception as e:
+        return jsonify({"success": False, "message": f"banco HV monitor: {e}"})
+
+
 @app.route("/hv_data_dream")
 def hv_data_dream():
     """HV traces proxied READ-ONLY from the Dream DAQ — the crate owner at
