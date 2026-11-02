@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab HV Control</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #151a21; --panel-2: #1b222b; --border: #262f3a;
+    --text: #e2e8f0; --muted: #8b96a5; --accent: #39c5b2;
+    --on: #e4574c; --on-bg: rgba(228, 87, 76, .12); --ok: #199e70; --warn: #c98500;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+         font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  h1 { font-size: 18px; margin: 0; }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 12px; }
+  .muted { color: var(--muted); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+           padding: 12px; margin-bottom: 12px; }
+  .msg { padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; }
+  .msg.err { background: rgba(228, 87, 76, .15); border: 1px solid var(--on); }
+  .msg.warn { background: rgba(201, 133, 0, .15); border: 1px solid var(--warn); }
+  .msg.ok { background: rgba(25, 158, 112, .15); border: 1px solid var(--ok); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.l, th.l { text-align: left; }
+  tr.on td { background: var(--on-bg); }
+  tr.locked td { color: var(--muted); }
+  .badge { display: inline-block; min-width: 38px; text-align: center; padding: 1px 6px;
+           border-radius: 4px; font-size: 12px; font-weight: 600; }
+  .badge.on { background: var(--on); color: #fff; }
+  .badge.off { background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
+  button { font: inherit; padding: 4px 10px; border-radius: 5px; border: 1px solid var(--border);
+           background: var(--panel-2); color: var(--text); cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.danger { background: #8c2a23; border-color: var(--on); color: #fff; }
+  button.primary { background: #1d6b61; border-color: var(--accent); }
+  input, select { font: inherit; padding: 3px 6px; border-radius: 4px; border: 1px solid var(--border);
+                  background: var(--bg); color: var(--text); width: 100px; }
+  .edit td { background: var(--panel-2); text-align: left; white-space: normal; }
+  .fields { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: flex-end; }
+  .fields label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+  .scroll { overflow-x: auto; }
+  #actions div { padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <h1>Lab HV Control</h1>
+  <span class="muted">CAEN N1471 + iseg NHR on banco</span>
+  <span class="muted mono" id="stamp">—</span>
+  <span style="margin-left:auto" id="lockbox">
+    <input id="pw" type="password" placeholder="control password" autocomplete="off" style="width:160px">
+    <button id="unlock" class="primary">Unlock control</button>
+  </span>
+  <span id="unlocked" style="display:none">
+    <span class="muted">control unlocked</span>
+    <button id="lock">Lock</button>
+    <button id="alloff" class="danger">ALL OFF</button>
+  </span>
+</div>
+<div id="notices"></div>
+<div class="panel scroll">
+  <table>
+    <thead><tr>
+      <th class="l">Detector</th><th class="l">Channel</th><th class="l">State</th>
+      <th>Vmon [V]</th><th>Imon [µA]</th><th>Vset [V]</th><th>I limit [µA]</th>
+      <th>Ramp up / down [V/s]</th><th>Trip</th><th class="l">Status word</th><th></th>
+    </tr></thead>
+    <tbody id="rows"><tr><td class="l muted" colspan="11">loading…</td></tr></tbody>
+  </table>
+</div>
+<div class="panel">
+  <div class="muted" style="margin-bottom:6px">
+    Limits enforced by the service: Vset ≤ <span id="lim-v"></span>; I limit ≤ <span id="lim-i"></span> µA;
+    ramps <span id="lim-r"></span> V/s. Unlabelled channels are locked. Every action is logged on banco
+    (<span class="mono">~/hv_serial_logs/hv_actions.jsonl</span>).
+  </div>
+  <div class="muted" style="margin-bottom:4px">Recent actions</div>
+  <div id="actions" class="mono"></div>
+</div>
+
+<script>
+"use strict";
+// Relative URLs: served by banco at /, and by the VMM flask under /hvctl/.
+const TOKEN = new URLSearchParams(location.search).get("token");
+const q = p => TOKEN ? `${p}${p.includes("?") ? "&" : "?"}token=${encodeURIComponent(TOKEN)}` : p;
+let PW = null;
+try { PW = sessionStorage.getItem("hvctl_pw"); } catch (e) {}
+let STATE = null;
+const openEdit = new Set();
+
+const CAEN_TRIP = c => `${c.trip ?? "?"} s, ${c.pdwn ?? "?"}`;
+// iseg trip actions 0-4 (numbers as the module stores them; meanings per the iseg
+// SCPI manual, check there before relying on one). 4 is what the NHR had configured.
+const ISEG_ACTIONS = {0: "0: limit only", 1: "1: ramp channel down", 2: "2: switch channel off", 3: "3: switch module off", 4: "4 (see iseg manual)"};
+const ISEG_TRIP = c => `${c.trip_time ?? "?"} ms, action ${c.trip_action ?? "?"}`;
+const fmt = (v, d) => (v === undefined || v === null || v === "") ? "?" : Number(v).toFixed(d);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, ch => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[ch]));
+
+function notice(kind, text) {
+  const el = document.createElement("div");
+  el.className = `msg ${kind}`;
+  el.textContent = text;
+  document.getElementById("notices").prepend(el);
+  setTimeout(() => el.remove(), kind === "err" ? 20000 : 8000);
+}
+
+async function post(path, body) {
+  const r = await fetch(q(path), {method: "POST", headers: {"Content-Type": "application/json"},
+                                  body: JSON.stringify({...body, password: PW})});
+  let d = {};
+  try { d = await r.json(); } catch (e) { d = {ok: false, message: `HTTP ${r.status}`}; }
+  return d;
+}
+
+function setLocked(locked) {
+  document.getElementById("lockbox").style.display = locked ? "" : "none";
+  document.getElementById("unlocked").style.display = locked ? "none" : "";
+  if (locked) { PW = null; try { sessionStorage.removeItem("hvctl_pw"); } catch (e) {} openEdit.clear(); }
+  render();
+}
+
+document.getElementById("unlock").onclick = async () => {
+  PW = document.getElementById("pw").value;
+  const d = await post("api/unlock", {});
+  if (d.ok) {
+    try { sessionStorage.setItem("hvctl_pw", PW); } catch (e) {}
+    document.getElementById("pw").value = "";
+    setLocked(false);
+  } else { PW = null; notice("err", d.message || "unlock failed"); }
+};
+document.getElementById("pw").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("unlock").click(); });
+document.getElementById("lock").onclick = () => setLocked(true);
+document.getElementById("alloff").onclick = async () => {
+  if (!confirm("Switch OFF every detector channel (ramped down at the configured speed)?")) return;
+  const d = await post("api/all_off", {});
+  (d.results || []).forEach(r => notice(r.ok ? "ok" : "err", `${r.label}: ${r.message}`));
+  if (!d.results) notice("err", d.message || "ALL OFF failed");
+  refresh(); loadActions();
+};
+
+async function setParam(c, param, value) {
+  const d = await post("api/set", {hw: c.hw, param, value});
+  notice(d.ok ? "ok" : "err", d.message || (d.ok ? "done" : "refused"));
+  return d.ok;
+}
+
+async function power(c, on) {
+  const what = on ? `Switch ON ${c.label} (${c.hw}) — ramps to ${fmt(c.v0, 1)} V at ${fmt(c.rup, 0)} V/s?`
+                  : `Switch OFF ${c.label} (${c.hw})?`;
+  if (!confirm(what)) return;
+  await setParam(c, "power", on ? 1 : 0);
+  refresh(); loadActions();
+}
+
+function fieldsFor(c) {
+  const f = [["v0", "Vset [V]", c.v0, `max ${c.vmax}`], ["iset", "I limit [µA]", c.iset, ""],
+             ["rup", "Ramp up [V/s]", c.rup, ""], ["rdw", "Ramp down [V/s]", c.rdw, ""]];
+  if (c.type === "caen_n1470") {
+    f.push(["trip", "Trip time [s]", c.trip, ""], ["pdwn", "Power down", c.pdwn, ["RAMP", "KILL"]],
+           ["imrange", "Imon range", c.imrange, ["HIGH", "LOW"]]);
+  } else {
+    f.push(["trip_time", "Trip time [ms]", c.trip_time, ""],
+           ["trip_action", "Trip action", c.trip_action, Object.keys(ISEG_ACTIONS)]);
+  }
+  return f.filter(([p]) => c.settable.includes(p));
+}
+
+function editRow(c) {
+  const id = c.hw.replace(":", "_");
+  const inputs = fieldsFor(c).map(([p, lab, val, extra]) => {
+    const ctl = Array.isArray(extra)
+      ? `<select data-p="${p}">${extra.map(o => `<option value="${o}" ${String(o) === String(val) ? "selected" : ""}>${p === "trip_action" ? ISEG_ACTIONS[o] : o}</option>`).join("")}</select>`
+      : `<input data-p="${p}" type="number" step="any" min="0" value="${esc(val)}">`;
+    return `<label>${lab}${extra && !Array.isArray(extra) ? ` <span>(${extra})</span>` : ""}${ctl}</label>`;
+  }).join("");
+  return `<tr class="edit" id="edit-${id}"><td colspan="11"><div class="fields">${inputs}
+    <button class="primary" data-apply="${c.hw}">Apply changes</button>
+    <button data-cancel="${c.hw}">Close</button></div></td></tr>`;
+}
+
+async function applyEdits(hw) {
+  const c = STATE.channels.find(x => x.hw === hw);
+  const tr = document.getElementById(`edit-${hw.replace(":", "_")}`);
+  const changes = [];
+  tr.querySelectorAll("[data-p]").forEach(el => {
+    const p = el.dataset.p, v = el.value.trim();
+    if (v === "") return;
+    const cur = c[p];
+    const same = (typeof cur === "number") ? Math.abs(Number(v) - cur) < 1e-9 : String(v) === String(cur);
+    if (!same) changes.push([p, v, cur]);
+  });
+  if (!changes.length) { notice("warn", "nothing changed"); return; }
+  const lines = changes.map(([p, v, cur]) => `  ${p}: ${cur} → ${v}`).join("\n");
+  if (!confirm(`${c.label} (${c.hw})${c.power ? "  — channel is ON" : ""}\n\n${lines}\n\nApply?`)) return;
+  for (const [p, v] of changes) {
+    const ok = await setParam(c, p, v);
+    if (!ok) break;
+  }
+  openEdit.delete(hw);
+  refresh(); loadActions();
+}
+
+function render() {
+  if (!STATE) return;
+  const unlocked = PW !== null && document.getElementById("unlocked").style.display !== "none";
+  const L = STATE.limits || {};
+  document.getElementById("lim-v").textContent =
+    Object.entries(L.vmax_by_electrode || {}).map(([k, v]) => `${v} V (${k})`).join(", ");
+  document.getElementById("lim-i").textContent = L.iset_max_uA;
+  document.getElementById("lim-r").textContent = `${L.ramp_min}–${L.ramp_max}`;
+  document.getElementById("stamp").textContent = STATE.time ? `reading ${STATE.time}` : "NO CURRENT READING";
+
+  const warn = [];
+  Object.entries(STATE.errors || {}).forEach(([k, v]) => warn.push(["err", `${k}: ${v}`]));
+  Object.entries(STATE.modules || {}).forEach(([k, m]) => {
+    if (m.control && m.control !== "REMOTE")
+      warn.push(["warn", `${k} front panel is on ${m.control}: it will refuse changes until switched to REMOTE (monitoring works).`]);
+  });
+  const box = document.getElementById("notices");
+  box.querySelectorAll(".sticky").forEach(e => e.remove());
+  warn.forEach(([k, t]) => { const el = document.createElement("div"); el.className = `msg ${k} sticky`; el.textContent = t; box.append(el); });
+
+  const rows = STATE.channels.map(c => {
+    const locked = !c.settable.length;
+    const trip = c.type === "caen_n1470" ? CAEN_TRIP(c) : ISEG_TRIP(c);
+    const btns = locked ? `<span class="muted">locked</span>` : `
+      <button data-on="${c.hw}" ${!unlocked || c.power ? "disabled" : ""}>ON</button>
+      <button data-off="${c.hw}" ${!unlocked || !c.power ? "disabled" : ""}>OFF</button>
+      <button data-edit="${c.hw}" ${!unlocked ? "disabled" : ""}>Edit</button>`;
+    const row = `<tr class="${c.power ? "on" : ""} ${locked ? "locked" : ""}">
+      <td class="l">${esc(c.label || "(not used)")}</td><td class="l mono">${esc(c.hw)}</td>
+      <td class="l"><span class="badge ${c.power ? "on" : "off"}">${c.power ? "ON" : "off"}</span></td>
+      <td class="mono">${fmt(c.vmon, 1)}</td><td class="mono">${fmt(c.imon, 3)}</td>
+      <td class="mono">${fmt(c.v0, 1)}</td><td class="mono">${fmt(c.iset, 2)}</td>
+      <td class="mono">${fmt(c.rup, 0)} / ${fmt(c.rdw, 0)}</td><td class="mono">${esc(trip)}</td>
+      <td class="l mono muted">${esc(c.status)}</td><td>${btns}</td></tr>`;
+    return row + (unlocked && openEdit.has(c.hw) ? editRow(c) : "");
+  }).join("");
+  // keep half-typed edits: only redraw when no edit row has focus
+  const active = document.activeElement;
+  if (active && active.closest && active.closest("tr.edit")) return;
+  document.getElementById("rows").innerHTML = rows;
+}
+
+document.getElementById("rows").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b || !STATE) return;
+  const find = hw => STATE.channels.find(x => x.hw === hw);
+  if (b.dataset.on) power(find(b.dataset.on), true);
+  else if (b.dataset.off) power(find(b.dataset.off), false);
+  else if (b.dataset.edit) { openEdit.has(b.dataset.edit) ? openEdit.delete(b.dataset.edit) : openEdit.add(b.dataset.edit); render(); }
+  else if (b.dataset.cancel) { openEdit.delete(b.dataset.cancel); document.activeElement.blur(); render(); }
+  else if (b.dataset.apply) applyEdits(b.dataset.apply);
+});
+
+async function refresh() {
+  try {
+    const r = await fetch(q("api/state"));
+    STATE = await r.json();
+    if (!STATE.channels) throw new Error(STATE.message || STATE.error || "no state");
+    render();
+  } catch (e) {
+    document.getElementById("stamp").textContent = `cannot reach the HV service: ${e.message || e}`;
+  }
+}
+
+async function loadActions() {
+  try {
+    const r = await fetch(q("api/actions"));
+    const a = await r.json();
+    document.getElementById("actions").innerHTML = (a || []).slice(0, 15).map(x =>
+      `<div>${esc(x.time)} · ${esc(x.source)} · ${esc(x.label || x.hw || x.path || "")} · ${esc(x.param ?? "")}` +
+      `${x.param ? ` ${esc(x.old)} → ${esc(x.new ?? x.sent ?? x.value)}` : ""} · ${esc(x.result)}</div>`).join("") ||
+      `<div class="muted">none yet</div>`;
+  } catch (e) {}
+}
+
+if (PW) {
+  post("api/unlock", {}).then(d => setLocked(!d.ok));
+}
+refresh(); loadActions();
+setInterval(refresh, 3000);
+setInterval(loadActions, 10000);
+</script>
+</body>
+</html>

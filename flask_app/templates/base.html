@@ -340,6 +340,12 @@
                     <a class="nav-link" data-bs-toggle="tab" href="#beam2">Beam2</a>
                 </li>
                 {% endif %}
+                {# Lab sites: the USB HV supplies on banco (banco_hv/). #}
+                {% if not beam_site %}
+                <li class="nav-item">
+                    <a class="nav-link" data-bs-toggle="tab" href="#hv-control">HV Control</a>
+                </li>
+                {% endif %}
                 <li class="nav-item">
                     <a class="nav-link" data-bs-toggle="tab" href="#disk-space">Disk Space</a>
                 </li>

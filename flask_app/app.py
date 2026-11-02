@@ -2150,6 +2150,54 @@ def hv_data_live():
         return jsonify({"success": False, "message": f"banco HV monitor: {e}"})
 
 
+def _hv_service_base():
+    """(base URL, read token) of banco's HV service, from dream_bridge.json hv_live_url."""
+    try:
+        with open(DREAM_BRIDGE_CONFIG) as f:
+            cfg = json.load(f)
+    except Exception:
+        cfg = {}
+    url = cfg.get("hv_live_url", "").rstrip("/")
+    if not url.endswith("/hv_live"):
+        return None, None
+    return url[:-len("/hv_live")], cfg.get("hv_live_token", "")
+
+
+@app.route("/hvctl/", defaults={"sub": ""}, methods=["GET", "POST"])
+@app.route("/hvctl/<path:sub>", methods=["GET", "POST"])
+def hv_control_proxy(sub):
+    """The HV Control tab: banco's control page and its api/* calls, proxied.
+
+    banco_hv/hv_serial_live.py owns the serial ports and does ALL validation
+    (per-electrode voltage limits, control password, action log); this route
+    only relays, adding the read token so the browser never needs it. The
+    control password still has to be typed by the person in the page."""
+    from urllib.parse import urlencode
+    import urllib.error as _urlerr
+    if sub not in ("", "api/state", "api/actions", "api/set", "api/all_off", "api/unlock"):
+        return jsonify({"ok": False, "message": "not found"}), 404
+    base, token = _hv_service_base()
+    if not base:
+        return jsonify({"ok": False, "message": "no hv_live_url in config/dream_bridge.json"}), 503
+    url = f"{base}/{sub}" + (("?" + urlencode({"token": token})) if token else "")
+    headers = {"X-HV-Client": f"vmm-gui from {request.remote_addr}"}
+    data = None
+    if request.method == "POST":
+        data = request.get_data()
+        headers["Content-Type"] = "application/json"
+    req = _urlreq.Request(url, data=data, headers=headers, method=request.method)
+    try:
+        # long enough for ALL OFF across 6 channels with read-back
+        with _urlreq.urlopen(req, timeout=60) as r:
+            body, code, ctype = r.read(), r.status, r.headers.get("Content-Type", "application/json")
+    except _urlerr.HTTPError as e:
+        body, code, ctype = e.read(), e.code, e.headers.get("Content-Type", "application/json")
+    except Exception as e:
+        return jsonify({"ok": False, "message": f"banco HV service unreachable: {e}"}), 502
+    return Response(body, status=code, content_type=ctype,
+                    headers={"Cache-Control": "no-store"})
+
+
 @app.route("/hv_data_dream")
 def hv_data_dream():
     """HV traces proxied READ-ONLY from the Dream DAQ — the crate owner at

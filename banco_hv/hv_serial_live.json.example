@@ -3,6 +3,15 @@
   "bind": "0.0.0.0",
   "port": 5010,
   "token": "CHANGE_ME",
+  "control_password": "CHANGE_ME_TOO (empty = control disabled, monitoring only)",
+  "limits": {
+    "_comment": "Checked by the service before anything is sent. vmax by the electrode suffix of the label (P2_IN_Drift -> Drift). Set by the user 2026-11-02.",
+    "vmax_by_electrode": {"Drift": 1000, "Mesh": 500},
+    "iset_max_uA": 100,
+    "ramp_min": 1, "ramp_max": 50,
+    "trip_max_s": 1000,
+    "trip_time_max_ms": 4095
+  },
   "poll_s": 5,
   "log_every_s": 10,
   "log_dir": "~/hv_serial_logs",

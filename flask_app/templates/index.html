@@ -921,6 +921,23 @@
   </div>
 </div>
 
+{# HV Control (lab sites): banco_hv's control page, proxied by /hvctl/. One
+   implementation for this tab and banco's own desktop (http://localhost:5010/).
+   The frame loads on first open, so a closed tab costs nothing. #}
+<div class="tab-pane fade" id="hv-control">
+  <iframe id="hv-control-frame" title="Lab HV Control" data-src="/hvctl/"
+          style="width:100%;height:calc(100vh - 110px);border:0;background:#0e1116;"></iframe>
+</div>
+<script>
+(function () {
+  const tab = document.querySelector('a[href="#hv-control"]');
+  const frame = document.getElementById("hv-control-frame");
+  if (tab && frame) tab.addEventListener("shown.bs.tab", () => {
+    if (!frame.getAttribute("src")) frame.setAttribute("src", frame.dataset.src);
+  });
+})();
+</script>
+
 <div class="tab-pane fade" id="disk-space">
   <div class="panel mb-3">
     <div class="panel-header">
