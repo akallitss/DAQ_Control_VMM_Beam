@@ -743,7 +743,7 @@ class Config(RunConfigBase):
         else:
             self.hv_info['username'] = 'admin'
             self.hv_info['password'] = 'admin'
-            if not SIMULATE and HV_TARGETS:
+            if not SIMULATE and HV_TARGETS and IS_BEAM_SITE:   # lab HV: banco, no CAEN login
                 # stderr, NOT stdout: get_config_py.py's stdout is parsed as
                 # JSON by the GUI — a warning line there breaks Start Run.
                 print(f'WARNING: {creds_path} not found — using default admin/admin HV credentials.',

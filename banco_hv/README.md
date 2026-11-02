@@ -52,18 +52,27 @@ Every attempt, accepted or refused (including wrong passwords), goes to `~/hv_se
 
 Command syntax (checked against the `hvps` library, github.com/lobis/hvps): CAEN `$BD:00,CMD:SET,CH:n,PAR:VSET,VAL:700.0` / `PAR:ON` / `PAR:OFF` → `#BD:00,CMD:OK`; iseg `:VOLT 430.000,(@0);*OPC?` / `:VOLT ON,(@0);*OPC?` → echo, then `1`. Voltages are sent as magnitudes; the channel's polarity gives the sign.
 
-## Deploy / restart (on banco)
+## Running it on banco (starts at boot)
+
+Files live in `~/lab_hv_monitor/`: `hv_serial_live.py`, `hv_control_page.html`, `run_hv_service.sh` and `hv_serial_live.json` (token, control password, limits; not in the repository).
+
+banco's crontab starts it at boot and re-checks every 10 minutes (the previous crontab is saved as `~/lab_hv_monitor/crontab.bak-20261102`):
 
 ```
-# files live in ~/lab_hv_monitor/ (hv_serial_live.py + hv_serial_live.json with the token)
-tmux -L lab_hv new-session -d -s lab_hv "cd ~/lab_hv_monitor; while true; do systemd-run --user --scope -q -p MemoryMax=300M python3 hv_serial_live.py --config hv_serial_live.json 2>&1 | tee -a service.log; echo '[hv_serial] exited, restarting in 10 s (Ctrl-C again to stop)'; sleep 10; done"
-tmux -L lab_hv attach -t lab_hv        # look at it
-# deploy a new version: copy the file, then Ctrl-C once in that pane; the loop restarts it within 10 s
-# stop for good: tmux -L lab_hv kill-server
-python3 hv_serial_live.py --config hv_serial_live.json --once   # one reading, no server
+@reboot sleep 30; /local/home/banco/lab_hv_monitor/run_hv_service.sh --tmux
+*/10 * * * * /local/home/banco/lab_hv_monitor/run_hv_service.sh --tmux
 ```
 
-It runs on a **separate tmux server (`-L lab_hv`)** on purpose. The default tmux server on banco dates from 22 Oct, before `banco` joined `dialout`, so anything started inside it is refused access to the serial ports. The same applies to any login session older than the group change.
+`run_hv_service.sh --tmux` starts tmux server `-L lab_hv`, session `lab_hv`, only if it is not already running. Inside it, the script restarts the service 10 s after any exit and holds a lock, so only one copy can ever run. At boot there is no user session, so the memory cap falls back from `systemd-run MemoryMax=300M` to `ulimit -v` (1 GB).
+
+```
+tmux -L lab_hv attach -t lab_hv     # look at it (detach: Ctrl-b d)
+# new version: copy the files, then Ctrl-C ONCE in that pane -> restarts within 10 s
+# stop for good:   touch ~/lab_hv_monitor/DISABLED; tmux -L lab_hv kill-server
+# allow again:     rm ~/lab_hv_monitor/DISABLED   (cron restarts it within 10 min)
+```
+
+It runs on its own tmux server on purpose. The default tmux server on banco dates from 22 Oct, before `banco` joined `dialout`, so anything started inside it is refused access to the serial ports. The same applies to any login session older than the group change.
 
 ## VMM side
 
@@ -71,7 +80,25 @@ In the deployed `config/dream_bridge.json` on the VMM box:
 
 ```
 "hv_live_url": "http://132.166.10.196:5010/hv_live",
-"hv_live_token": "<token from banco ~/lab_hv_monitor/hv_serial_live.json>"
+"hv_live_token": "<token from banco ~/lab_hv_monitor/hv_serial_live.json>",
+"hv_control": {"cards": {"0": "N1471", "1": "NHR"}, "password": "<control_password>",
+               "tolerance_v": 3.0, "settle_s": 30, "timeout_s": 900, "poll_s": 5}
 ```
 
-The shim re-reads that file at every run start, so no restart is needed.
+The shim re-reads that file at every run start.
+
+- **hv_live_url** gives each sub-run its `hv_monitor.csv`, the live HV plots, and the HV Control tab (flask `/hvctl/`).
+- **hv_control** makes runs SET the HV. The lab setup file (`/local/p2/p2-setups/lab_saclay_2026.yaml`, `hv:`) maps each electrode to `[card, channel]`, with card 0 = N1471 and card 1 = NHR. It also holds the ceilings (mesh 500, drift 1000) and the operating point.
+
+## Runs set the HV (Setup tab -> Run)
+
+Lab plans run at the **Run HV** values (`Run HV: <detector> <mesh|drift>`): `lab_source`, `config_scan`, `trigger_test` and `operating_long` run at them, and `hv_scan` steps from them. The defaults are the setup's operating point. **0 V means that channel is OFF.** On 2026-11-02 they were set to 0 because the chambers had no gas.
+
+For every sub-run, `hv_dream_shim.py`:
+
+1. refuses the sub-run, before sending anything, if any target is above banco's limit or on a locked channel;
+2. sets each Vset, then ON (or OFF for 0 V), through banco's validated API;
+3. waits until every channel reads back ON and within `tolerance_v` of its target, and holds it for `settle_s`;
+4. only then answers `HV Set`, and the capture starts.
+
+A refusal, a trip, Stop Run or `timeout_s` skips that sub-run (shim pane: `HV NOT SET — ...`). `hv_monitor.csv` covers the ramp as well. **At the end of a run the HV is left where the last sub-run put it**; set Run HV to 0, or press ALL OFF, to switch it off.
