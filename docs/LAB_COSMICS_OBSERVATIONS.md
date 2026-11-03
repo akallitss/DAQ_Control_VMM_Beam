@@ -323,3 +323,64 @@ Stand (user, 25 Oct): chambers lying flat (perpendicular to their beam orientati
     10 pad combinations carry 45-60 % of it (VMM 5 ch 46 + VMM 11 ch 10 + VMM 19 ch 20 alone 546 of 2443 in run_95; VMM 3 ch 43 + VMM 11 ch 10 + VMM 18/19). Expected for muons through the stack
     (~0.05 m2 per chamber, 62 cm lever arm): of order 1 Hz x efficiency^3, i.e. thousands per hour. So the chambers see few or no cosmic muons above noise at these settings; the threshold cannot be chosen by
     efficiency until a signal is there. Open: HV values and gas at the lab vs SPS (gas still UNCONFIRMED), a source (Fe55) test to see signals and check the map in the same go.
+
+## 2026-11-03: Cross-check on the DAQ machine, and the summary for the firmware / slow-control developers
+
+Checked on vmm_daplxa from logs and run files only (no slow-control commands sent while the wk2 adaptive scan was running).
+Sources: `vmm_daq.log` of runs 111-190 (`/local/p2/p2data/cosmics_3det_202610/runs/`), `config/chip_config_state.json`,
+`logs/rate_guard.log`, `logs/adaptive/masks_wk2.md`, `/local/p2/deploy/`.
+
+### New observations
+
+65. **Software in use:** `2026-10-23T084325Z-2fb3f16-main` (install `install_2026-10-23T08h43m32sZ`). The banner is no longer
+    "dirty" (obs. 1 is resolved).
+66. **The `python-venv` error is still there with the 23 Oct install** (obs. 2). Every apply, warm reset and link-status read
+    still ends with `Permission denied: '/local/p2/deploy/install_2026-10-23T08h43m32sZ/python-venv'` and the missing
+    `pip`/`activate` lines. Neither install directory of 22 and 23 Oct has a `python-venv`. Both are owned
+    `anvar:basketp2` with mode 750, so our user cannot create one. The commands still succeed.
+67. **Hybrid 11 has nothing connected but reports `linkStatus = 2` after some warm resets.** It does so in 14 of the 26 runs with
+    a link check from run_111 (25 Oct) to run_190 (3 Nov). In the other 12 it reads 0. Hybrids 10 and 12-15 always read 0, and
+    hybrids 0-9 always read 4. The value at the start and end of a run is always the same, and it changes from one warm reset
+    (new scan point) to the next, with no visible pattern (e.g. run_187 = 2, run_188 = 0, run_189 = 2, run_190 = 0 on 3 Nov).
+68. **`vmmAppReg[15]` bit 13 (obs. 4) is hybrid 11's link status.** In every run, `vmmAppReg[15] = 0x00002044` exactly when
+    hybrid 11 reads 2, and `0x00000044` when it reads 0. The registers read as 4 bits per hybrid: `vmmAppReg[16] = 0x44444444` =
+    hybrids 0-7 at 4, and `vmmAppReg[15]` = hybrids 8-15 (`0x44` = hybrids 8 and 9 at 4, `0x2000` = hybrid 11 at 2). So obs. 4
+    is the same thing as obs. 67, not a separate register change. Hybrid 0 has been physically connected since 29 Oct (the
+    scintillators are on H0), so obs. 3 no longer applies to the present setup.
+69. **The VMM 4/7/9 bursts are still there in the November runs (wk2 adaptive scan, 3 Nov).** VMM 9 ch 16-21 and VMM 4
+    ch 36-41 are masked in the base config, and VMM 9 still bursts on ch 22/24/27 at 280-580 kHz (K = +24, run_182) and on
+    ch 25 at 125 kHz (K = +64, run_179). VMM 7 ch 23 reached 629 kHz (K = 0, run_185). The rate guard (100 MB/min) stopped
+    7 runs between 1 and 3 Nov (runs 161, 164, 167, 170, 182, 185, 188). VMM 7 or VMM 9 was the main culprit in 4 of them
+    (94-99.8 % of the hits).
+
+### Summary for the firmware / slow-control developers (as of 2026-11-03)
+
+Setup: ALINX FEC 192.168.0.12, hybrids H0 (scintillator trigger) and H1-H9 (three chambers, VMM 2-19), software
+`2026-10-23T084325Z-2fb3f16-main`. The stack was upgraded between the July SPS beam test and this campaign.
+
+1. **Burst state on three VMMs after configuration** (obs. 13, 16, 19, 25, 36-38, 43-46, 50, 69). These are VMM 4 = H2 Vmm 0,
+   VMM 7 = H3 Vmm 1 and VMM 9 = H4 Vmm 1.
+   - After an apply, one or two neighbouring channels fire at hundreds of kHz up to 2.7 MHz.
+   - The hits are about 600 ns apart (the channel re-fires as soon as it can) and have a nearly fixed ADC value that
+     moves with the threshold setting (~230 at sdt 400, 80-110 at sdt 220-250).
+   - It happens with the HV off, and already 200 DAC above the baseline, so it is not noise crossing the threshold.
+   - The hot channel is stable during a run and changes when the chip is reconfigured. Masking it moves the burst to the
+     next channel.
+   - The same three chips have a block of channels with very high neighbour-measured baselines (median 135-235 ADC,
+     up to 1023), and the burst channels sit at the edge of that block.
+   - Question: could the firmware or slow-control upgrade cause this (a channel input stuck after configuration), or is it
+     the hybrids? Not yet tested on our side: whether re-applying exactly the same config gives the same hot channel.
+2. **Link status of an unconnected hybrid flickers** (obs. 67-68). Hybrid 11 has nothing connected and reads
+   `linkStatus = 2` after about half of the warm resets, 0 after the others. It shows up in `vmmAppReg[15]` as `0x00002044`
+   (bit 13). Before H0 was connected (22 Oct), H0 read 4 ("ready") with nothing on it (obs. 3).
+   Question: what does status 2 mean, and why does an empty port report it?
+3. **`p2basket-python` wrapper error on every call** (obs. 2, 66). The 22 and 23 Oct installs have no `python-venv`, and the
+   wrapper tries to create one in a directory users cannot write. Harmless but on every command; please ship the venv or
+   skip creating it.
+4. **Per-channel calibration is not reachable** (obs. 18, 22). `libp2b-sc.so` has `MeasureChannelThreshold`,
+   `MeasureVmmChannel`, `MeasurePulserDac`, `MeasureThresholdDac`, `ReadVmmAdc`/`ReadADC`, but `p2basket-sc` exposes only
+   `read-temperature`. Python cannot call them: the `Connector` type is not registered in the binding. The commands the
+   Backend creates also always use channel 0. Request: a CLI command (all channels, all chips) or a Python binding, so we can
+   measure per-channel pedestals and thresholds and set the trims as with vmmsc.
+5. **Minor: `apply` returns before the new configuration has taken effect** (obs. 12). The first status poll after `apply` still
+   shows the previous config file.
