@@ -398,9 +398,16 @@ def do_point(st, k, base, a, prev_clean_k):
     while left >= max(10, PROBE_MIN):
         t0 = time.time()
         run, out = run_config_scan(cfg, left, a.dry_run)
-        if a.dry_run or not run:
-            rec['long'].append({'cfg': cfg, 'run': run, 'minutes': left, 'dry_run': a.dry_run})
+        if a.dry_run:
+            rec['long'].append({'cfg': cfg, 'run': run, 'minutes': left, 'dry_run': True})
             break
+        if not run:
+            # e.g. the chip-config apply timed out (K=-18, 5 Nov 00:51): no data, so the point is NOT done
+            log(f'   long run at K={k:+d} did not start (see config_scan.log); point not done')
+            rec['long'].append({'cfg': cfg, 'run': None, 'minutes': left, 'error': 'long run did not start'})
+            rec['status'] = 'long run failed to start'
+            st.save()
+            return None
         ran = (time.time() - t0) / 60 - 2
         trip = tripped(run, t0)
         rec['long'].append({'cfg': cfg, 'run': run, 'minutes_requested': left, 'tripped': bool(trip),
