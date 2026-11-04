@@ -338,8 +338,9 @@ Sources: `vmm_daq.log` of runs 111-190 (`/local/p2/p2data/cosmics_3det_202610/ru
     still ends with `Permission denied: '/local/p2/deploy/install_2026-10-23T08h43m32sZ/python-venv'` and the missing
     `pip`/`activate` lines. Neither install directory of 22 and 23 Oct has a `python-venv`. Both are owned
     `anvar:basketp2` with mode 750, so our user cannot create one. The commands still succeed.
-67. **Hybrid 11 has nothing connected but reports `linkStatus = 2` after some warm resets.** It does so in 14 of the 26 runs with
-    a link check from run_111 (25 Oct) to run_190 (3 Nov). In the other 12 it reads 0. Hybrids 10 and 12-15 always read 0, and
+67. **Hybrid 11 is connected but never reaches `linkStatus = 4` (ready): it reads 2 after some warm resets and 0 after the others.**
+    It reads 2 in 14 of the 26 runs with a link check from run_111 (25 Oct) to run_190 (3 Nov), and 0 in the other 12.
+    (Correction, 4 Nov: the first version of this entry said nothing was connected; the user confirms hybrid 11 is connected.) Hybrids 10 and 12-15 always read 0, and
     hybrids 0-9 always read 4. The value at the start and end of a run is always the same, and it changes from one warm reset
     (new scan point) to the next, with no visible pattern (e.g. run_187 = 2, run_188 = 0, run_189 = 2, run_190 = 0 on 3 Nov).
 68. **`vmmAppReg[15]` bit 13 (obs. 4) is hybrid 11's link status.** In every run, `vmmAppReg[15] = 0x00002044` exactly when
@@ -370,10 +371,10 @@ Setup: ALINX FEC 192.168.0.12, hybrids H0 (scintillator trigger) and H1-H9 (thre
      up to 1023), and the burst channels sit at the edge of that block.
    - Question: could the firmware or slow-control upgrade cause this (a channel input stuck after configuration), or is it
      the hybrids? Not yet tested on our side: whether re-applying exactly the same config gives the same hot channel.
-2. **Link status of an unconnected hybrid flickers** (obs. 67-68). Hybrid 11 has nothing connected and reads
-   `linkStatus = 2` after about half of the warm resets, 0 after the others. It shows up in `vmmAppReg[15]` as `0x00002044`
+2. **Hybrid 11 never reaches link status 4 (ready)** (obs. 67-68). It is connected, but reads `linkStatus = 2` after about
+   half of the warm resets and 0 after the others, never 4. It shows up in `vmmAppReg[15]` as `0x00002044`
    (bit 13). Before H0 was connected (22 Oct), H0 read 4 ("ready") with nothing on it (obs. 3).
-   Question: what does status 2 mean, and why does an empty port report it?
+   Question: what do status 0 and 2 mean, and why does this hybrid not lock while hybrids 0-9 always do?
 3. **`p2basket-python` wrapper error on every call** (obs. 2, 66). The 22 and 23 Oct installs have no `python-venv`, and the
    wrapper tries to create one in a directory users cannot write. Harmless but on every command; please ship the venv or
    skip creating it.
