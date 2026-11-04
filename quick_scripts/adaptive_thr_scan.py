@@ -49,6 +49,8 @@ P2_PY = '/local/p2/p2-readout/venv/bin/python'
 DAQ_PY = os.path.join(REPO, '.venv', 'bin', 'python')
 CHIPS = range(2, 20)                       # detector chips; H0 = chips 0, 1, never touched
 PROBE_MIN = 2                              # config_scan refuses shorter runs at the lab
+BIG_MB = 800                               # probe files above this are sampled, not decoded whole
+MAX_PACKETS = 50000                        # ~450 MB of a loud probe: plenty to find its noisy channels
 
 SDT_RE = re.compile(
     r'^(?P<head>Sys\s+0\s+Bec\s+0\s+Hyb\s+(?P<hyb>\d+)\s+Vmm\s+(?P<vmm>\d+)\s+Reg\s+'
@@ -237,7 +239,15 @@ def _count(files):
         # killed at the 2 GB cap (run_136, 31 Oct 03:53)
         meta = {}
         n = np.zeros(64 * 20, dtype=np.int64)
-        for h in p2_decode.iter_chunks(f, meta=meta):
+        # a probe file above BIG_MB is only sampled (first MAX_PACKETS packets): a 3.4 GB probe (run_194,
+        # K=-16) was killed at the 2 GB cap even chunked. Live time then comes from the packet timestamps.
+        sample = os.path.getsize(f) > BIG_MB * 1e6
+        tmin = tmax = None
+        for h in p2_decode.iter_chunks(f, meta=meta, max_packets=MAX_PACKETS if sample else None):
+            if sample and 'pkt_time_ns' in h and len(h['pkt_time_ns']):
+                pt = np.asarray(h['pkt_time_ns'])
+                tmin = pt.min() if tmin is None else min(tmin, pt.min())
+                tmax = pt.max() if tmax is None else max(tmax, pt.max())
             # a chunk is a dict of the raw column arrays; hit_valid is derived (as decode() does)
             p2_decode.derive(h)
             good = np.asarray(h['hit_valid'], dtype=bool)
@@ -247,7 +257,10 @@ def _count(files):
                 ok = (v >= 0) & (v < 20) & (c >= 0) & (c < 64)
                 n += np.bincount(v[ok] * 64 + c[ok], minlength=64 * 20)
             del h
-        live += float((meta.get('capture') or {}).get('live_time_s') or 0.0)
+        if sample and tmin is not None:
+            live += float(tmax - tmin) / 1e9
+        else:
+            live += float((meta.get('capture') or {}).get('live_time_s') or 0.0)
         for k in np.nonzero(n)[0]:
             d = hits.setdefault(str(k // 64), {})
             d[str(k % 64)] = d.get(str(k % 64), 0) + int(n[k])
