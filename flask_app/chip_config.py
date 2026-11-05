@@ -37,14 +37,28 @@ click is safe no matter what happened before it. run_armed() additionally
 requires the last successful apply to be newer than the last successful warm
 reset, so a standalone Warm Reset click made *after* an apply un-arms the run
 again until Apply is re-run (which redoes both, in order).
+
+Session lock (2026-11-05): warm reset and apply run while holding the p2basket
+session lock (session_lock.py), so another user cannot interleave commands.
+After a successful Apply the lock is left to expire after
+"session_lock_handover_min" (default 10) instead of being released, which
+covers the gap to the run start; vmm_daq_control then takes it over for the
+run. If another user holds the lock, the operation is refused with their name.
+Keys in config/chip_config.json: "session_lock" (default true),
+"p2basket_sc" (default /local/p2/deploy/bin/p2basket-sc),
+"session_lock_handover_min".
 """
 
 import glob
 import json
 import os
 import subprocess
+import sys
 import threading
 from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from session_lock import SessionLockKeeper, DEFAULT_SC  # noqa: E402
 
 DEFAULT_TIMEOUT_S = 300
 
@@ -148,7 +162,39 @@ class ChipConfig:
                          name="chip-config-apply").start()
         return True, f"Configuring chip: {base} + {sel}"
 
+    def _session_lock(self, tag):
+        """(keeper or None, error or None). None keeper = no lock applies."""
+        cfg = self.config
+        sc = cfg.get("p2basket_sc", DEFAULT_SC)
+        if not cfg.get("session_lock", True) or not os.path.exists(sc):
+            return None, None
+        handover = float(cfg.get("session_lock_handover_min", 10))
+        keeper = SessionLockKeeper(sc=sc, chunk_min=handover + 2, tag=tag)
+        ok, msg = keeper.start()
+        return (keeper, None) if ok else (None, f"Session lock not acquired: {msg}")
+
     def _run(self, base, sel):
+        keeper, err = self._session_lock("chip-apply")
+        if err:
+            with self._lock:
+                self.last = {"file": sel, "base_yaml": base, "rc": -1,
+                             "output": f"{err} — nothing done.",
+                             "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                self.running = False
+            self._write_state(last_applied=self.last)
+            return
+        try:
+            self._run_locked(base, sel)
+        finally:
+            if keeper:
+                # Applied OK -> hand over to the run start; otherwise free the bench.
+                ok = bool(self.last and self.last.get("rc") == 0 and self.last.get("file") == sel)
+                if ok:
+                    keeper.detach()
+                else:
+                    keeper.stop()
+
+    def _run_locked(self, base, sel):
         cfg = self.config
         # Warm reset FIRST, always — see module docstring. Skipped only for
         # sites with no warm_reset_script configured (never gated elsewhere
@@ -239,9 +285,19 @@ class ChipConfig:
         return True, "Warm reset started — bringing hybrids to the ready state…"
 
     def _warm_run(self, base):
-        self._do_warm_reset(base)
-        with self._lock:
-            self.reset_running = False
+        keeper, err = self._session_lock("chip-warm-reset")
+        try:
+            if err:
+                self._write_state(warm_reset_last={
+                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "failed": -1, "output": f"{err} — warm reset not done."})
+            else:
+                self._do_warm_reset(base)
+        finally:
+            if keeper:
+                keeper.stop()
+            with self._lock:
+                self.reset_running = False
 
     def _do_warm_reset(self, base):
         """Run the warm-reset utility (force + retry loop); record

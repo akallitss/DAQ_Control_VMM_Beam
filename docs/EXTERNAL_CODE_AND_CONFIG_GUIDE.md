@@ -96,10 +96,20 @@ Contract:
   register writes happen exclusively through the three `config-*-regs`
   actions, which only the chip-config utility (GUI "Configure chip") runs.
   A run start/stop can therefore never overwrite an applied configuration.
-- **Session lock**: p2basket-sc holds a per-user session lock. If someone is
-  working with the slow control when a run starts, acq-on fails with a named
-  "Session locked by <user>" error (caught cleanly, sub-run aborts). Shift
-  rule: the lock must be free before Start Run.
+- **Session lock** (`session_lock.py`, since 2026-11-05): the DAQ now *holds*
+  the p2basket session lock (`p2basket-sc --session-lock N`, file
+  `/run/p2basket/session.lock`) instead of relying on each command's 1-minute
+  auto-lock. `chip_config` holds it during warm reset + apply and leaves it to
+  expire `session_lock_handover_min` (10) minutes later, which covers the gap to
+  the run start; `vmm_daq_control` takes it over before acq-on (chunks of run
+  time + 15 min, renewed for longer runs) and releases it after acq-off. Our own
+  commands and the p2basket-python scripts work normally under our lock; other
+  users' state-changing commands are refused. If another user holds the lock,
+  apply / warm reset / sub-run start are refused with their name (sub-run
+  aborts cleanly). Check: `p2basket-sc --session-lock` (no number) prints
+  "Session is FREE" or "Session OWNED by <user>". Disable with
+  `"session_lock": false` in the run config or `config/chip_config.json`.
+  A DAQ that dies hard leaves at most one chunk behind, which expires on its own.
 
 ### 3.3 LV power (GUI Hybrids LV Power panel)
 
