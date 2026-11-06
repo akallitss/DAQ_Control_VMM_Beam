@@ -7,12 +7,14 @@
 #
 #   fw_compare.sh check                         bench idle? (no run, no scan, session lock FREE)
 #   fw_compare.sh record  <label>               save firmware / FEC registers / link status for <label>
-#   fw_compare.sh manual  <label> [min] [n]     n cycles (default 3) of warm reset + apply + <min> (default 5)
+#   fw_compare.sh manual  <label> [min] [n]     n cycles (default 3) of warm reset + apply + <min> (default 1)
 #                                               minutes of capture with the bare p2basket tools + dumpcap; holds
 #                                               the session lock itself. RECOMMENDED for this test (see below).
+#                                               One cycle takes ~1.5 min (warm reset + apply + acq-on/off ~20 s).
 #   fw_compare.sh stack   <label> [min] [n]     the same through our DAQ stack (config_scan: QA, session lock,
-#                                               RUN_QUALITY.json) — but the rate guard stops any run above
-#                                               100 MB/min after ~45 s, so only for a config that does not burst
+#                                               RUN_QUALITY.json; min >= 2, default 2) — but the rate guard stops
+#                                               any run above 100 MB/min after ~45 s, so only for a config that
+#                                               does not burst
 #   fw_compare.sh compare <label> [<label>...]  per cycle: the burst channels with rate, ADC (median, 10-90 %)
 #                                               and time between hits (fw_burst_stats.py), plus hybrid 11's
 #                                               link status and vmmAppReg[15] (the flicker, obs. 67-68)
@@ -21,23 +23,26 @@
 #   default   the wk2 base config, with VMM 9 (H4V1) ch16-21 and VMM 4 (H2V0) ch36-41 masked: comparable to
 #             all the October/November data, but mainly VMM 7 bursts
 #   unmasked  the same file with those 12 mask lines commented out (created on first use, next to it in
-#             config_ext/, "..._fwtest_unmasked.txt"): VMM 4 and 9 can burst too. Louder: use 3-min cycles
+#             config_ext/, "..._fwtest_unmasked.txt"): VMM 4 and 9 can burst too
 #
 # Typical session, with the HV OFF for both firmwares (the bursts happen without HV; this removes HV, gas and
-# cosmics from the comparison). About 15-20 min per take:
+# cosmics from the comparison). HV: VMM GUI "HV Control" tab, http://dedippce185.extra.cea.fr:5002/hvctl/,
+# Unlock, then ALL OFF. About 4-5 min per take (3 cycles x 1 min), ~10 min per firmware:
 #   fw_compare.sh check
 #   fw_compare.sh manual fwA_default                  # firmware A (what is loaded now)
-#   CFG=unmasked fw_compare.sh manual fwA_unmasked 3
+#   CFG=unmasked fw_compare.sh manual fwA_unmasked
 #   ... firmware B is loaded (bench must be FREE: fw_compare.sh check) ...
 #   fw_compare.sh manual fwB_default
-#   CFG=unmasked fw_compare.sh manual fwB_unmasked 3
+#   CFG=unmasked fw_compare.sh manual fwB_unmasked
 #   fw_compare.sh compare fwA_default fwB_default
 #   fw_compare.sh compare fwA_unmasked fwB_unmasked
+# A minute is plenty for the bursts (kHz-MHz). More cycles cost ~1.5 min each and give more applies to
+# compare (hot channel, hybrid 11 flicker): e.g. "manual fwA_default 1 5".
 #
-# Self-test on 6 Nov 2026 (FEC fw 0x20102026, hybrid fw 0x20211104, default config, 1 cycle x 1 min):
-# 282 MB/min, VMM 7 ch23 at 758 kHz and ch24 at 38 kHz — the burst is there, so the default config shows
-# the effect; expect ~1.4 GB per 5-min cycle. Captures go to $OUT_ROOT (not under runs/: no QA, no prune,
-# no EOS backup — copy them yourself if they are to be kept).
+# Self-tests on 6 Nov 2026 (FEC fw 0x20102026, hybrid fw 0x20211104, 1 cycle x 1 min): default config
+# 282 MB (VMM 7 ch23 758 kHz) in the morning and 29 MB (VMM 7 ch24 66 kHz) after lunch — same file, the
+# burst changes with each apply; unmasked 434 MB (VMM 9 ch19 847 kHz, VMM 4 ch36 255 kHz). Captures go to
+# $OUT_ROOT (not under runs/: no QA, no prune, no EOS backup — copy them yourself if they are to be kept).
 #
 # Why n cycles: the burst channel changes at every reconfiguration, so one apply per firmware cannot tell a
 # firmware effect from that. Each cycle is a fresh warm reset followed by an apply, in that order (applying
@@ -136,7 +141,7 @@ cmd_record() {
 }
 
 cmd_stack() {
-    need_label "${1:-}"; local label=$1 min=${2:-5} n=${3:-3} out=$OUT_ROOT/$1
+    need_label "${1:-}"; local label=$1 min=${2:-2} n=${3:-3} out=$OUT_ROOT/$1
     [ -e "$out/runs.txt" ] && die "$out/runs.txt exists — pick a new label, or remove it to retake"
     cmd_check || die "bench not ready"
     say "note: the rate guard stops runs above 100 MB/min after ~45 s; for a bursting config use 'manual'"
@@ -164,7 +169,7 @@ manual_cleanup() {
 }
 
 cmd_manual() {
-    need_label "${1:-}"; local label=$1 min=${2:-5} n=${3:-3} out=$OUT_ROOT/$1
+    need_label "${1:-}"; local label=$1 min=${2:-1} n=${3:-3} out=$OUT_ROOT/$1
     [ -e "$out/runs.txt" ] && die "$out/runs.txt exists — pick a new label, or remove it to retake"
     cmd_check || die "bench not ready"
     command -v dumpcap >/dev/null || die "dumpcap not found"
@@ -245,5 +250,5 @@ case "${1:-}" in
     stack)   shift; cmd_stack "$@" ;;
     manual)  shift; cmd_manual "$@" ;;
     compare) shift; cmd_compare "$@" ;;
-    *) sed -n '2,47p' "$0"; exit 2 ;;
+    *) sed -n '2,52p' "$0"; exit 2 ;;
 esac
