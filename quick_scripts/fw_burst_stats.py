@@ -111,6 +111,12 @@ def main():
                          hist_quantile(dts, 0.5, DT_BIN_NS)),
                      'frac_dt_below_1us': round(float(dts[:int(1000 / DT_BIN_NS)].sum() / max(dts.sum(), 1)), 3)})
     chip_rate = {v: round(counts[v * 64:(v + 1) * 64].sum() / live, 1) for v in range(20)}
+    # the same without the channels listed above (> limit): the chip's level apart from its bursts
+    rates = counts / live
+    quiet = np.where(rates > a.limit_hz, 0, counts)
+    chip_rate_quiet = {v: round(quiet[v * 64:(v + 1) * 64].sum() / live, 1) for v in range(20)}
+    chip_n_hot = {v: int((rates[v * 64:(v + 1) * 64] > a.limit_hz).sum()) for v in range(20)}
+    chip_n_alive = {v: int((counts[v * 64:(v + 1) * 64] > 0).sum()) for v in range(20)}
     print(f'{len(files)} file(s), live {live:.0f} s; channels over {a.limit_hz:g} Hz:')
     if not rows:
         print('   none')
@@ -120,10 +126,20 @@ def main():
         dtm = f"{r['dt_median_ns']:9.0f}" if r['dt_median_ns'] is not None else '   >20 us'
         print(f"   {r['vmm']:3d} (H{r['hyb']}V{r['hyb_vmm']})  {r['ch']:3d}  {r['rate_hz']:12.1f}   "
               f"{r['adc_median']:5.0f} [{r['adc_p10']:4.0f}-{r['adc_p90']:4.0f}]   {dtm}   {r['frac_dt_below_1us']:6.3f}")
+    print(f'   per hybrid, Hz: all channels / without the {a.limit_hz:g}+ Hz ones '
+          f'[channels with hits, hot channels]   (H0 = trigger scintillators)')
+    for hyb in range(10):
+        cells = []
+        for hv in (0, 1):
+            v = 2 * hyb + hv
+            cells.append(f"V{hv} {chip_rate[v]:10.1f} / {chip_rate_quiet[v]:8.1f} "
+                         f"[{chip_n_alive[v]:2d}, {chip_n_hot[v]}]")
+        print(f'   H{hyb} (VMM {2 * hyb:2d},{2 * hyb + 1:2d})   ' + '   '.join(cells))
     if a.json:
         with open(a.json, 'w') as f:
             json.dump({'files': files, 'live_s': live, 'limit_hz': a.limit_hz, 'channels': rows,
-                       'chip_rate_hz': chip_rate}, f, indent=1)
+                       'chip_rate_hz': chip_rate, 'chip_rate_hz_without_hot': chip_rate_quiet,
+                       'chip_channels_with_hits': chip_n_alive, 'chip_hot_channels': chip_n_hot}, f, indent=1)
 
 
 if __name__ == '__main__':

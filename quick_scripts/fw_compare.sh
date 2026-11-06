@@ -15,9 +15,12 @@
 #                                               RUN_QUALITY.json; min >= 2, default 2) — but the rate guard stops
 #                                               any run above 100 MB/min after ~45 s, so only for a config that
 #                                               does not burst
-#   fw_compare.sh compare <label> [<label>...]  per cycle: the burst channels with rate, ADC (median, 10-90 %)
-#                                               and time between hits (fw_burst_stats.py), plus hybrid 11's
-#                                               link status and vmmAppReg[15] (the flicker, obs. 67-68)
+#   fw_compare.sh compare <label> [<label>...]  per cycle: the link status of all 16 FEC ports and the warm-
+#                                               reset result; the burst channels with rate, ADC (median, 10-90 %)
+#                                               and time between hits (fw_burst_stats.py); and the rate of each
+#                                               hybrid (VMM 0 / 1), with and without its burst channels, plus
+#                                               how many channels have hits — hybrid 11's link status and
+#                                               vmmAppReg[15] (the flicker, obs. 67-68) on the header line
 #
 # Two configurations (CFG=...):
 #   default   the wk2 base config, with VMM 9 (H4V1) ch16-21 and VMM 4 (H2V0) ch36-41 masked: comparable to
@@ -222,6 +225,19 @@ link11() {
     echo "hybrid 11 linkStatus=${ls:-?} vmmAppReg[15]=${reg:-?}"
 }
 
+# link status of all 16 FEC ports after the apply (4 = connected and ready; 0 = nothing; hybrids 0-9 are used)
+links_all() {
+    [ -f "$1" ] || { echo "   link status: n/a (no link_status.txt for this take)"; return; }
+    local p v line="" bad=""
+    for p in $(seq 0 15); do
+        v=$(grep -m1 "hybrid\[$(printf %02d "$p")\]\.linkStatus" "$1" | awk '{print $NF}')
+        line+="${v:-?}"; [ "$p" -eq 9 ] && line+=" |" ; line+=" "
+        [ "$p" -le 9 ] && [ "${v:-?}" != 4 ] && bad+=" H$p=${v:-?}"
+    done
+    echo "   link status H0-H9 | H10-H15:  $line"
+    [ -n "$bad" ] && echo "   !! hybrids not at 4 (ready):$bad"
+}
+
 cmd_compare() {
     [ $# -ge 1 ] || die "usage: fw_compare.sh compare <label> [<label>...]"
     local label take name
@@ -234,6 +250,8 @@ cmd_compare() {
         while read -r take; do
             name=$(basename "$take")
             echo "---- $label / $name   $(link11 "$take/link_status.txt")"
+            links_all "$take/link_status.txt"
+            grep -m1 'failed hybrids' "$take/warm_reset.log" 2>/dev/null | sed 's/^/   warm reset: /'
             systemd-run --user --scope -q -p MemoryMax=2G "$P2_PY" -I "$BURST_STATS" \
                 --limit-hz "$LIMIT_HZ" --json "$out/bursts_$name.json" "$take" > "$out/bursts_$name.txt" 2>&1 \
                 || echo "   (decode failed — see $out/bursts_$name.txt)"
@@ -250,5 +268,5 @@ case "${1:-}" in
     stack)   shift; cmd_stack "$@" ;;
     manual)  shift; cmd_manual "$@" ;;
     compare) shift; cmd_compare "$@" ;;
-    *) sed -n '2,52p' "$0"; exit 2 ;;
+    *) sed -n '2,55p' "$0"; exit 2 ;;
 esac
