@@ -444,6 +444,41 @@ Checked on vmm_daplxa. Sources: `/local/p2/deploy/`, `config/chip_config_state.j
       - at K = -12: VMM 16 (19);
       - at K = -14: VMM 11 (19) and VMM 13 (20);
       - at K = -16: VMM 3 (17), 8 (18), 10 (17), 15 (17), 17 (19) and 19 (18).
+76. **The hybrid 11 flicker (obs. 67-68) does not come from our configuration files.** Checked on 6 Nov against the two files
+    sent to the developers (`p2b-config-cern-base_10hyb.yaml`, `lab-cosmics_ext_as-run_2026-11-04.txt`):
+    - The base yaml is byte-identical to the one the box loads (md5 `190a166c...`). It declares hybrids 0-9 only, all
+      enabled, 2 VMMs each, and nothing for hybrids 10-15. At FEC level it has only `ring` = 0 and `fen` = 0 besides
+      addresses, ports and the trigger/latency settings.
+    - The extension file addresses Hyb 0-9 only. All its lines are VMM-level settings (`sm`, `sdt`, `sg`, `st`, `sfm`, `sp`,
+      `sng`, `srec`). There is no FEC- or hybrid-level line, and no line for a hybrid above 9, not even a commented one.
+    - The flicker happens with byte-identical inputs. Runs 226-230 (5 Nov) used the same config file (md5 `d0a8c351...`),
+      the same base and the same warm-reset command:
+
+      | run | hybrid 11 | `vmmAppReg[15]` | hybrid 10 | hybrid 9 |
+      |---|---|---|---|---|
+      | run_226 | 2 | `0x00002044` | 0 | 4 |
+      | run_227 | 2 | `0x00002044` | 0 | 4 |
+      | run_228 | 2 | `0x00002044` | 0 | 4 |
+      | run_229 | **0** | `0x00000044` | 0 | 4 |
+      | run_230 | 2 | `0x00002044` | 0 | 4 |
+
+      The value is the same at the start and end of each run, so it only changes at a warm reset. The two `fw_compare.sh`
+      self-tests of 6 Nov read 0, then 2.
+    - The value is not something a configuration sets. `read-link-status` decodes two FEC registers, `vmmAppReg[16]`
+      (ports 0-7) and `vmmAppReg[15]` (ports 8-15), 4 bits per port, for all 16 ports. That is why it prints hybrids 10-15,
+      which the yaml does not declare. `0x2044` = port 8 at 4, port 9 at 4, port 10 at 0, port 11 at 2.
+    - Hybrids 10 and 12-15 are also empty and always read 0; only port 11 flickers. Two possible causes: something physical
+      on FEC port 11 (e.g. a cable plugged in with no hybrid at the other end, to be checked), or how the firmware handles
+      an empty port after a warm reset.
+77. **Re-applying the same config does not give the same hot channel** (the open question in item 1 of the summary).
+    Two `fw_compare.sh` self-tests on 6 Nov used the same default config file, each with a fresh warm reset and apply,
+    1 min each, HV on, firmware FEC `0x20102026` / hybrid `0x20211104`:
+    - morning: 282 MB, VMM 7 ch23 at 758 kHz (and ch24 at 38 kHz);
+    - after lunch: 29 MB, VMM 7 ch24 at 66 kHz.
+    With the VMM 4/9 masks removed (`..._fwtest_unmasked.txt`, 434 MB), all three chips burst: VMM 9 ch19 at 847 kHz
+    (ADC 80 [80-84], median 962 ns between hits, 53 % under 1 us), VMM 4 ch36 at 255 kHz and ch38 at 54 kHz, and
+    VMM 7 ch24 at 67 kHz. `quick_scripts/fw_compare.sh` is ready for the firmware comparison: 3 cycles of warm reset +
+    apply + 1 min per firmware and config, with HV off.
 
 ### Update to the summary for the firmware / slow-control developers (as of 2026-11-06)
 
@@ -451,3 +486,12 @@ Checked on vmm_daplxa. Sources: `/local/p2/deploy/`, `config/chip_config_state.j
   reads `-dirty` again.
 - Thank you for the session-lock manual. We now hold the lock for the whole of every run and every chip configuration
   (obs. 72-73). The DAQ runs as ak271430, so the lock shows as owned by that account.
+- Item 1 (bursts): **re-applying exactly the same configuration does not give the same hot channel.** Same file, fresh warm
+  reset + apply each time: VMM 7 ch23 at 758 kHz, then VMM 7 ch24 at 66 kHz (obs. 77). With the VMM 4/9 masks removed,
+  all three chips burst, and VMM 9 ch19 shows the reported signature: 847 kHz, nearly fixed ADC (80), hits about 1 us
+  apart. Next: the same configuration under two firmware versions (`quick_scripts/fw_compare.sh`).
+- Item 2 (hybrid 11 link status): **it is not our configuration** (obs. 76). Neither file addresses hybrids 10-15, and
+  hybrid 11 changes between 0 and 2 across warm resets with byte-identical inputs (runs 226-230: 2, 2, 2, 0, 2). The value
+  is the FEC's own port status (4 bits per port in `vmmAppReg[15]`/`[16]`). We will check FEC port 11 for a cable with no
+  hybrid on it. Questions: what does status 2 mean? Is there an FEC register that disables unused ports (what do `ring`
+  and `fen` do)?
