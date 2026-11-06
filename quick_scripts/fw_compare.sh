@@ -56,7 +56,8 @@
 # then warm-resetting reverts the trigger hybrid's registers — the July offset = -16 problem).
 #
 # Environment overrides: CFG (default | unmasked | a config_ext file name), OUT_ROOT (output folder),
-# LIMIT_HZ (compare: list channels above this rate, default 1000).
+# LIMIT_HZ (compare: list channels above this rate, default 1000), WARM_RESET_LOOP (warm-reset retries per
+# cycle, default 3).
 
 # Must be run, not sourced: sourced, it would change the caller's shell (set -u, traps) and an error
 # would close it.
@@ -85,6 +86,7 @@ APPLY=$CONF_DIR/p2basket_sc_config.py
 IFACE=enp4s0f1
 OUT_ROOT=${OUT_ROOT:-/local/p2/p2data/cosmics_3det_202610/fw_test}
 LIMIT_HZ=${LIMIT_HZ:-1000}
+WARM_RESET_LOOP=${WARM_RESET_LOOP:-3}
 
 say()  { echo "$(date '+%F %T') | $*"; }
 die()  { say "ERROR: $*"; exit 1; }
@@ -156,7 +158,7 @@ cmd_record() {
 
 cmd_stack() {
     need_label "${1:-}"; local label=$1 min=${2:-2} n=${3:-3} out=$OUT_ROOT/$1
-    [ -e "$out/runs.txt" ] && die "$out/runs.txt exists — pick a new label, or remove it to retake"
+    [ -d "$out" ] && [ -n "$(ls -A "$out" 2>/dev/null)" ] && die "$out already holds data (a finished or an interrupted take) — pick a new label"
     cmd_check || die "bench not ready"
     say "note: the rate guard stops runs above 100 MB/min after ~45 s; for a bursting config use 'manual'"
     cmd_record "$label"
@@ -184,7 +186,7 @@ manual_cleanup() {
 
 cmd_manual() {
     need_label "${1:-}"; local label=$1 min=${2:-1} n=${3:-3} out=$OUT_ROOT/$1
-    [ -e "$out/runs.txt" ] && die "$out/runs.txt exists — pick a new label, or remove it to retake"
+    [ -d "$out" ] && [ -n "$(ls -A "$out" 2>/dev/null)" ] && die "$out already holds data (a finished or an interrupted take) — pick a new label"
     cmd_check || die "bench not ready"
     command -v dumpcap >/dev/null || die "dumpcap not found"
     cmd_record "$label"
@@ -205,9 +207,13 @@ cmd_manual() {
         local cyc=$out/cycle$i raw=$out/cycle$i/manual/raw_daq_data   # layout readable by adaptive_thr_scan --replay
         mkdir -p "$raw"
         say "=== cycle $i/$n ==="
-        (cd "$CONF_DIR" && "$WARM_RESET" -c "$CONF_DIR" -b "$BASE" -W -w 3 </dev/null) > "$cyc/warm_reset.log" 2>&1
+        (cd "$CONF_DIR" && "$WARM_RESET" -c "$CONF_DIR" -b "$BASE" -W -w "$WARM_RESET_LOOP" </dev/null) > "$cyc/warm_reset.log" 2>&1
         rc=$?; say "warm reset: $rc failed hybrids"
-        [ $rc -eq 0 ] || die "warm reset failed (cycle $i) — see $cyc/warm_reset.log"
+        if [ $rc -ne 0 ]; then
+            sc --read-link-status > "$cyc/link_status_failed_reset.txt" 2>&1
+            links_all "$cyc/link_status_failed_reset.txt"
+            die "warm reset failed (cycle $i, $WARM_RESET_LOOP retries) — see $cyc/warm_reset.log; more retries: WARM_RESET_LOOP=6 ..."
+        fi
         (cd "$CONF_DIR" && "$APPLY" -c "$CONF_DIR" -b "$BASE" -e "config_ext/$CFG" </dev/null) > "$cyc/apply.log" 2>&1
         rc=$?; say "apply: rc=$rc"
         [ $rc -eq 0 ] || die "apply failed (cycle $i) — see $cyc/apply.log"
@@ -303,5 +309,5 @@ case "${1:-}" in
     compare) shift; cmd_compare "$@" ;;
     summary) shift; cmd_summary "$@" ;;
     rates)   shift; SUMMARY_MODE=rates cmd_summary "$@" ;;
-    *) sed -n '2,59p' "$0"; exit 2 ;;
+    *) sed -n '2,60p' "$0"; exit 2 ;;
 esac
