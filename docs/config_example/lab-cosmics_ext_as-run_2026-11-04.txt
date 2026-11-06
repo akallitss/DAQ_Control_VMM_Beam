@@ -1,0 +1,420 @@
+########################################################
+# Extended configuration file with
+# Each line determines exception from the base configuration file
+# The format is as follows 
+# Sys {id] Bec {id} Hyb {id} Reg {alias} Field {name} {value}
+# Sys {id] Bec {id} Hyb {id} Vmm {id} Reg {alias} Field {name} {value}
+########################################################
+
+
+# Masked channels
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[40] Field sm   0
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[42] Field sm   0
+Sys 0 Bec 0 Hyb 4 Vmm 1 Reg channel[57] Field sm   0
+
+###############################################################
+# Setup trigger Hybrid : ID 0 - V6
+###############################################################
+# Gain (0.5, 1, 3, 4.5, 6, 9, 12, 16 mV/fC)
+Sys 0 Bec 0 Hyb 0 Vmm 0 Reg bank1spi2   Field sg  1 # 1 mV/fC
+Sys 0 Bec 0 Hyb 0 Vmm 1 Reg bank1spi2   Field sg  1 # 1 mV/fC
+# Peaking time (200, 100, 50, 25 ns )
+Sys 0 Bec 0 Hyb 0 Vmm 0 Reg bank1spi2   Field st  3 # 25 ns
+Sys 0 Bec 0 Hyb 0 Vmm 1 Reg bank1spi2   Field st  3 # 25 ns
+# Neighbor logic
+Sys 0 Bec 0 Hyb 0 Vmm 0 Reg bank1spi2   Field sng  0 # disable
+Sys 0 Bec 0 Hyb 0 Vmm 1 Reg bank1spi2   Field sng  0 # disable
+# Polarity
+Sys 0 Bec 0 Hyb 0 Vmm 0 Reg bank1spi2   Field sp  0 # negative
+Sys 0 Bec 0 Hyb 0 Vmm 1 Reg bank1spi2   Field sp  0 # negative
+# Threshold : 10-bit daq spannin 2 registers MSB = Val/64 LSB=val MOD 64
+Sys 0 Bec 0 Hyb 0 Vmm 0 Reg bank1spi1   Field sdt 44 # 
+Sys 0 Bec 0 Hyb 0 Vmm 0 Reg bank1spi2   Field sdt  6 # 300
+Sys 0 Bec 0 Hyb 0 Vmm 1 Reg bank1spi1   Field sdt 44 # 
+Sys 0 Bec 0 Hyb 0 Vmm 1 Reg bank1spi2   Field sdt  6 # 1023
+# Fast undershoot recovery
+Sys 0 Bec 0 Hyb 0 Vmm 0 Reg bank1spi0   Field srec 0 # enable
+Sys 0 Bec 0 Hyb 0 Vmm 1 Reg bank1spi0   Field srec 0 # enable
+
+#Sys 0 Bec 0 Hyb 0 Vmm 1 Reg bank1spi2   Field sfm  0
+
+Sys 0 Bec 0 Hyb 0 Vmm 1 Reg channel[00] Field sm   0
+Sys 0 Bec 0 Hyb 0 Vmm 1 Reg channel[20] Field sm   0
+Sys 0 Bec 0 Hyb 0 Vmm 1 Reg channel[40] Field sm   0 
+Sys 0 Bec 0 Hyb 0 Vmm 1 Reg channel[60] Field sm   0
+
+#Sys 0 Bec 0 Hyb 0 Vmm 0 Reg channel[58] Field sm   1
+#Sys 0 Bec 0 Hyb 0 Vmm 1 Reg channel[23] Field sm   1
+
+#Sys 0 Bec 0 Hyb 0 Vmm 1 Reg channel[00] Field st   1
+#Sys 0 Bec 0 Hyb 0 Vmm 1 Reg channel[20] Field st   1
+#Sys 0 Bec 0 Hyb 0 Vmm 1 Reg channel[40] Field st   1
+#Sys 0 Bec 0 Hyb 0 Vmm 1 Reg channel[*] Field st   1
+
+
+Sys 0 Bec 0 Hyb 0 Vmm 0 Reg channel[46] Field sm   0   # 2026-10-29: unmasked for the scintillator test
+Sys 0 Bec 0 Hyb 0 Vmm 0 Reg channel[44] Field sm   0
+
+
+###############################################################
+# Setup Gain and Peaking time for Detector hybrids
+###############################################################
+# sg = 0/1/2/3/4/5/6/7 -> gain 0.5/1.0/3.0/4.5/6.0/9.0/12.0/16.0 mV/fC
+# Here : 3 mV/fC
+Sys 0 Bec 0 Hyb 1 Vmm 0 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 2 Vmm 1 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 3 Vmm 0 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 3 Vmm 1 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 4 Vmm 1 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg bank1spi2   Field sg  3
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg bank1spi2   Field sg  3
+# st = 0/1/2/3 -> peaking time 200/100/50/25 ns
+# Here : 200 ns
+Sys 0 Bec 0 Hyb 1 Vmm 0 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 2 Vmm 1 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 3 Vmm 0 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 3 Vmm 1 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 4 Vmm 1 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg bank1spi2   Field st  0
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg bank1spi2   Field st  0
+
+###############################################################
+# Setup SFM and thresholds
+###############################################################
+# HYB 1 : 4118 ACDC
+Sys 0 Bec 0 Hyb 1 Vmm 0 Reg bank1spi2   Field sfm  1
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg bank1spi2   Field sfm  1
+# VMM 2
+Sys 0 Bec 0 Hyb 1 Vmm 0 Reg bank1spi1   Field sdt 26
+Sys 0 Bec 0 Hyb 1 Vmm 0 Reg bank1spi2   Field sdt  3 # 218
+# VMM 3
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg bank1spi1   Field sdt 11
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg bank1spi2   Field sdt  3 # 203
+#
+#
+# HYB 2 : 4356 ACDC
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg bank1spi2   Field sfm  1
+Sys 0 Bec 0 Hyb 2 Vmm 1 Reg bank1spi2   Field sfm  0
+# VMM 4
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg bank1spi1   Field sdt 23
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg bank1spi2   Field sdt  3 # 215
+# VMM 5
+Sys 0 Bec 0 Hyb 2 Vmm 1 Reg bank1spi1   Field sdt 41
+Sys 0 Bec 0 Hyb 2 Vmm 1 Reg bank1spi2   Field sdt  3 # 233
+#
+#
+# HYB 3 : 4336 ACDC
+Sys 0 Bec 0 Hyb 3 Vmm 0 Reg bank1spi2   Field sfm  0
+Sys 0 Bec 0 Hyb 3 Vmm 1 Reg bank1spi2   Field sfm  1
+# VMM 6
+Sys 0 Bec 0 Hyb 3 Vmm 0 Reg bank1spi1   Field sdt 24
+Sys 0 Bec 0 Hyb 3 Vmm 0 Reg bank1spi2   Field sdt  3 # 216
+# VMM 7
+Sys 0 Bec 0 Hyb 3 Vmm 1 Reg bank1spi1   Field sdt 28
+Sys 0 Bec 0 Hyb 3 Vmm 1 Reg bank1spi2   Field sdt  3 # 220
+#
+#
+# HYB 4 : 4516 ACDC
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg bank1spi2   Field sfm  0
+Sys 0 Bec 0 Hyb 4 Vmm 1 Reg bank1spi2   Field sfm  1
+# VMM 8
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg bank1spi1   Field sdt 23
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg bank1spi2   Field sdt  3 # 215
+# VMM 9
+Sys 0 Bec 0 Hyb 4 Vmm 1 Reg bank1spi1   Field sdt 20
+Sys 0 Bec 0 Hyb 4 Vmm 1 Reg bank1spi2   Field sdt  3 # 212
+#
+#
+# HYB 5 : 4003 ACDC
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg bank1spi2   Field sfm  1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg bank1spi2   Field sfm  1
+# VMM 10
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg bank1spi1   Field sdt 30
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg bank1spi2   Field sdt  3 # 222
+# VMM 11
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg bank1spi1   Field sdt 26
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg bank1spi2   Field sdt  3 # 218
+#
+#
+# HYB 6 : 4515 ACDC
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg bank1spi2   Field sfm  0
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg bank1spi2   Field sfm  1
+# VMM 12
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg bank1spi1   Field sdt 48
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg bank1spi2   Field sdt  3 # 240
+# VMM 13
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg bank1spi1   Field sdt 14
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg bank1spi2   Field sdt  3 # 206
+#
+#
+# HYB 7 : 4348 ACR
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg bank1spi2   Field sfm  1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg bank1spi2   Field sfm  1
+# VMM 14
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg bank1spi1   Field sdt 33
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg bank1spi2   Field sdt  3 # 225
+#
+# VMM 15
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg bank1spi1   Field sdt 16
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg bank1spi2   Field sdt  3 # 208
+#
+#
+# HYB 8 : 4387 ACR
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg bank1spi2   Field sfm  1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg bank1spi2   Field sfm  1
+# VMM 16
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg bank1spi1   Field sdt 25
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg bank1spi2   Field sdt  3 # 217
+# VMM 17
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg bank1spi1   Field sdt 13
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg bank1spi2   Field sdt  3 # 205
+#
+#
+# HYB 9 : 4158 ACR
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg bank1spi2   Field sfm  1
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg bank1spi2   Field sfm  1
+# VMM 18
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg bank1spi1   Field sdt 12
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg bank1spi2   Field sdt  3 # 204
+# VMM 19
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg bank1spi1   Field sdt 36
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg bank1spi2   Field sdt  3 # 228
+#
+
+
+# 2026-10-28 (run_124): old safe thresholds, masks only on the run_123 rate-guard culprits; VMM 7 unmasked
+# VMM 9 (Hyb 4 Vmm 1) ch 16-21
+Sys 0 Bec 0 Hyb 4 Vmm 1 Reg channel[16] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 1 Reg channel[17] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 1 Reg channel[18] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 1 Reg channel[19] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 1 Reg channel[20] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 1 Reg channel[21] Field sm   1
+# VMM 4 (Hyb 2 Vmm 0) ch 36-41
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[36] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[37] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[38] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[39] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[40] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[41] Field sm   1
+
+# adaptive threshold scan wk2: K = -14 DAC on every detector chip from p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_safe_m9c16to21_m4c36to41_h0open.txt; held chips {12: -8, 18: -8, 16: -12}; 197 channels masked by the scan (plus the base masks)
+Sys 0 Bec 0 Hyb 1 Vmm 0 Reg channel[12] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 0 Reg channel[21] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 0 Reg channel[22] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 0 Reg channel[33] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg channel[11] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg channel[21] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg channel[26] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg channel[31] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg channel[35] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg channel[37] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg channel[41] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg channel[43] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg channel[45] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg channel[53] Field sm   1
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg channel[57] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[12] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[18] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[24] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[25] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[32] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[33] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 0 Reg channel[35] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 1 Reg channel[35] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 1 Reg channel[46] Field sm   1
+Sys 0 Bec 0 Hyb 2 Vmm 1 Reg channel[47] Field sm   1
+Sys 0 Bec 0 Hyb 3 Vmm 0 Reg channel[42] Field sm   1
+Sys 0 Bec 0 Hyb 3 Vmm 1 Reg channel[10] Field sm   1
+Sys 0 Bec 0 Hyb 3 Vmm 1 Reg channel[16] Field sm   1
+Sys 0 Bec 0 Hyb 3 Vmm 1 Reg channel[23] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg channel[13] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg channel[15] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg channel[16] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg channel[23] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg channel[26] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg channel[32] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg channel[33] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg channel[34] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg channel[41] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg channel[44] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg channel[46] Field sm   1
+Sys 0 Bec 0 Hyb 4 Vmm 0 Reg channel[48] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg channel[06] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg channel[10] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg channel[14] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg channel[19] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg channel[20] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg channel[22] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg channel[24] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg channel[27] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg channel[34] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg channel[40] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg channel[42] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg channel[53] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 0 Reg channel[54] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[10] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[13] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[14] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[15] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[17] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[19] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[25] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[30] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[31] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[33] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[34] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[38] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[40] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[42] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[47] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[51] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[52] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[53] Field sm   1
+Sys 0 Bec 0 Hyb 5 Vmm 1 Reg channel[60] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[08] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[10] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[13] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[17] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[18] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[22] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[23] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[28] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[31] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[32] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[36] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[38] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[50] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[52] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[53] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[54] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[55] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[58] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 0 Reg channel[59] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[07] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[11] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[12] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[13] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[14] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[16] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[17] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[18] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[20] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[23] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[24] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[25] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[26] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[27] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[28] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[31] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[32] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[54] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[55] Field sm   1
+Sys 0 Bec 0 Hyb 6 Vmm 1 Reg channel[56] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg channel[10] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg channel[11] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg channel[12] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg channel[30] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg channel[31] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg channel[32] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg channel[34] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg channel[44] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg channel[46] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg channel[47] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 0 Reg channel[51] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg channel[07] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg channel[09] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg channel[15] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg channel[16] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg channel[21] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg channel[22] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg channel[26] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg channel[28] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg channel[29] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg channel[33] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg channel[36] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg channel[49] Field sm   1
+Sys 0 Bec 0 Hyb 7 Vmm 1 Reg channel[50] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[06] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[11] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[12] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[17] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[18] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[21] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[24] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[25] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[26] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[30] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[32] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[35] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[36] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[37] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[38] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[39] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[45] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[47] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 0 Reg channel[48] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[00] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[06] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[13] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[14] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[21] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[26] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[29] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[30] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[32] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[34] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[38] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[39] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[40] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[45] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[49] Field sm   1
+Sys 0 Bec 0 Hyb 8 Vmm 1 Reg channel[53] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[10] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[20] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[22] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[25] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[27] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[30] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[34] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[36] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[44] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[45] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[46] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[49] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[50] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 0 Reg channel[52] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg channel[06] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg channel[11] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg channel[12] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg channel[13] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg channel[15] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg channel[16] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg channel[23] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg channel[24] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg channel[27] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg channel[36] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg channel[43] Field sm   1
+Sys 0 Bec 0 Hyb 9 Vmm 1 Reg channel[47] Field sm   1
