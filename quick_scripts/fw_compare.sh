@@ -13,14 +13,26 @@
 #   fw_compare.sh stack   <label> [min] [n]     the same through our DAQ stack (config_scan: QA, session lock,
 #                                               RUN_QUALITY.json) — but the rate guard stops any run above
 #                                               100 MB/min after ~45 s, so only for a config that does not burst
-#   fw_compare.sh compare <label> [<label>...]  per-channel rates of every take (burst channels and their rates)
+#   fw_compare.sh compare <label> [<label>...]  per cycle: the burst channels with rate, ADC (median, 10-90 %)
+#                                               and time between hits (fw_burst_stats.py), plus hybrid 11's
+#                                               link status and vmmAppReg[15] (the flicker, obs. 67-68)
 #
-# Typical session (about 20 min per firmware):
+# Two configurations (CFG=...):
+#   default   the wk2 base config, with VMM 9 (H4V1) ch16-21 and VMM 4 (H2V0) ch36-41 masked: comparable to
+#             all the October/November data, but mainly VMM 7 bursts
+#   unmasked  the same file with those 12 mask lines commented out (created on first use, next to it in
+#             config_ext/, "..._fwtest_unmasked.txt"): VMM 4 and 9 can burst too. Louder: use 3-min cycles
+#
+# Typical session, with the HV OFF for both firmwares (the bursts happen without HV; this removes HV, gas and
+# cosmics from the comparison). About 15-20 min per take:
 #   fw_compare.sh check
-#   fw_compare.sh manual fwA           # firmware A (what is loaded now)
+#   fw_compare.sh manual fwA_default                  # firmware A (what is loaded now)
+#   CFG=unmasked fw_compare.sh manual fwA_unmasked 3
 #   ... firmware B is loaded (bench must be FREE: fw_compare.sh check) ...
-#   fw_compare.sh manual fwB
-#   fw_compare.sh compare fwA fwB
+#   fw_compare.sh manual fwB_default
+#   CFG=unmasked fw_compare.sh manual fwB_unmasked 3
+#   fw_compare.sh compare fwA_default fwB_default
+#   fw_compare.sh compare fwA_unmasked fwB_unmasked
 #
 # Self-test on 6 Nov 2026 (FEC fw 0x20102026, hybrid fw 0x20211104, default config, 1 cycle x 1 min):
 # 282 MB/min, VMM 7 ch23 at 758 kHz and ch24 at 38 kHz — the burst is there, so the default config shows
@@ -31,22 +43,29 @@
 # firmware effect from that. Each cycle is a fresh warm reset followed by an apply, in that order (applying
 # then warm-resetting reverts the trigger hybrid's registers — the July offset = -16 problem).
 #
-# Environment overrides: CFG (config_ext file name), OUT_ROOT (output folder), LIMIT_HZ (compare: list
-# channels above this rate, default 1000).
+# Environment overrides: CFG (default | unmasked | a config_ext file name), OUT_ROOT (output folder),
+# LIMIT_HZ (compare: list channels above this rate, default 1000).
 
 set -u -o pipefail
 
 REPO=/local/p2/DAQ_Control_VMM_Beam
 CONF_DIR=/local/p2/p2testbench/TestBenchCERN
 BASE=config_base/p2b-config-cern-base.yaml
-CFG=${CFG:-p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_safe_m9c16to21_m4c36to41_h0open.txt}
+DEFAULT_CFG=p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_safe_m9c16to21_m4c36to41_h0open.txt
+UNMASKED_CFG=p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_safe_h0open_fwtest_unmasked.txt
+case "${CFG:-default}" in
+    default)  CFG=$DEFAULT_CFG ;;
+    unmasked) CFG=$UNMASKED_CFG ;;
+esac
+HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+BURST_STATS=$HERE/fw_burst_stats.py
+P2_PY=/local/p2/p2-readout/venv/bin/python
 SC=/local/p2/deploy/bin/p2basket-sc
 WARM_RESET=/local/p2/p2testbench/TestBenchCosmics/p2basket_sc_warm_reset.py
 APPLY=$CONF_DIR/p2basket_sc_config.py
 IFACE=enp4s0f1
 OUT_ROOT=${OUT_ROOT:-/local/p2/p2data/cosmics_3det_202610/fw_test}
 LIMIT_HZ=${LIMIT_HZ:-1000}
-ADAPT=$REPO/logs/adaptive/adaptive_thr_scan.py
 
 say()  { echo "$(date '+%F %T') | $*"; }
 die()  { say "ERROR: $*"; exit 1; }
@@ -55,6 +74,28 @@ sc()   { (cd "$CONF_DIR" && "$SC" --config-file "$BASE" "$@" </dev/null); }
 lock_state() { "$SC" --session-lock </dev/null 2>&1 | tail -1; }
 
 need_label() { [ -n "${1:-}" ] || die "missing <label> (e.g. fwA)"; [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] || die "label: letters, digits, . _ - only"; }
+
+# The unmasked variant: the default config with the VMM 9 ch16-21 / VMM 4 ch36-41 mask lines commented out,
+# nothing else changed. Created once; refused if the result does not differ by exactly those 12 lines.
+ensure_cfg() {
+    local dir=$CONF_DIR/config_ext
+    [ "$CFG" = "$UNMASKED_CFG" ] || return 0
+    [ -f "$dir/$UNMASKED_CFG" ] && return 0
+    local tmp; tmp=$(mktemp "$dir/.fwtest.XXXXXX")
+    {
+        echo "# fw_compare.sh $(date +%F): $DEFAULT_CFG with the VMM 9 (Hyb 4 Vmm 1) ch16-21 and"
+        echo "# VMM 4 (Hyb 2 Vmm 0) ch36-41 masks commented out; nothing else changed."
+        sed -E 's/^(Sys\s+0\s+Bec\s+0\s+Hyb\s+4\s+Vmm\s+1\s+Reg\s+channel\[(1[6-9]|2[01])\]\s+Field\s+sm\s+1)/#\1/;
+                s/^(Sys\s+0\s+Bec\s+0\s+Hyb\s+2\s+Vmm\s+0\s+Reg\s+channel\[(3[6-9]|4[01])\]\s+Field\s+sm\s+1)/#\1/' \
+            "$dir/$DEFAULT_CFG"
+    } > "$tmp"
+    local changed; changed=$(diff <(sed 1,2d "$tmp") "$dir/$DEFAULT_CFG" | grep -c '^<')
+    if [ "$changed" -ne 12 ] || grep -qE '^\s*Sys.*Hyb\s+(4\s+Vmm\s+1.*channel\[(1[6-9]|2[01])\]|2\s+Vmm\s+0.*channel\[(3[6-9]|4[01])\]).*sm\s+1' "$tmp"; then
+        rm -f "$tmp"; die "could not build the unmasked config ($changed lines changed, expected 12)"
+    fi
+    chmod 660 "$tmp"; mv "$tmp" "$dir/$UNMASKED_CFG"
+    say "created config_ext/$UNMASKED_CFG (12 mask lines commented out)"
+}
 
 cmd_check() {
     local ok=0 st
@@ -71,7 +112,8 @@ cmd_check() {
     fi
     st=$(lock_state); say "session lock: $st"
     [[ "$st" == *FREE* ]] || ok=1
-    [ -f "$CONF_DIR/config_ext/$CFG" ] || { say "config not found: config_ext/$CFG"; ok=1; }
+    ensure_cfg
+    [ -f "$CONF_DIR/config_ext/$CFG" ] && say "config: $CFG" || { say "config not found: config_ext/$CFG"; ok=1; }
     [ $ok -eq 0 ] && say "bench idle — OK" || say "bench NOT ready"
     return $ok
 }
@@ -166,24 +208,35 @@ cmd_manual() {
     say "done — next: fw_compare.sh compare <labelA> <labelB>"
 }
 
+# hybrid 11 link status (+ vmmAppReg[15]) from a link_status.txt, for the flicker (obs. 67-68)
+link11() {
+    [ -f "$1" ] || { echo "n/a"; return; }
+    local ls reg
+    ls=$(grep -m1 'hybrid\[11\]\.linkStatus' "$1" | awk '{print $NF}')
+    reg=$(grep -m1 'vmmAppReg\[15\]\.value' "$1" | awk '{print $(NF-1)}')
+    echo "hybrid 11 linkStatus=${ls:-?} vmmAppReg[15]=${reg:-?}"
+}
+
 cmd_compare() {
     [ $# -ge 1 ] || die "usage: fw_compare.sh compare <label> [<label>...]"
     local label take name
     for label in "$@"; do
         local out=$OUT_ROOT/$label
         [ -s "$out/runs.txt" ] || { say "no takes recorded for $label ($out/runs.txt)"; continue; }
-        echo; echo "################ $label — FEC firmware $(grep -m1 'ReadSystemRegisters.fwVersion' "$out/sys_regs.txt" 2>/dev/null | awk '{print $(NF-1)}'), hybrid firmware $(grep -m1 firmwareVersion "$out/fw_version.txt" 2>/dev/null | awk '{print $(NF-1)}')"
+        echo
+        echo "################ $label — FEC firmware $(grep -m1 'ReadSystemRegisters.fwVersion' "$out/sys_regs.txt" 2>/dev/null | awk '{print $(NF-1)}'), hybrid firmware $(grep -m1 firmwareVersion "$out/fw_version.txt" 2>/dev/null | awk '{print $(NF-1)}')"
+        echo "                 $(grep -m1 '^config:' "$out/meta.txt" 2>/dev/null | awk '{print $2}')"
         while read -r take; do
             name=$(basename "$take")
-            echo "---- $label / $name   (channels over $LIMIT_HZ Hz)"
-            (cd "$REPO" && python3 "$ADAPT" --tag fwcompare --replay "$take" --ch-limit-hz "$LIMIT_HZ") \
-                > "$out/replay_$name.txt" 2>&1 || echo "   (decode failed — see $out/replay_$name.txt)"
-            grep -vE '^\s*VMM +[0-9]+:.* -$' "$out/replay_$name.txt"
-            local rq; rq=$(find "/local/p2/p2data/cosmics_3det_202610/runs/$take" -name RUN_QUALITY.json 2>/dev/null | head -1)
-            [ -n "$rq" ] && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('   hits total', d.get('hits_total'), '| MB', round(d.get('capture_bytes',0)/1e6))" "$rq"
+            echo "---- $label / $name   $(link11 "$take/link_status.txt")"
+            systemd-run --user --scope -q -p MemoryMax=2G "$P2_PY" -I "$BURST_STATS" \
+                --limit-hz "$LIMIT_HZ" --json "$out/bursts_$name.json" "$take" > "$out/bursts_$name.txt" 2>&1 \
+                || echo "   (decode failed — see $out/bursts_$name.txt)"
+            cat "$out/bursts_$name.txt"
         done < "$out/runs.txt"
     done
-    echo; say "full outputs: $OUT_ROOT/<label>/replay_*.txt"
+    echo
+    say "per-take tables and JSON: $OUT_ROOT/<label>/bursts_*.{txt,json}"
 }
 
 case "${1:-}" in
@@ -192,5 +245,5 @@ case "${1:-}" in
     stack)   shift; cmd_stack "$@" ;;
     manual)  shift; cmd_manual "$@" ;;
     compare) shift; cmd_compare "$@" ;;
-    *) sed -n '2,30p' "$0"; exit 2 ;;
+    *) sed -n '2,47p' "$0"; exit 2 ;;
 esac
