@@ -20,27 +20,21 @@ copy them into `wheels/`, then
 /local/p2/p2-readout/venv/bin/pip install --no-index --no-deps --find-links /local/p2/p2-readout/wheels p2-monitor==X.Y.Z
 ```
 
-## 1. Processor engine
+## 1. Processor and Online QA
 
-`PROCESSOR_ENGINE = 'p2'` in `p2_readout_config.py` makes `vmm_processor_watcher.py`
-run `p2-monitor-reduce` instead of `vmm_qa/vmm_reduce.py`. Only the worker changes:
-the memory kill, stall and hard timeouts, nice/ionice, thread cap, oom_score_adj,
-the reset signal and mem_guardian all stay as they are. The p2 engine:
+`vmm_processor_watcher.py` runs `p2-monitor-reduce` on every finalized capture
+and `qa_watcher.py` runs `p2-monitor-qa` on every processed store (both from the
+p2-readout venv), under the watchers' guards: memory kill, stall and hard
+timeouts, nice/ionice, thread cap, oom_score_adj, reset, mem_guardian. The stores
+hold `counts.npz`, `counts_chip.npz` (per FEC:VMM chip) and `scalars.json`
+(rates per FEC/chip/hybrid/connector/detector, data volume); the per-hit columns
+are not kept (`P2_KEEP_COLUMNS`). A capture no cabling entry covers is still
+reduced (electronics view, the reason in `scalars.json` `mapping_error`).
 
-- writes the same store layout (`counts.npz`, `scalars.json`) the QA watcher and
-  dashboard read, plus `counts_chip.npz` (per FEC:VMM chip), rates per
-  FEC/chip/hybrid/connector/detector and the data volume in `scalars.json`;
-- drops the per-hit columns by default (`P2_KEEP_COLUMNS`): measured on this box,
-  a 1.1 GB capture reduces in 36 s without them and 114 s (plus 3.8 GB on disk) with;
-- keeps its own state file (`config/processor_state_p2.json`); `P2_STORE_INNER =
-  'hits_store_p2'` runs it next to the legacy processor for a comparison;
-- still reduces a capture its setup has no cabling for (electronics view only, the
-  reason in `scalars.json` `mapping_error`);
-- has no efficiency stage yet, so the trend dashboard shows no efficiency for its
-  stores. The lab runs without efficiency anyway.
-
-After changing the engine: Stop and Start Processor in the GUI (the start
-regenerates `config/processor_config.json`).
+The previous in-repo worker and QA script (`vmm_qa/vmm_reduce.py`,
+`vmm_qa/vmm_pcapng_qa.py`, and `qa_catchup.py` that drove them) were replaced on
+2026-10-28, after identical `counts.npz` and scalars on run_123/run_124 captures,
+and removed on 2026-11-02.
 
 ## 2. Live tab
 

@@ -21,7 +21,8 @@ tmux services (all prefixed `vmm_` — start with `./start_servers.sh`):
 | `vmm_daq`         | `vmm_daq_control.py`   | 2101 | dumpcap/tcpdump capture per interface, ALINX slow control, status lines |
 | `vmm_daq_control` | interactive shell      |  —   | `daq_control.py <run_config.json>` orchestrates sub-runs |
 | `vmm_flask`       | `flask_app/`           | 5002 | GUI: run control, status cards, SPS beam monitor (CERN Vistar), HV/LV plots, online QA gallery |
-| `vmm_qa_watcher`  | `qa_watcher.py`        |  —   | runs `vmm_qa/vmm_pcapng_qa.py` on each finalized pcapng |
+| `vmm_processor`   | `vmm_processor_watcher.py` | — | runs `p2-monitor-reduce` on each finalized pcapng (histograms, rates) |
+| `vmm_qa_watcher`  | `qa_watcher.py`        |  —   | runs `p2-monitor-qa` on each processed capture (QA plots) |
 | `vmm_backup_watcher` | `backup_watcher.py` |  —   | rsync to EOS (configure `backup_config.py` first) |
 
 Data tree (`base_data_dir` from `run_config_beam.py`):
@@ -351,9 +352,10 @@ control-room machine; the 2100–2102 service ports stay on localhost).
 Manual equivalents: `bash_scripts/start_run.sh <config.json>`,
 `stop_run.sh`, `stop_sub_run.sh`, `restart_daq_tmux_processes.sh`.
 
-QA on a single file by hand:
+Process and plot a single file by hand (the p2 readout packages, see
+docs/P2_READOUT_INTEGRATION.md):
 
 ```bash
-.venv/bin/python vmm_qa/vmm_pcapng_qa.py <file.pcapng> --out-dir out/ --events-json
-# --format TRG for external-trigger data, --calibration <vmm-sdat json>, --live to follow a growing file
+/local/p2/p2-readout/venv/bin/p2-monitor reduce <file.pcapng> --store-dir st/ --setup <setup> --drop-columns
+/local/p2/p2-readout/venv/bin/p2-monitor-qa st/ --out-dir out/ --events-json
 ```

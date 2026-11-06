@@ -3,7 +3,7 @@
 """
 Memory guardian — kill the runaway compute process, not the computer.
 
-The Python pcapng QA (vmm_qa/vmm_pcapng_qa.py, spawned per finalized capture by
+The per-capture QA (p2-monitor-qa, spawned per finalized capture by
 qa_watcher) can balloon in memory on a big file. If system memory is exhausted
 the machine thrashes/freezes and can take the live DAQ down with it. This daemon
 watches MemAvailable and, when it drops into the danger zone, SIGTERM/SIGKILLs
@@ -27,7 +27,6 @@ Config: optional JSON path as argv[1] (keys below); otherwise built-in defaults.
 """
 
 import os
-import re
 import sys
 import json
 import time
@@ -45,10 +44,6 @@ DEFAULTS = {
     # Only these (heavy, restartable) compute processes may be killed. The QA is
     # the one memory-hungry offline job in the VMM stack; qa_watcher re-runs it.
     "killable": [
-        "vmm_pcapng_qa.py",
-        # The decode worker is the other heavy, restartable job: the processor
-        # re-queues a killed file on the next poll, exactly as qa_watcher does.
-        "vmm_reduce.py",
         # The p2 readout packages (p2_readout_config.py): the p2 engine's
         # processor worker, the GUI Live tab's monitor, and reduces started by
         # `p2-monitor watch`. All restartable; none takes data.

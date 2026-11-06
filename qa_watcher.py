@@ -21,7 +21,7 @@ What it draws, and why not everything:
   * Every store contributes to the TREND dashboard, which is the thing that
     answers "is something drifting" -- the question 36 per-file PNGs cannot.
   * Any capture can still be rendered on demand: the store keeps the columns,
-    so vmm_pcapng_qa.py <store_dir> reproduces its plots without the pcapng.
+    so p2-monitor-qa <store_dir> reproduces its plots without the pcapng.
 
 Usage:
     python qa_watcher.py <qa_config_json_path>
@@ -84,7 +84,10 @@ def run_watcher(config: dict):
 
     here = Path(__file__).parent
     python_exe = config.get('qa_python', str(here / '.venv' / 'bin' / 'python'))
-    qa_script = Path(config.get('qa_script', str(here / 'vmm_qa' / 'vmm_pcapng_qa.py')))
+    if not config.get('qa_script'):
+        sys.exit('[qa_watcher] no qa_script in the config: regenerate it with '
+                 'qa_config.py (Start QA does)')
+    qa_script = Path(config['qa_script'])
     trend_script = Path(config.get('trend_script', str(here / 'vmm_qa' / 'vmm_trend.py')))
     state_path = Path(config.get('state_file', here / 'config' / 'qa_state.json'))
     reset_signal = Path(config.get('reset_signal', here / 'config' / 'qa_reset.json'))

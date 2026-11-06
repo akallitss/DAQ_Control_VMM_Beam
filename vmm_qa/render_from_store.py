@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-render_from_store.py -- the QA plots vmm_reduce.py deliberately did not draw.
+render_from_store.py -- QA plots summed over a sub-run, from counts.npz.
 
 The online watcher reduces each 45 s capture to counts.npz + scalars.json and
 draws nothing, for the reasons written at the top of vmm_reduce.py: 36 PNGs per
@@ -60,7 +60,25 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import vmm_stations as vs
-from vmm_reduce import merge_counts, NV, ADC_BINS, CH_BINS, ADC_CH_ADC_BINS
+
+# Bin counts of the counts.npz layout (vmm_reduce.py, removed 2026-11-02; the
+# p2 engine writes the same layout).
+ADC_BINS = 1024
+CH_BINS = 64
+
+
+def merge_counts(list_of_counts) -> dict:
+    """Sum counts across files (as vmm_reduce.merge_counts did)."""
+    it = iter(list_of_counts)
+    total = {k: np.array(v) for k, v in next(it).items()}
+    for c in it:
+        for k, v in c.items():
+            if k == "time_range":
+                total[k] = np.array([min(total[k][0], v[0]),
+                                     max(total[k][1], v[1])], dtype=np.int64)
+            elif k in total and total[k].shape == np.shape(v):
+                total[k] = total[k] + v
+    return total
 
 # Station colours, identical to the pipeline and talk figures so the whole set
 # reads as one system.

@@ -2,17 +2,13 @@
 # -*- coding: utf-8 -*-
 """
 vmm_stations.py — telescope geometry, trigger, channel masking, and a pcapng
-parser shared by the VMM online QA and the efficiency analysis.
+parser for the offline efficiency/map analyses and rate_guard's culprit decode.
 
 Why this file exists
 --------------------
-`vmm_pcapng_qa.py` is a top-level script (argparse runs at import), so nothing
-can import its parser. Rather than have the efficiency analysis re-implement the
-bit unpacking a second time, the parse lives here and both use it.
-
-TODO (tracked in VMM_ONLINE_EFFICIENCY_PLAN.md): make vmm_pcapng_qa.py import
-parse_pcapng() from here instead of keeping its own copy. Deliberately NOT done
-while beam data is being taken — that script is what the live qa_watcher runs.
+The parse was lifted from the old online QA script (vmm_pcapng_qa.py, a
+top-level script nothing could import; removed 2026-11-02) so the efficiency
+analysis did not re-implement the bit unpacking a second time.
 
 Station cabling mirrors run_config_beam.P2_VMM_CABLING. It is duplicated here
 (not imported) so this module works standalone, e.g. on lxplus/EOS where the DAQ

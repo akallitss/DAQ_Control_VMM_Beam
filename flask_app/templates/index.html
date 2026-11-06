@@ -3646,12 +3646,21 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
 </script>
 
 <script>
+// Shared by the Live, Settings, Setup and Analysis scripts below.
+window.p2ui = {
+  $: id => document.getElementById(id),
+  // HTML-escape for text put into innerHTML; null/undefined become ""
+  esc: s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c])),
+};
+</script>
+
+<script>
 // ---------------------------------------------------------------------------
 // Live tab: reads /live/status (the p2-monitor live process's JSON); polls only
 // while the tab is shown.
 // ---------------------------------------------------------------------------
 (function () {
-  const $ = id => document.getElementById(id);
+  const { $, esc } = window.p2ui;
   const pane = $("live");
   let running = null;
 
@@ -3661,7 +3670,6 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
     for (const [f, p] of steps) if (Math.abs(v) >= f) return (v / f).toPrecision(3) + " " + p + unit;
     return v === 0 ? "0 " + unit : v.toPrecision(3) + " " + unit;
   }
-  const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 
   function ageBadge(age) {
     if (age === null || age === undefined) return '<span class="badge bg-secondary">no data</span>';
@@ -3847,8 +3855,7 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
 // that were edited; the server validates everything and writes nothing on error.
 // ---------------------------------------------------------------------------
 (function () {
-  const $ = id => document.getElementById(id);
-  const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const { $, esc } = window.p2ui;
   const fmt = v => v === null || v === undefined ? "–" : (typeof v === "boolean" ? (v ? "yes" : "no") : String(v));
   let data = null;
 
@@ -3971,8 +3978,8 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
 // Setup tab (read-only): /setup, the site's setup file.
 // ---------------------------------------------------------------------------
 (function () {
-  const $ = id => document.getElementById(id);
-  const esc = s => String(s ?? "–").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const $ = window.p2ui.$;
+  const esc = s => window.p2ui.esc(s ?? "–");      // missing values show a dash
 
   function cablingTable(rows) {
     return `<div class="table-responsive"><table class="table table-dark table-sm align-middle mb-2">
@@ -4043,8 +4050,7 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
 // (/setup/entry: preview, then save as a new dated entry).
 // ---------------------------------------------------------------------------
 (function () {
-  const $ = id => document.getElementById(id);
-  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const { $, esc } = window.p2ui;
   const fmt = v => v === null || v === undefined ? "–" : Array.isArray(v) ? v.join(", ") : String(v);
 
   // ---------------- Run section ----------------
@@ -4304,8 +4310,7 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
 // (or the whole run), build it, show the summary and the plots.
 // ---------------------------------------------------------------------------
 (function () {
-  const $ = id => document.getElementById(id);
-  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const { $, esc } = window.p2ui;
   const si = (v, u) => v === null || v === undefined ? "–" :
     Math.abs(v) >= 1e6 ? (v / 1e6).toPrecision(3) + " M" + u : Math.abs(v) >= 1e3 ? (v / 1e3).toPrecision(3) + " k" + u : v.toPrecision(3) + " " + u;
   const CAPTION = {"rate_map.png": "Hits on the detector surface (rate per pad area)",
@@ -4381,8 +4386,7 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
 // Setup tab: campaign panel (/campaign): data directory and EOS folder.
 // ---------------------------------------------------------------------------
 (function () {
-  const $ = id => document.getElementById(id);
-  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const { $, esc } = window.p2ui;
   let cur = null;
 
   async function load() {
@@ -4435,8 +4439,7 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
 // script's dry run, start/stop config_scan.py, follow its progress.
 // ---------------------------------------------------------------------------
 (function () {
-  const $ = id => document.getElementById(id);
-  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const { $, esc } = window.p2ui;
   const short = f => f.replace(/^p2b-config-cern-ext_/, "").replace(/\.txt$/, "");
   let st = null, chosen = [], checked = false;
 

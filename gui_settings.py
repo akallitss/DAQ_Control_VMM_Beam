@@ -149,10 +149,6 @@ SCHEMA = {
                                    'the capture guard trip time scale with it.'},
 
     # --- readout and monitoring ------------------------------------------------
-    'processor_engine': {'group': 'readout', 'label': 'Processor engine', 'applies': PROCESSOR,
-                         **_c('p2', 'legacy'),
-                         'help': "'p2' = p2-monitor-reduce and QA plots from histograms; "
-                                 "'legacy' = vmm_qa/vmm_reduce.py and vmm_pcapng_qa.py."},
     'p2_keep_columns': {'group': 'readout', 'label': 'Keep per-hit columns (p2 engine)',
                         'applies': PROCESSOR, 'type': 'bool',
                         'help': 'Costs ~3.4x the capture on disk and ~3x the reduce time; '
@@ -390,9 +386,6 @@ def check_together(vals, hv_targets=True, stations=None, ceilings=None, beam=Tru
     if not hv_targets and vals.get('run_plan') in HV_PLANS:
         errs.append(f"Run plan {vals['run_plan']!r} steps the HV, but this site does not set "
                     "the HV (it is held on banco). Use 'config_scan' or 'lab_source'.")
-    if vals.get('processor_engine') == 'legacy' and vals.get('qa_plot_policy') == 'always':
-        errs.append("QA plots 'always' needs the p2 engine: the legacy QA script takes "
-                    "~45 s and GBs of memory per capture.")
     return errs
 
 

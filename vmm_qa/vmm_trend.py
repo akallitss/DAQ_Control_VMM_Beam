@@ -6,7 +6,7 @@ Trend dashboard: the scalars from many captures, plotted against time.
 The per-file QA plots answer "what did file 37 look like". They cannot answer
 "is something drifting", which is the question that actually matters during a
 run -- and answering it today means opening 80 PNGs side by side. This reads the
-scalars.json that vmm_reduce wrote for every store in a run and draws each
+scalars.json the processor wrote for every store in a run and draws each
 quantity as a series over file index.
 
 The quantities are the ones that have already caught real problems on this
@@ -96,9 +96,10 @@ def _series(records, getter):
 
 
 def _station_ids():
+    """{station: {vmm ids}} from vmm_stations, or {} if it is unavailable."""
     try:
-        import vmm_reduce as vr
-        return vr.station_vmms()
+        import vmm_stations as vs
+        return {str(k): set(v) for k, v in vs.STATION_VMMS.items()}
     except Exception:
         return {}
 

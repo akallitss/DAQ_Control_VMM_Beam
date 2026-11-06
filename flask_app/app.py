@@ -14,8 +14,6 @@ import os
 import re
 import sys
 import subprocess
-import pty
-import select
 import threading
 import time
 import json
@@ -23,7 +21,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 from urllib.parse import quote
 from flask import Flask, render_template, jsonify, request, send_from_directory, abort, Response
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO
 
 import space_manager
 from daq_status import (get_vmm_daq_status, get_hv_control_status,
@@ -32,7 +30,7 @@ from daq_status import (get_vmm_daq_status, get_hv_control_status,
                         get_processor_status)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Add parent dir to path
-from run_config_beam import Config, BASE_DATA_DIR, SITE, IS_BEAM_SITE
+from run_config_beam import BASE_DATA_DIR, SITE, IS_BEAM_SITE
 import glob
 import importlib
 import shlex
@@ -44,8 +42,7 @@ from monitor import DaqMonitor, fetch_chat_id, get_bot_username
 # session; Flask only reads its published state + CSVs). Runs alongside the Vistar
 # ON/OFF monitor (beam_state.py) and publishes to a separate state file.
 from beam_monitor.beam_intensity_controller import (BEAM_LOG_DIR, BEAM_STATE_PATH,
-                                                    NXCALS_PYTHON, BEAM_UNIT,
-                                                    PULSE_THRESHOLD_E10)
+                                                    BEAM_UNIT, PULSE_THRESHOLD_E10)
 from sps_monitor.sps_spill_controller import (SPS_LOG_DIR, SPS_STATE_PATH, SPS_UNIT,
                                               EXTRACTED_DEST, SPILL_THRESHOLD_E10,
                                               H4_BEAM_COUNTERS, H4_COUNT_VARS)
@@ -53,13 +50,11 @@ from sps_monitor.sps_spill_controller import (SPS_LOG_DIR, SPS_STATE_PATH, SPS_U
 # Repo root (parent of flask_app/) — no per-machine edit needed.
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_RUN_DIR = f"{BASE_DIR}/config/json_run_configs"
-CONFIG_PY_PATH = f"{BASE_DIR}/run_config_beam.py"
 BASH_DIR = f"{BASE_DIR}/bash_scripts"
 QA_CONFIG_PATH = f"{BASE_DIR}/config/qa_config.json"
 QA_RESET_PATH  = f"{BASE_DIR}/config/qa_reset.json"
 QA_TMUX = "vmm_qa_watcher"
 PROC_CONFIG_PATH = f"{BASE_DIR}/config/processor_config.json"
-PROC_RESET_PATH  = f"{BASE_DIR}/config/processor_reset.json"
 PROC_TMUX = "vmm_processor"
 BACKUP_CONFIG_PATH = f"{BASE_DIR}/config/backup_config.json"
 BACKUP_TMUX = "vmm_backup_watcher"
@@ -211,7 +206,6 @@ socketio = SocketIO(app)
 
 TMUX_SESSIONS = ["vmm_daq_control", "vmm_daq", "vmm_hv_control", "vmm_lv_control",
                  "vmm_processor", "vmm_qa_watcher", "vmm_backup_watcher"]
-sessions = {}
 
 @app.route("/")
 def index():
@@ -389,30 +383,6 @@ def status_all():
     return jsonify(statuses)
 
 
-@app.route("/start_run", methods=["POST"])
-def start_run():
-    data = request.get_json()
-    config_file = data.get("config")
-
-    if not config_file:
-        return jsonify({"message": "No config selected"}), 400
-
-    config_path = os.path.join(CONFIG_RUN_DIR, config_file)
-    if not os.path.exists(config_path):
-        return jsonify({"message": f"Config not found: {config_path}"}), 404
-
-    script_path = f"{BASH_DIR}/start_run.sh"
-    result = subprocess.run(
-        [script_path, config_path],
-        capture_output=True,
-        text=True
-    )
-
-    if result.returncode == 0:
-        return jsonify({"message": f"Run started with {config_file}"})
-    else:
-        return jsonify({"message": f"Error: {result.stderr}"}), 500
-
 @app.route("/stop_sub_run", methods=["POST"])
 def stop_sub_run():
     try:
@@ -519,7 +489,7 @@ def run_config_py():
             with open(config_path) as f:
                 cfg = json.load(f)
             run_name = cfg.get("run_name", "Unknown")
-        except Exception as e:
+        except Exception:
             cfg, run_name = {}, "Error loading run name"
 
         # Combined run: fire the paired Dream run FIRST — if Dream refuses or
@@ -1598,14 +1568,6 @@ def rerun_qa():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
-@app.route("/get_runs")
-def get_runs():
-    runs = []
-    for f in os.listdir(CONFIG_RUN_DIR):
-        if f.endswith(".json"):
-            runs.append(f)
-    return jsonify(runs)
-
 def _run_has_hv_data(run_dir, hv_file="hv_monitor.csv"):
     """True if any subrun directory under run_dir has an HV monitor CSV."""
     if not run_dir or not os.path.isdir(run_dir):
@@ -1664,25 +1626,6 @@ def get_subruns():
     except Exception as e:
         print("Error reading subruns:", e)
         return jsonify([])
-
-@app.route("/get_run_name")
-def get_run_name():
-    run_name = request.args.get("run")
-    if not run_name:
-        return jsonify({"success": False, "message": "No run specified"}), 400
-
-    config_path = os.path.join(CONFIG_RUN_DIR, run_name)
-    if not os.path.isfile(config_path):
-        return jsonify({"success": False, "message": "Run config not found"}), 404
-
-    try:
-        with open(config_path) as f:
-            cfg = json.load(f)
-        actual_run_name = cfg.get("run_name", "Unknown")
-        return jsonify({"success": True, "run_name": actual_run_name})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
-
 
 def _hv_channel_labels(cfg):
     """{'slot:channel' -> 'A_Drift'} from a run config's detectors[].hv_channels.
@@ -1896,30 +1839,6 @@ def get_config_py():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
-@app.route("/get_run_events", methods=['GET'])
-def get_run_events():
-    try:
-        # Count hits for the run daq_control is actually running (not the
-        # possibly-edited run_config_beam.py). Falls back to the persisted value.
-        # Hits come from the QA's events.json files, so the total trails the DAQ
-        # by up to one capture rotation + QA time (no live in-file count exists).
-        run_name = _current_run_cache
-        if not run_name:
-            return jsonify({"success": True, "total_events": 0,
-                            "subrun_details": {}})
-        total_events, subrun_details = get_total_events_for_run(
-            run_dir=ANALYSIS_DIR,
-            run_name=run_name
-        )
-        return jsonify({
-            "success": True,
-            "total_events": total_events,
-            "subrun_details": subrun_details
-        })
-    except Exception as e:
-        return jsonify({"success": False, "message": f"Error getting run events: {str(e)}"}), 500
-
-
 @app.route("/monitor/toggle", methods=["POST"])
 def monitor_toggle():
     monitor.toggle()
@@ -2014,17 +1933,6 @@ def power_lv_history():
                                "v": g["volt_v"].tolist(),
                                "i": g["curr_a"].tolist()}
     return jsonify({"success": True, "supplies": supplies})
-
-
-@app.route("/site")
-def site_info():
-    """Which site this DAQ is deployed at, and whether it is a beam site.
-
-    The GUI asks once at load: at a non-beam site (lab) the beam monitor strip,
-    the Beam/Beam2 tabs and the "+ Dream" toggle are hidden and their pollers
-    never start — panels that could only ever show CERN beam data have no place
-    in a lab shift, and the pollers would hammer an unreachable Vistar."""
-    return jsonify({"site": SITE, "beam": bool(IS_BEAM_SITE)})
 
 
 @app.route("/dream/status")
@@ -2509,17 +2417,6 @@ def beam_set_target():
     return jsonify({"success": True, **beam_tracker.status()})
 
 
-@app.route("/beam_state/set_threshold", methods=["POST"])
-def beam_set_threshold():
-    data = request.get_json(silent=True) or {}
-    try:
-        threshold = float(data.get("threshold_e11"))
-    except (TypeError, ValueError):
-        return jsonify({"success": False, "message": "Bad threshold"}), 400
-    beam_tracker.set_threshold(threshold)
-    return jsonify({"success": True, **beam_tracker.status()})
-
-
 @app.route("/beam_history")
 def beam_history():
     """The beam on/off transition log as CSV (download/inspect)."""
@@ -2862,51 +2759,6 @@ def sps_tax_state():
     if obj is None:
         return jsonify({"error": f"x17 DAQ unreachable — {err}"})
     return jsonify(obj.get("h4_tax") or {"error": "x17 published no h4_tax block"})
-
-
-# ===========================================================================
-
-
-@app.route("/start_beam_watcher", methods=["POST"])
-def start_beam_watcher():
-    """Start the beam-intensity feed in the 'vmm_beam_watcher' tmux session.
-
-    Two modes (SPS_BEAM_MODE env, default 'bridge'):
-      * bridge — the DAQ machine (banco) is off the CERN network and cannot reach
-        NXCALS, so it pulls the beam_state.json/CSVs the lxplus watcher publishes
-        to EOS (beam_bridge.py, runs under the Flask venv + xrdcp + Kerberos).
-      * direct — a CERN-network DAQ machine queries NXCALS itself
-        (beam_watcher.py under the NXCALS venv)."""
-    try:
-        mode = os.environ.get("SPS_BEAM_MODE", "bridge")
-        subprocess.run(["tmux", "kill-session", "-t", "vmm_beam_watcher"], capture_output=True)
-        if mode == "direct":
-            if not os.path.exists(NXCALS_PYTHON):
-                return jsonify({"success": False,
-                                "message": f"NXCALS venv missing: {NXCALS_PYTHON} "
-                                           f"(see beam_monitor/README.md)"}), 500
-            cmd = [NXCALS_PYTHON, f"{BASE_DIR}/beam_watcher.py"]
-            msg = "Beam watcher started (direct NXCALS; first query ~1 min)"
-        else:
-            cmd = [sys.executable, f"{BASE_DIR}/beam_bridge.py"]
-            msg = "Beam bridge started (pulling beam state from EOS)"
-        subprocess.Popen(["tmux", "new-session", "-d", "-s", "vmm_beam_watcher", *cmd])
-        return jsonify({"success": True, "message": msg})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
-
-
-@app.route("/stop_beam_watcher", methods=["POST"])
-def stop_beam_watcher():
-    """Stop the beam watcher. Beam-intensity logging pauses until it restarts."""
-    try:
-        subprocess.run(["tmux", "kill-session", "-t", "vmm_beam_watcher"], capture_output=True)
-        return jsonify({"success": True, "message": "Beam watcher stopped"})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
-
-
-@app.route("/start_ped_qa", methods=["POST"])
 
 
 # ---------------------------------------------------------------------------
