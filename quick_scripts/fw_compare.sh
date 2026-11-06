@@ -58,6 +58,13 @@
 # Environment overrides: CFG (default | unmasked | a config_ext file name), OUT_ROOT (output folder),
 # LIMIT_HZ (compare: list channels above this rate, default 1000).
 
+# Must be run, not sourced: sourced, it would change the caller's shell (set -u, traps) and an error
+# would close it.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+    echo "fw_compare.sh: run it, do not 'source' it:   ${BASH_SOURCE[0]} ${*:-<command>}" >&2
+    return 2
+fi
+
 set -u -o pipefail
 
 REPO=/local/p2/DAQ_Control_VMM_Beam
@@ -69,7 +76,7 @@ case "${CFG:-default}" in
     default)  CFG=$DEFAULT_CFG ;;
     unmasked) CFG=$UNMASKED_CFG ;;
 esac
-HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+HERE=$(cd "$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)
 BURST_STATS=$HERE/fw_burst_stats.py
 P2_PY=/local/p2/p2-readout/venv/bin/python
 SC=/local/p2/deploy/bin/p2basket-sc
