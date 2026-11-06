@@ -119,7 +119,42 @@ def summarize(root, label):
     table(rows, [''] + names)
 
 
+def chip_rates(root, labels):
+    """One row per VMM, one column per cycle of every take: rate in Hz, all channels
+    (and, in brackets, without the channels above the limit when that differs)."""
+    cols = []
+    for label in labels:
+        d = os.path.join(root, label)
+        try:
+            takes = [t.strip() for t in open(os.path.join(d, 'runs.txt')) if t.strip()]
+        except OSError:
+            print(f'{label}: no takes (no {d}/runs.txt)')
+            continue
+        for t in takes:
+            n = os.path.basename(t)
+            try:
+                cols.append((f'{label}/{n}', json.load(open(os.path.join(d, f'bursts_{n}.json')))))
+            except (OSError, ValueError):
+                cols.append((f'{label}/{n}', {}))
+    if not cols:
+        return
+    limit = next((j.get('limit_hz') for _, j in cols if j), None)
+    print(f'chip rates in Hz, all channels  (in brackets: without the channels above {limit:g} Hz)\n')
+
+    def cell(j, v):
+        a = j.get('chip_rate_hz', {}).get(str(v))
+        q = j.get('chip_rate_hz_without_hot', {}).get(str(v))
+        if a is None:
+            return '-'
+        return f'{a:.1f}' + (f' ({q:.1f})' if q is not None and abs(q - a) > 0.05 else '')
+    rows = [[f'VMM {v:2d} (H{v // 2}V{v % 2})'] + [cell(j, v) for _, j in cols] for v in range(20)]
+    rows[0][0] += ' trig'
+    table(rows, [''] + [c for c, _ in cols])
+
+
 def main():
+    if len(sys.argv) >= 4 and sys.argv[1] == '--rates':
+        return chip_rates(sys.argv[2], sys.argv[3:])
     if len(sys.argv) < 3:
         sys.exit(__doc__)
     for label in sys.argv[2:]:

@@ -24,6 +24,7 @@
 #   fw_compare.sh summary <label> [<label>...]  the short version: one table per take, one column per cycle
 #                                               (warm reset, link status, volume, hot channels, trigger rate,
 #                                               other VMMs). Decodes first where compare has not run yet.
+#   fw_compare.sh rates   <label> [<label>...]  the rate of every chip (VMM 0-19), one column per cycle
 #
 # Two configurations (CFG=...):
 #   default   the wk2 base config, with VMM 9 (H4V1) ch16-21 and VMM 4 (H2V0) ch36-41 masked: comparable to
@@ -256,7 +257,11 @@ cmd_summary() {
                 || say "decode failed — see $out/bursts_$name.txt"
         done < "$out/runs.txt"
     done
-    python3 "$HERE/fw_summary.py" "$OUT_ROOT" "$@"
+    if [ "${SUMMARY_MODE:-}" = rates ]; then
+        python3 "$HERE/fw_summary.py" --rates "$OUT_ROOT" "$@"
+    else
+        python3 "$HERE/fw_summary.py" "$OUT_ROOT" "$@"
+    fi
 }
 
 cmd_compare() {
@@ -290,5 +295,6 @@ case "${1:-}" in
     manual)  shift; cmd_manual "$@" ;;
     compare) shift; cmd_compare "$@" ;;
     summary) shift; cmd_summary "$@" ;;
-    *) sed -n '2,58p' "$0"; exit 2 ;;
+    rates)   shift; SUMMARY_MODE=rates cmd_summary "$@" ;;
+    *) sed -n '2,59p' "$0"; exit 2 ;;
 esac
