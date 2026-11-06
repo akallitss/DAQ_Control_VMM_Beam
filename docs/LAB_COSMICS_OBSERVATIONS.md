@@ -385,3 +385,114 @@ Setup: ALINX FEC 192.168.0.12, hybrids H0 (scintillator trigger) and H1-H9 (thre
    measure per-channel pedestals and thresholds and set the trims as with vmmsc.
 5. **Minor: `apply` returns before the new configuration has taken effect** (obs. 12). The first status poll after `apply` still
    shows the previous config file.
+
+## 2026-11-05/06: p2basket-sc update, session lock, end of the wk2 adaptive scan
+
+Checked on vmm_daplxa. Sources: `/local/p2/deploy/`, `config/chip_config_state.json`, the `vmm_daq` tmux pane,
+`logs/adaptive/resume_wk2.out` and `state_wk2.json`, and the logbook (`LOGBOOK.md`, notes of 5-6 Nov).
+
+### New observations
+
+70. **New p2basket-sc deployed on 5 Nov** (on dedippce185 and dedippcu196). The first install, `install_2026-11-05T14h25m11sZ`
+    (`2026-11-05T123411Z-d2cb9ef-main`), went in at 15:25, during run_225, which was not disturbed. Its `python-venv/` had
+    group `idediplilas`, no access for others, and an ACL for `local-p2` only, so for basketp2 users
+    `p2basket-python` stopped at `python-venv/bin/activate: Permission denied`. Reproduce with
+    `/local/p2/deploy/bin/p2basket-python -c "import p2basket"`. In a plain non-interactive shell this ends with
+    `exec: python: not found` (exit 127). In the tmux stack the wrapper falls back to the pyenv `python`, which is how the
+    23 Oct install kept working with the same error (obs. 66). Shebli redeployed at 18:02 CET
+    (`install_2026-11-05T17h02m25sZ`, `2026-11-05T165959Z-d2cb9ef-dirty-main`), fixed the group by hand
+    (`chown -R :basketp2 /local/p2/deploy`) and fixed the deployment script. Since then `p2basket-python` imports `p2basket`
+    without errors, so obs. 2/66 is resolved. The banner says "dirty" again. The `p2basket-sc --help` text is identical to
+    the 23 Oct build.
+71. **"Link status 5 (DAQ ON) on all hybrids with no session lock"** (Shebli, 5 Nov 15:48) is expected. run_225 had been
+    acquiring since 13:15 (acq-on), and until then our run control sent acq-on/acq-off without taking a session lock. After
+    acq-off the hybrids read 4 (connected) or 0 (empty ports).
+72. **Session lock behaviour, measured on the 5 Nov build** (no run active):
+    - `p2basket-sc --session-lock N` stays in the foreground with a countdown, works with stdout piped, and removes the lock
+      on expiry or on SIGINT ("Session CANCELED").
+    - A second request from the same account returns at once with "ALREADY OWN" (rc 0).
+    - While we hold the lock, our own CLI commands and the `p2basket-python` warm reset (0 failed hybrids) run normally and
+      do not release it.
+    - `p2basket-sc --session-lock` with no number reports "Session is FREE" or "Session OWNED by <user>".
+    - The lock file `/run/p2basket/session.lock` starts with `uid start_epoch lifetime_s`.
+    - Without a lock, every command takes a 1-minute lock and drops it when it ends, so a 4 h run was unprotected
+      between acq-on and acq-off.
+73. **The DAQ now holds the session lock** (commit `60d134f`, `session_lock.py`, deployed 5 Nov 18:26).
+    - Warm reset and apply run under the lock, which is kept for 10 more minutes after a successful apply to cover the
+      start of the run.
+    - `vmm_daq_control` takes the lock over before acq-on and releases it after acq-off. If another user holds it, the
+      step is refused with their name.
+    - First real use, runs 226-230: the hand-over was accepted on all 5 probes, the run took over when the hand-over lock
+      expired (run_229, 18:40:40), and the lock was released at the end of the run. The bench was FREE afterwards.
+74. **K = -18 could not be measured** (retry on 5 Nov 18:28-18:45, runs 226-230).
+    - The first attempt (5 Nov 00:51) had failed when the chip-config apply timed out.
+    - In the retry, all 5 probes ran at 5-6 MB/min, and each flagged VMM 17 ch17 at 57-63 Hz, over the 50 Hz limit.
+    - VMM 17 is held at its K = -16 setting, because at -18 it would need more than 20 masked channels.
+    - The scan tool counts hot channels on held chips when deciding whether a probe is clean (`decide()`), but never adds
+      masks to held chips (`apply_new_masks()`). So the 5 probe configs were byte-identical, and the point was skipped
+      after `--max-iter` = 5 tries.
+    - This is a bug in `logs/adaptive/adaptive_thr_scan.py`. It is not fixed, and K = -18 was not retaken (decision of
+      6 Nov).
+    - VMM 17 ch17 was under 50 Hz at K = -16 in pass 2 (run_214), so its rate at the same setting has gone up a little.
+    - The DAQ has been idle since 5 Nov 18:45.
+75. **End of the wk2 adaptive scan** (3-5 Nov; `state_wk2.json`, masks in `logs/adaptive/masks_wk2.md`).
+    - The lowest point measured is K = -16 (pass 2, run_214: 180 min, 977 MB, 14.6 M hits).
+    - Pass 3 long runs (240 min each): K = 0 run_218, K = -6 run_221 (21.7 M hits), K = -8 run_223 (25.4 M hits),
+      K = -12 run_225 (21.8 M hits).
+    - At the end, 11 of the 18 detector chips are held, i.e. stopped following the scan. The number in brackets is how
+      many channels the scan masked on that chip:
+      - at K = -8: VMM 12 (19) and VMM 18 (14);
+      - at K = -12: VMM 16 (19);
+      - at K = -14: VMM 11 (19) and VMM 13 (20);
+      - at K = -16: VMM 3 (17), 8 (18), 10 (17), 15 (17), 17 (19) and 19 (18).
+76. **The hybrid 11 flicker (obs. 67-68) does not come from our configuration files.** Checked on 6 Nov against the two files
+    sent to the developers (`p2b-config-cern-base_10hyb.yaml`, `lab-cosmics_ext_as-run_2026-11-04.txt`):
+    - The base yaml is byte-identical to the one the box loads (md5 `190a166c...`). It declares hybrids 0-9 only, all
+      enabled, 2 VMMs each, and nothing for hybrids 10-15. At FEC level it has only `ring` = 0 and `fen` = 0 besides
+      addresses, ports and the trigger/latency settings.
+    - The extension file addresses Hyb 0-9 only. All its lines are VMM-level settings (`sm`, `sdt`, `sg`, `st`, `sfm`, `sp`,
+      `sng`, `srec`). There is no FEC- or hybrid-level line, and no line for a hybrid above 9, not even a commented one.
+    - The flicker happens with byte-identical inputs. Runs 226-230 (5 Nov) used the same config file (md5 `d0a8c351...`),
+      the same base and the same warm-reset command:
+
+      | run | hybrid 11 | `vmmAppReg[15]` | hybrid 10 | hybrid 9 |
+      |---|---|---|---|---|
+      | run_226 | 2 | `0x00002044` | 0 | 4 |
+      | run_227 | 2 | `0x00002044` | 0 | 4 |
+      | run_228 | 2 | `0x00002044` | 0 | 4 |
+      | run_229 | **0** | `0x00000044` | 0 | 4 |
+      | run_230 | 2 | `0x00002044` | 0 | 4 |
+
+      The value is the same at the start and end of each run, so it only changes at a warm reset. The two `fw_compare.sh`
+      self-tests of 6 Nov read 0, then 2.
+    - The value is not something a configuration sets. `read-link-status` decodes two FEC registers, `vmmAppReg[16]`
+      (ports 0-7) and `vmmAppReg[15]` (ports 8-15), 4 bits per port, for all 16 ports. That is why it prints hybrids 10-15,
+      which the yaml does not declare. `0x2044` = port 8 at 4, port 9 at 4, port 10 at 0, port 11 at 2.
+    - Hybrids 10 and 12-15 are also empty and always read 0; only port 11 flickers. Two possible causes: something physical
+      on FEC port 11 (e.g. a cable plugged in with no hybrid at the other end, to be checked), or how the firmware handles
+      an empty port after a warm reset.
+77. **Re-applying the same config does not give the same hot channel** (the open question in item 1 of the summary).
+    Two `fw_compare.sh` self-tests on 6 Nov used the same default config file, each with a fresh warm reset and apply,
+    1 min each, HV on, firmware FEC `0x20102026` / hybrid `0x20211104`:
+    - morning: 282 MB, VMM 7 ch23 at 758 kHz (and ch24 at 38 kHz);
+    - after lunch: 29 MB, VMM 7 ch24 at 66 kHz.
+    With the VMM 4/9 masks removed (`..._fwtest_unmasked.txt`, 434 MB), all three chips burst: VMM 9 ch19 at 847 kHz
+    (ADC 80 [80-84], median 962 ns between hits, 53 % under 1 us), VMM 4 ch36 at 255 kHz and ch38 at 54 kHz, and
+    VMM 7 ch24 at 67 kHz. `quick_scripts/fw_compare.sh` is ready for the firmware comparison: 3 cycles of warm reset +
+    apply + 1 min per firmware and config, with HV off.
+
+### Update to the summary for the firmware / slow-control developers (as of 2026-11-06)
+
+- Item 3 (`p2basket-python` wrapper error) is **resolved** with the 5 Nov redeployment (obs. 70). The banner of that build
+  reads `-dirty` again.
+- Thank you for the session-lock manual. We now hold the lock for the whole of every run and every chip configuration
+  (obs. 72-73). The DAQ runs as ak271430, so the lock shows as owned by that account.
+- Item 1 (bursts): **re-applying exactly the same configuration does not give the same hot channel.** Same file, fresh warm
+  reset + apply each time: VMM 7 ch23 at 758 kHz, then VMM 7 ch24 at 66 kHz (obs. 77). With the VMM 4/9 masks removed,
+  all three chips burst, and VMM 9 ch19 shows the reported signature: 847 kHz, nearly fixed ADC (80), hits about 1 us
+  apart. Next: the same configuration under two firmware versions (`quick_scripts/fw_compare.sh`).
+- Item 2 (hybrid 11 link status): **it is not our configuration** (obs. 76). Neither file addresses hybrids 10-15, and
+  hybrid 11 changes between 0 and 2 across warm resets with byte-identical inputs (runs 226-230: 2, 2, 2, 0, 2). The value
+  is the FEC's own port status (4 bits per port in `vmmAppReg[15]`/`[16]`). We will check FEC port 11 for a cable with no
+  hybrid on it. Questions: what does status 2 mean? Is there an FEC register that disables unused ports (what do `ring`
+  and `fen` do)?
