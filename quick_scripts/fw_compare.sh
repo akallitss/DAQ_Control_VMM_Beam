@@ -21,6 +21,9 @@
 #                                               hybrid (VMM 0 / 1), with and without its burst channels, plus
 #                                               how many channels have hits — hybrid 11's link status and
 #                                               vmmAppReg[15] (the flicker, obs. 67-68) on the header line
+#   fw_compare.sh summary <label> [<label>...]  the short version: one table per take, one column per cycle
+#                                               (warm reset, link status, volume, hot channels, trigger rate,
+#                                               other VMMs). Decodes first where compare has not run yet.
 #
 # Two configurations (CFG=...):
 #   default   the wk2 base config, with VMM 9 (H4V1) ch16-21 and VMM 4 (H2V0) ch36-41 masked: comparable to
@@ -37,8 +40,8 @@
 #   ... firmware B is loaded (bench must be FREE: fw_compare.sh check) ...
 #   fw_compare.sh manual fwB_default
 #   CFG=unmasked fw_compare.sh manual fwB_unmasked
-#   fw_compare.sh compare fwA_default fwB_default
-#   fw_compare.sh compare fwA_unmasked fwB_unmasked
+#   fw_compare.sh summary fwA_default fwB_default fwA_unmasked fwB_unmasked   # the tables
+#   fw_compare.sh compare fwA_default fwB_default                             # the full detail
 # A minute is plenty for the bursts (kHz-MHz). More cycles cost ~1.5 min each and give more applies to
 # compare (hot channel, hybrid 11 flicker): e.g. "manual fwA_default 1 5".
 #
@@ -238,6 +241,24 @@ links_all() {
     [ -n "$bad" ] && echo "   !! hybrids not at 4 (ready):$bad"
 }
 
+cmd_summary() {
+    [ $# -ge 1 ] || die "usage: fw_compare.sh summary <label> [<label>...]"
+    local label take name
+    for label in "$@"; do
+        local out=$OUT_ROOT/$label
+        [ -s "$out/runs.txt" ] || continue
+        while read -r take; do
+            name=$(basename "$take")
+            [ -s "$out/bursts_$name.json" ] && continue
+            say "decoding $label / $name ..."
+            systemd-run --user --scope -q -p MemoryMax=2G "$P2_PY" -I "$BURST_STATS" \
+                --limit-hz "$LIMIT_HZ" --json "$out/bursts_$name.json" "$take" > "$out/bursts_$name.txt" 2>&1 \
+                || say "decode failed — see $out/bursts_$name.txt"
+        done < "$out/runs.txt"
+    done
+    python3 "$HERE/fw_summary.py" "$OUT_ROOT" "$@"
+}
+
 cmd_compare() {
     [ $# -ge 1 ] || die "usage: fw_compare.sh compare <label> [<label>...]"
     local label take name
@@ -268,5 +289,6 @@ case "${1:-}" in
     stack)   shift; cmd_stack "$@" ;;
     manual)  shift; cmd_manual "$@" ;;
     compare) shift; cmd_compare "$@" ;;
-    *) sed -n '2,55p' "$0"; exit 2 ;;
+    summary) shift; cmd_summary "$@" ;;
+    *) sed -n '2,58p' "$0"; exit 2 ;;
 esac
