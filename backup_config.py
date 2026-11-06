@@ -28,6 +28,18 @@ if SITE == 'lab':
     # campaign would otherwise collide with (run_1...).
     EOS_DIR    = '/eos/experiment/ntof/data/x17/p2_sps_july/vmm_cosmic_run_oct26/'
     XROOTD_URL = 'root://eospublic.cern.ch'
+
+# The campaign's EOS folder, if changed from the GUI's Setup tab (Campaign;
+# gui_settings.py). The xrootd server follows the EOS area of the path.
+import gui_settings as _gs  # noqa: E402
+
+_eos = _gs.value('eos_dir', EOS_DIR)
+if _eos != EOS_DIR:
+    EOS_DIR = _eos
+    XROOTD_URL = {'/eos/project/': 'root://eosproject.cern.ch',
+                  '/eos/experiment/': 'root://eospublic.cern.ch',
+                  '/eos/user/': 'root://eosuser.cern.ch'}[
+        next(p for p in ('/eos/project/', '/eos/experiment/', '/eos/user/') if EOS_DIR.startswith(p))]
 CERN_PRINCIPAL = 'akallits@CERN.CH'
 GPG_PASS_FILE  = os.path.expanduser('~/.cern_pass.gpg')  # create with gpg --encrypt
 

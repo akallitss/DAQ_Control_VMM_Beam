@@ -33,6 +33,11 @@ from daq_status import (get_vmm_daq_status, get_hv_control_status,
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Add parent dir to path
 from run_config_beam import Config, BASE_DATA_DIR, SITE, IS_BEAM_SITE
+import glob
+import importlib
+import shlex
+import gui_settings
+import p2_readout_config as p2cfg
 from get_run_events import get_total_events_for_run
 from monitor import DaqMonitor, fetch_chat_id, get_bot_username
 # NXCALS SPS beam-intensity watcher constants (the watcher process owns the Spark
@@ -591,6 +596,930 @@ def stop_processor():
         return jsonify({"success": True, "message": "Processor stopped"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Live tab: one `p2-monitor live` process (tmux vmm_live, p2-readout venv) that
+# follows the newest sub-run and writes config/live_status.json every poll.
+# Flask only starts/stops it and reads that file: no decoding in this process.
+# ---------------------------------------------------------------------------
+LIVE_PNGS = ("rate_map.png", "channel_rates.png", "level_rates.png")
+
+
+def _tmux_running(name):
+    return subprocess.run(["tmux", "has-session", "-t", name],
+                          capture_output=True).returncode == 0
+
+
+@app.route("/live/start", methods=["POST"])
+def live_start():
+    importlib.reload(p2cfg)            # settings changed in the Settings tab
+    ok, why = p2cfg.p2_available()
+    if not ok:
+        return jsonify({"success": False, "message": f"Live monitor unavailable: {why}"}), 500
+    source = (request.get_json(silent=True) or {}).get("source") or p2cfg.LIVE_SOURCE
+    try:
+        cmd = p2cfg.live_command(source)
+    except ValueError as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+    try:
+        subprocess.run(["tmux", "kill-session", "-t", p2cfg.LIVE_TMUX], capture_output=True)
+        os.makedirs(p2cfg.LIVE_PNG_DIR, exist_ok=True)
+        # the previous source's numbers must not show under the new one
+        for p in [p2cfg.LIVE_STATUS_PATH] + [os.path.join(p2cfg.LIVE_PNG_DIR, n)
+                                             for n in LIVE_PNGS]:
+            if os.path.exists(p):
+                os.remove(p)
+        subprocess.Popen(["tmux", "new-session", "-d", "-s", p2cfg.LIVE_TMUX] + cmd)
+        where = (f"the network ({p2cfg.LIVE_UDP_ADDRESS})" if source == "udp"
+                 else "the capture files")
+        return jsonify({"success": True, "message": f"Live monitor started, reading {where}"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/live/stop", methods=["POST"])
+def live_stop():
+    subprocess.run(["tmux", "kill-session", "-t", p2cfg.LIVE_TMUX], capture_output=True)
+    return jsonify({"success": True, "message": "Live monitor stopped"})
+
+
+@app.route("/live/status")
+def live_status():
+    """The monitor's last live_status.json, whether it runs, and how old the file is."""
+    importlib.reload(p2cfg)            # settings changed in the Settings tab
+    out = {"running": _tmux_running(p2cfg.LIVE_TMUX), "status": None, "file_age_s": None,
+           "options": p2cfg.LIVE_OPTIONS, "udp_options": p2cfg.LIVE_UDP_OPTIONS,
+           "setup": p2cfg.P2_SETUP, "available": p2cfg.p2_available()[0],
+           "sources": p2cfg.live_sources(), "default_source": p2cfg.LIVE_SOURCE,
+           "udp_address": p2cfg.LIVE_UDP_ADDRESS}
+    # the DAQ's run state, so the tab can tell "run starting, no data yet"
+    # (HV/LV handshake + acquisition on take ~40 s after Start) from "no run"
+    try:
+        run_state = get_daq_control_status().get("status")
+    except Exception:
+        run_state = None
+    out["run_state"] = run_state
+    out["run_active"] = (run_state is not None
+                         and run_state not in ("WAITING", "Run Complete", "ERROR"))
+    try:
+        out["file_age_s"] = round(time.time() - os.path.getmtime(p2cfg.LIVE_STATUS_PATH), 1)
+        with open(p2cfg.LIVE_STATUS_PATH) as f:
+            out["status"] = json.load(f)
+    except (OSError, ValueError):
+        pass
+    pngs = {}
+    for name in LIVE_PNGS:
+        p = os.path.join(p2cfg.LIVE_PNG_DIR, name)
+        if os.path.isfile(p):
+            pngs[name] = int(os.path.getmtime(p))
+    out["pngs"] = pngs
+    return jsonify(out)
+
+
+@app.route("/live/png/<name>")
+def live_png(name):
+    if name not in LIVE_PNGS:
+        abort(404)
+    return send_from_directory(p2cfg.LIVE_PNG_DIR, name, max_age=0)
+
+
+# ---------------------------------------------------------------------------
+# Settings tab: values the operator changes without editing code
+# (gui_settings.py; config/gui_settings.json + history). Flask validates and
+# stores them; each component reads them when it next starts.
+# ---------------------------------------------------------------------------
+def _settings_defaults():
+    """Code default of every setting. value() records them when the modules
+    that read the settings are imported; import the ones flask does not."""
+    import importlib
+    for mod in ("vmm_processor_config", "qa_config"):
+        try:
+            importlib.import_module(mod)
+        except BaseException:          # e.g. engine p2 without the venv
+            pass
+    try:
+        import mem_guardian
+        base = mem_guardian.file_config()
+        gui_settings._DEFAULTS.setdefault("guardian_kill_avail_mb", base["kill_avail_mb"])
+        gui_settings._DEFAULTS.setdefault("guardian_warn_avail_mb", base["warn_avail_mb"])
+    except Exception:
+        pass
+    return dict(gui_settings._DEFAULTS)
+
+
+def _settings_effective(defaults):
+    ov = gui_settings.overrides()
+    return {k: ov.get(k, defaults.get(k)) for k in gui_settings.SCHEMA}
+
+
+def _stations_or_none():
+    try:
+        return _stand_now()[0]
+    except BaseException:
+        return None
+
+
+def _next_run_number():
+    try:
+        with open(os.path.join(BASE_DIR, "config", "run_highwater.txt")) as f:
+            return int(f.read().strip()) + 1
+    except (OSError, ValueError):
+        return None
+
+
+@app.route("/settings")
+def settings_get():
+    defaults = _settings_defaults()
+    ov = gui_settings.overrides()
+    items = []
+    for k, d in gui_settings.SCHEMA.items():
+        items.append({"key": k, **{f: d[f] for f in d if f != "file"},
+                      "default": defaults.get(k),
+                      "value": ov.get(k, defaults.get(k)), "changed": k in ov})
+    try:
+        daq_state = get_daq_control_status().get("status")
+    except Exception:
+        daq_state = None
+    applied = (chip._read_state().get("last_applied") or {}).get("file") \
+        if hasattr(chip, "_read_state") else None
+    return jsonify({
+        "groups": gui_settings.GROUPS, "settings": items,
+        "history": gui_settings.history(),
+        "site": SITE, "hv_targets": bool(getattr(sys.modules.get("run_config_beam"),
+                                                 "HV_TARGETS", True)),
+        "next_run": _next_run_number(), "chip_config_applied": applied,
+        "stations": _stations_or_none(),
+        "run_state": daq_state,
+        "running": {n: _tmux_running(n) for n in
+                    (PROC_TMUX, QA_TMUX, p2cfg.LIVE_TMUX, "vmm_mem_guardian")},
+    })
+
+
+@app.route("/settings", methods=["POST"])
+def settings_post():
+    data = request.get_json(silent=True) or {}
+    changes = data.get("changes") or {}
+    if not isinstance(changes, dict) or not changes:
+        return jsonify({"success": False, "errors": ["nothing to change"]}), 400
+    defaults = _settings_defaults()
+    hv = bool(getattr(sys.modules.get("run_config_beam"), "HV_TARGETS", True))
+    try:
+        stations, ceilings, _ = _stand_now()
+    except BaseException:
+        stations, ceilings = None, None
+    ok, errors, applied = gui_settings.save(
+        changes, who=request.remote_addr or "gui",
+        effective=_settings_effective(defaults), hv_targets=hv,
+        stations=stations, ceilings=ceilings, beam=bool(IS_BEAM_SITE))
+    if not ok:
+        return jsonify({"success": False, "errors": errors}), 400
+    for k, (old, new) in applied.items():
+        log_event("SETTING", "flask_settings", key=k, old=old,
+                  new=new if new is not None else f"default({defaults.get(k)})",
+                  remote_addr=request.remote_addr)
+    when = sorted({gui_settings.SCHEMA[k]["applies"] for k in applied})
+    return jsonify({"success": True, "changed": list(applied),
+                    "message": (f"Saved {len(applied)} setting(s); takes effect at: "
+                                + "; ".join(when)) if applied else "Nothing changed"})
+
+
+# ---------------------------------------------------------------------------
+# Setup tab (read-only): the stand as the setup file describes it -- the file
+# run_config_beam.py, the processor, QA and live monitor all read
+# (setup_source.py). Read fresh on each request.
+# ---------------------------------------------------------------------------
+def _cabling_changes(prev, cur):
+    """What changed between two cabling entries, per hybrid (the thing that moves)."""
+    key = lambda r: (r.get("fec"), r["hybrid"])
+    name = lambda k: f"H{k[1]}" + (f" (FEC {k[0]})" if k[0] is not None else "")
+    where = lambda r: f"{r['detector']} c{r['connector']}"
+    a = {key(r): r for r in prev.hybrids}
+    b = {key(r): r for r in cur.hybrids}
+    out = []
+    for k in sorted(set(a) | set(b), key=lambda k: (k[0] or 0, k[1])):
+        if k not in a:
+            out.append(f"{name(k)} added at {where(b[k])}")
+        elif k not in b:
+            out.append(f"{name(k)} removed from {where(a[k])}")
+        else:
+            d = [f"{where(a[k])} -> {where(b[k])}"] if where(a[k]) != where(b[k]) else []
+            d += [f"{f} {a[k].get(f)} -> {b[k].get(f)}"
+                  for f in sorted((set(a[k]) | set(b[k])) - {"detector", "connector"})
+                  if a[k].get(f) != b[k].get(f)]
+            if d:
+                out.append(f"{name(k)}: " + ", ".join(d))
+    return out
+
+
+RUN_IDLE_STATES = ("WAITING", "Run Complete", "ERROR")
+
+
+def _design_connectors(design):
+    try:
+        from p2_mapping import routing
+        return routing.design(design)["n_connectors"]
+    except Exception:
+        return None
+
+
+def _run_state():
+    try:
+        return get_daq_control_status().get("status")
+    except Exception:
+        return None
+
+
+def _stand_now():
+    """(stations, ceilings, hv_targets) of the stand in force now, for checks."""
+    import setup_source
+    s = setup_source.load(SITE).at("now")
+    hv = s.hv or {}
+    return list(s.detectors), hv.get("ceilings") or {}, bool(hv.get("set_here", True))
+
+
+def _entry_from_request(data):
+    """The new stand entry from the Setup tab's form, typed and trimmed."""
+    def as_int(v, what):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            raise ValueError(f"{what}: {v!r} is not a whole number")
+
+    dets = []
+    for d in data.get("detectors") or []:
+        name = str(d.get("name", "")).strip()
+        if not name:
+            raise ValueError("every detector needs a station name")
+        row = {"name": name}
+        if str(d.get("alias", "")).strip():
+            row["alias"] = str(d["alias"]).strip()
+        try:
+            row["z_mm"] = float(d.get("z_mm"))
+        except (TypeError, ValueError):
+            raise ValueError(f"{name}: z must be a number (mm)")
+        dets.append(row)
+    if not dets:
+        raise ValueError("the stand needs at least one detector")
+    trig = data.get("trigger")
+    if trig:
+        trig = {k: as_int(trig.get(k), f"trigger {k}") for k in ("hybrid", "vmm", "ch")}
+    rows = []
+    for r in data.get("hybrids") or []:
+        where = f"{r.get('detector')} c{r.get('connector')}"
+        row = {"detector": str(r.get("detector", "")).strip(),
+               "connector": as_int(r.get("connector"), f"{where} connector"),
+               "hybrid": as_int(r.get("hybrid"), f"{where} hybrid"),
+               "bottom_vmm": as_int(r.get("bottom_vmm"), f"{where} bottom VMM"),
+               "top_vmm": as_int(r.get("top_vmm"), f"{where} top VMM")}
+        for v, what in ((row["bottom_vmm"], "bottom VMM"), (row["top_vmm"], "top VMM")):
+            if not 0 <= v <= 31:
+                raise ValueError(f"{where}: {what} {v} is outside 0-31")
+        if r.get("fec") not in (None, "", "any"):
+            row["fec"] = as_int(r["fec"], f"{where} FEC")
+        if str(r.get("cable", "")).strip():
+            row["cable"] = str(r["cable"]).strip()
+        for k in ("bottom_order", "top_order"):
+            if r.get(k) and r[k] != "reverse":
+                row[k] = r[k]
+        rows.append(row)
+    if not rows:
+        raise ValueError("the stand needs at least one cabled connector")
+    note = str(data.get("note", "")).strip()
+    return {"note": note, "detectors": dets, "trigger": trig or None, "hybrids": rows}
+
+
+@app.route("/setup/entry", methods=["POST"])
+def setup_entry():
+    """Preview ({"preview": true}) or save a new dated stand entry.
+
+    Saved = written into this machine's setup file (p2_mapping.edit.add_entry:
+    inserted as text, the whole file re-checked) and committed to its git
+    repository with the note. Valid from now. Refused while a run is taking
+    data: the processor and live monitor apply the entry in force at each
+    packet's time, so a mid-run change would mislabel the rest of the run.
+    """
+    import setup_source
+    from p2_mapping.edit import add_entry, now, write_atomic
+    from p2_mapping.setups import _parse, load_setup
+    import yaml
+    data = request.get_json(silent=True) or {}
+    preview = bool(data.get("preview"))
+    state = _run_state()
+    if not preview and state not in RUN_IDLE_STATES:
+        return jsonify({"success": False, "errors": [
+            f"A run is in progress ({state}): change the stand after it ends."]}), 409
+    ref = setup_source.setup_ref(SITE)
+    if not ref or not os.path.isfile(ref) or not ref.startswith(setup_source.SETUPS_DIR):
+        return jsonify({"success": False, "errors": [
+            f"This machine has no editable setup copy in {setup_source.SETUPS_DIR}."]}), 409
+    try:
+        entry = _entry_from_request(data)
+        vf, last = now(), load_setup(ref).cabling[-1].valid_from
+        if vf <= last:                     # two saves within the same second
+            vf = last + timedelta(seconds=1)
+        entry.update(valid_from=vf, author=f"Setup tab, {request.remote_addr}")
+        text = add_entry(ref, entry)
+    except ValueError as e:
+        return jsonify({"success": False, "errors": [str(e)]}), 400
+
+    old = load_setup(ref).at("now")
+    new_setup = _parse(yaml.safe_load(text), ref)
+    new = new_setup.at(entry["valid_from"])
+    changes = _cabling_changes(old.cabling[0], new.cabling[0])
+    for d in sorted(set(old.detectors) | set(new.detectors)):
+        a, b = old.detectors.get(d), new.detectors.get(d)
+        if a is None:
+            changes.insert(0, f"{d} added (chamber {b.get('alias', '–')}, z {b.get('z_mm')} mm)")
+        elif b is None:
+            changes.insert(0, f"{d} removed")
+        elif a != b:
+            changes.insert(0, f"{d}: " + ", ".join(
+                f"{k} {a.get(k)} -> {b.get(k)}" for k in sorted(set(a) | set(b))
+                if a.get(k) != b.get(k)))
+    if old.trigger != new.trigger:
+        changes.insert(0, f"trigger: {old.trigger or 'none'} -> {new.trigger or 'none'}")
+    if not changes:
+        return jsonify({"success": False, "errors": [
+            "Nothing differs from the stand in force now."]}), 400
+    if preview:
+        return jsonify({"success": True, "preview": True, "changes": changes,
+                        "valid_from": entry["valid_from"].isoformat(timespec="minutes")})
+
+    write_atomic(ref, text)
+    d = os.path.dirname(ref)
+    msg = entry["note"] + "\n\n" + "\n".join(f"- {c}" for c in changes)
+    r = subprocess.run(["git", "-C", d, "-c", f"user.name=Setup tab ({request.remote_addr})",
+                        "-c", "user.email=vmm-daq@localhost", "commit", "-q", "-m", msg,
+                        "--", os.path.basename(ref)], capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        subprocess.run(["git", "-C", d, "checkout", "-q", "--", os.path.basename(ref)],
+                       capture_output=True, timeout=30)
+        return jsonify({"success": False, "errors": [
+            f"Not saved: the change could not be committed ({r.stderr.strip()[:200]}); "
+            "the file was restored."]}), 500
+    log_event("SETUP_ENTRY", "flask_setup", setup=os.path.basename(ref),
+              valid_from=entry["valid_from"].isoformat(timespec="minutes"),
+              note=entry["note"], remote_addr=request.remote_addr)
+    return jsonify({"success": True, "changes": changes,
+                    "message": f"Stand saved, in force from "
+                               f"{entry['valid_from']:%Y-%m-%d %H:%M} ({len(changes)} change(s))."})
+
+
+@app.route("/setup")
+def setup_get():
+    import setup_source
+    try:
+        s = setup_source.load(SITE)
+    except BaseException as e:          # SystemExit from a missing package, ValueError ...
+        return jsonify({"error": f"{type(e).__name__}: {e}",
+                        "ref": setup_source.setup_ref(SITE)}), 500
+    try:
+        current = s.cabling_at("now")
+    except LookupError:
+        current = None
+    entries = []
+    for i, e in enumerate(s.cabling):
+        entries.append({
+            "valid_from": e.valid_from.isoformat(timespec="minutes"), "note": e.note,
+            "current": e is current,
+            "rows": sorted(e.hybrids, key=lambda r: (list(s.detectors).index(r["detector"])
+                                                     if r["detector"] in s.detectors else 99,
+                                                     r["connector"])),
+            "changes": _cabling_changes(s.cabling[i - 1], e) if i else [],
+        })
+    hv = s.hv or {}
+    hv_rows = []
+    for det, roles in (hv.get("channels") or {}).items():
+        for role, cc in roles.items():
+            hv_rows.append({"name": det, "electrode": role, "card": cc[0], "channel": cc[1],
+                            "operating": (hv.get("operating") or {}).get(det, {}).get(role),
+                            "ceiling": (hv.get("ceilings") or {}).get(role),
+                            "reference": det in (hv.get("references") or [])})
+    history = []
+    d = os.path.dirname(s.path)
+    if os.path.isdir(os.path.join(d, ".git")):
+        r = subprocess.run(["git", "-C", d, "log", "-15", "--format=%h|%ad|%an|%s",
+                            "--date=format:%Y-%m-%d %H:%M", "--", os.path.basename(s.path)],
+                           capture_output=True, text=True, timeout=10)
+        history = [dict(zip(("commit", "date", "author", "message"), l.split("|", 3)))
+                   for l in r.stdout.splitlines() if l.count("|") >= 3]
+    importlib.reload(p2cfg)
+    return jsonify({
+        "name": s.name, "site": SITE, "description": s.description, "path": s.path,
+        "sha256": s.sha256, "editable_copy": s.path.startswith(setup_source.SETUPS_DIR),
+        "setups_dir": setup_source.SETUPS_DIR,
+        "used_by": {"run configuration": setup_source.setup_ref(SITE),
+                    "processor, QA and live monitor": p2cfg.P2_SETUP},
+        "detectors": [{"name": k, **v} for k, v in s.detectors.items()],
+        "trigger": s.trigger, "cabling": entries,
+        "stand_now": ({"detectors": [{"name": k, **v} for k, v in s.at("now").detectors.items()],
+                       "trigger": s.at("now").trigger,
+                       "hybrids": [dict(r) for r in current.hybrids]} if current else None),
+        "n_connectors": _design_connectors(s.design),
+        "run_state": _run_state(),
+        "run_active": _run_state() not in RUN_IDLE_STATES,
+        "hv": {"set_here": hv.get("set_here"), "note": hv.get("note", ""),
+               "ceilings": hv.get("ceilings"), "rows": hv_rows} if s.hv else None,
+        "history": history,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Analysis tab, detector view: `p2-monitor analyze` (p2-readout venv) builds,
+# per run, each sub-run and the whole run from the stored histograms into
+# <analysis>/<run>/_detector_view/. One build at a time, nice 19, killable by
+# mem_guardian; measured ~0.35 GB peak whatever the number of captures.
+# ---------------------------------------------------------------------------
+DV_DIRNAME = "_detector_view"
+DV_PNGS = ("rate_map.png", "vmm_adc.png", "channel_rates.png", "amplitude.png", "time.png",
+           "level_rates.png", "trend.png")
+_dv_build = {"run": None, "proc": None}
+_RUN_RE = re.compile(r"^run_\d+$")
+_ITEM_RE = re.compile(r"^(?!\.)[A-Za-z0-9_.+-]+$")     # no "." or ".."
+
+
+def _dv_out(run):
+    return os.path.join(ANALYSIS_DIR, run, DV_DIRNAME)
+
+
+def _dv_building():
+    p = _dv_build["proc"]
+    return _dv_build["run"] if p is not None and p.poll() is None else None
+
+
+def _dv_newest_store(run):
+    inner = p2cfg.P2_STORE_INNER
+    paths = glob.glob(os.path.join(RUN_DIR, run, "*", inner, "*", "scalars.json"))
+    return (len(paths), max((os.path.getmtime(p) for p in paths), default=None))
+
+
+@app.route("/detector_view/runs")
+def detector_view_runs():
+    runs = sorted((d for d in os.listdir(RUN_DIR) if _RUN_RE.match(d)
+                   and os.path.isdir(os.path.join(RUN_DIR, d))) if os.path.isdir(RUN_DIR) else [],
+                  key=lambda d: -int(d.split("_")[1]))
+    out = []
+    for run in runs[:300]:
+        n, newest = _dv_newest_store(run)
+        summ = os.path.join(_dv_out(run), "_run", "summary.json")
+        built = os.path.getmtime(summ) if os.path.isfile(summ) else None
+        out.append({"run": run, "captures": n, "built": built,
+                    "stale": bool(built and newest and newest > built)})
+    return jsonify({"runs": out, "building": _dv_building()})
+
+
+@app.route("/detector_view/<run>")
+def detector_view_run(run):
+    if not _RUN_RE.match(run):
+        abort(404)
+    base = _dv_out(run)
+    items = []
+    if os.path.isdir(base):
+        names = sorted(n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n)))
+        for n in (["_run"] if "_run" in names else []) + [n for n in names if n != "_run"]:
+            d = os.path.join(base, n)
+            try:
+                with open(os.path.join(d, "summary.json")) as f:
+                    summ = json.load(f)
+            except (OSError, ValueError):
+                summ = None
+            items.append({"item": n, "summary": summ,
+                          "pngs": {p: int(os.path.getmtime(os.path.join(d, p)))
+                                   for p in DV_PNGS if os.path.isfile(os.path.join(d, p))}})
+    log = os.path.join(base, "build.log")
+    tail = open(log).read().splitlines()[-8:] if os.path.isfile(log) else []
+    return jsonify({"run": run, "items": items, "building": _dv_building() == run,
+                    "other_building": _dv_building(), "log": tail})
+
+
+@app.route("/detector_view/<run>/build", methods=["POST"])
+def detector_view_build(run):
+    if not _RUN_RE.match(run) or not os.path.isdir(os.path.join(RUN_DIR, run)):
+        return jsonify({"success": False, "message": f"no run {run}"}), 404
+    if _dv_building():
+        return jsonify({"success": False,
+                        "message": f"{_dv_building()} is being built; one at a time."}), 409
+    importlib.reload(p2cfg)
+    ok, why = p2cfg.p2_available()
+    if not ok:
+        return jsonify({"success": False, "message": why}), 500
+    if not _dv_newest_store(run)[0]:
+        return jsonify({"success": False, "message": f"{run} has no processed capture yet."}), 400
+    out = _dv_out(run)
+    os.makedirs(out, exist_ok=True)
+    env = {**os.environ, "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1",
+           "MKL_NUM_THREADS": "1", "MPLBACKEND": "Agg"}
+    logf = open(os.path.join(out, "build.log"), "w")
+    _dv_build["proc"] = subprocess.Popen(
+        ["nice", "-n", "19", f"{p2cfg.P2_BIN}/p2-monitor", "analyze",
+         os.path.join(RUN_DIR, run), "--out-dir", out, "--store-inner", p2cfg.P2_STORE_INNER],
+        stdout=logf, stderr=subprocess.STDOUT, env=env, cwd=out)
+    _dv_build["run"] = run
+    log_event("DETECTOR_VIEW", "flask_analysis", run=run, remote_addr=request.remote_addr)
+    return jsonify({"success": True, "message": f"Building the detector view of {run}…"})
+
+
+@app.route("/detector_view/png/<run>/<item>/<name>")
+def detector_view_png(run, item, name):
+    if not _RUN_RE.match(run) or not _ITEM_RE.match(item) or name not in DV_PNGS:
+        abort(404)
+    return send_from_directory(os.path.join(_dv_out(run), item), name, max_age=0)
+
+
+# ---------------------------------------------------------------------------
+# Campaign (Setup tab): where the data go -- data directory and EOS folder.
+# Every service takes these paths at its start, so applying a campaign
+# restarts all of them together (only while no run and no scan is active).
+# ---------------------------------------------------------------------------
+CAMPAIGN_KEYS = ("campaign_name", "data_dir", "eos_dir")
+CAMPAIGNS_LOG = f"{BASE_DIR}/config/campaigns.jsonl"
+CAMPAIGN_MIN_FREE_GB = 60          # as config_scan.MIN_FREE_GB
+# services that hold BASE_DATA_DIR / the EOS folder, restarted by their own
+# command line (read from the running process); the processor, QA, backup and
+# live monitor are restarted by their GUI routes, the GUI itself last
+CAMPAIGN_RESTART_SESSIONS = ("vmm_prune", "vmm_logbook", "vmm_rate_guard", "vmm_capture_guard")
+
+
+def _campaign_current():
+    import backup_config
+    importlib.reload(backup_config)
+    rc = sys.modules["run_config_beam"]
+    defaults = _settings_defaults()
+    ov = gui_settings.overrides()
+    data_dir = ov.get("data_dir", defaults.get("data_dir", rc.BASE_DATA_DIR))
+    return {"campaign_name": ov.get("campaign_name",
+                                    os.path.basename(str(data_dir).rstrip("/"))),
+            "data_dir": data_dir, "eos_dir": backup_config.EOS_DIR,
+            "xrootd_url": backup_config.XROOTD_URL}
+
+
+def _free_gb(path):
+    p = path
+    while p and not os.path.exists(p):
+        p = os.path.dirname(p.rstrip("/"))
+    try:
+        st = os.statvfs(p or "/")
+        return st.f_bavail * st.f_frsize / 1e9, p
+    except OSError:
+        return None, p
+
+
+def _campaign_check(data):
+    """(new values, errors, warnings, actions) for a requested campaign."""
+    errors, warnings = [], []
+    new = {}
+    for k in CAMPAIGN_KEYS:
+        try:
+            new[k] = gui_settings.coerce(k, data.get(k, ""))
+        except ValueError as e:
+            errors.append(str(e))
+    if errors:
+        return new, errors, warnings, []
+    cur = _campaign_current()
+    d = new["data_dir"]
+    if d.startswith(BASE_DIR.rstrip("/") + "/"):
+        errors.append("The data directory must not be inside the DAQ code directory.")
+    free, existing = _free_gb(d)
+    if not os.access(existing, os.W_OK):
+        errors.append(f"{existing} is not writable by the DAQ.")
+    if free is not None and free < CAMPAIGN_MIN_FREE_GB:
+        errors.append(f"Only {free:.0f} GB free on {existing} (need {CAMPAIGN_MIN_FREE_GB} GB).")
+    if os.path.isdir(os.path.join(d, "runs")) and os.listdir(os.path.join(d, "runs")) \
+            and d != cur["data_dir"]:
+        warnings.append(f"{d}runs/ already holds runs: the new runs will join them.")
+    try:
+        with open(CAMPAIGNS_LOG) as f:
+            past = [json.loads(l) for l in f if l.strip()]
+    except OSError:
+        past = []
+    for p in past:
+        if p.get("eos_dir") == new["eos_dir"] and p.get("data_dir") != d:
+            warnings.append(f"EOS folder {new['eos_dir']} was used by campaign "
+                            f"{p.get('campaign_name')} ({p.get('data_dir')}); runs keep "
+                            "distinct numbers, but the two campaigns will share it.")
+    if all(new[k] == cur[k] for k in CAMPAIGN_KEYS):
+        errors.append("This is the campaign in force now.")
+    running = [s for s in (PROC_TMUX, QA_TMUX, BACKUP_TMUX, p2cfg.LIVE_TMUX) +
+               CAMPAIGN_RESTART_SESSIONS if _tmux_running(s)]
+    actions = ([f"create {d}runs/ and {d}analysis/" if not os.path.isdir(d + "runs") else
+                f"use the existing {d}"] +
+               [f"restart {s}" for s in running] + ["restart the GUI (vmm_flask), last"])
+    return new, errors, warnings, actions
+
+
+@app.route("/campaign")
+def campaign_get():
+    cur = _campaign_current()
+    free, _ = _free_gb(cur["data_dir"])
+    try:
+        with open(CAMPAIGNS_LOG) as f:
+            past = [json.loads(l) for l in f if l.strip()][-10:]
+    except OSError:
+        past = []
+    return jsonify({**cur, "free_gb": round(free, 1) if free is not None else None,
+                    "run_state": _run_state(), "scan_running": bool(_config_scan_pids()),
+                    "history": list(reversed(past))})
+
+
+@app.route("/campaign/check", methods=["POST"])
+def campaign_check():
+    new, errors, warnings, actions = _campaign_check(request.get_json(silent=True) or {})
+    return jsonify({"success": not errors, "errors": errors, "warnings": warnings,
+                    "actions": actions})
+
+
+@app.route("/campaign/apply", methods=["POST"])
+def campaign_apply():
+    data = request.get_json(silent=True) or {}
+    new, errors, warnings, actions = _campaign_check(data)
+    state = _run_state()
+    if state not in RUN_IDLE_STATES:
+        errors.append(f"A run is in progress ({state}).")
+    if _config_scan_pids():
+        errors.append("A config scan is running.")
+    if errors:
+        return jsonify({"success": False, "errors": errors}), 409
+    d = new["data_dir"]
+    old = _campaign_current()
+    grp = os.stat(old["data_dir"]).st_gid if os.path.isdir(old["data_dir"]) else None
+    for sub in ("", "runs", "analysis"):
+        p = os.path.join(d, sub)
+        os.makedirs(p, mode=0o2770, exist_ok=True)
+        if grp is not None:
+            try:
+                os.chown(p, -1, grp)
+            except OSError:
+                pass
+    ok, errs, applied = gui_settings.save({k: new[k] for k in CAMPAIGN_KEYS},
+                                          who=request.remote_addr or "gui")
+    if not ok:
+        return jsonify({"success": False, "errors": errs}), 400
+    with open(CAMPAIGNS_LOG, "a") as f:
+        f.write(json.dumps({"time": datetime.now().isoformat(timespec="seconds"),
+                            "who": request.remote_addr, **new,
+                            "previous": {k: old[k] for k in CAMPAIGN_KEYS}}) + "\n")
+    log_event("CAMPAIGN", "flask_setup", name=new["campaign_name"], data_dir=d,
+              eos_dir=new["eos_dir"], previous=old["data_dir"], remote_addr=request.remote_addr)
+
+    restarted = []
+    # services restarted by their own command line, read from the running process
+    for s in CAMPAIGN_RESTART_SESSIONS:
+        if not _tmux_running(s):
+            continue
+        r = subprocess.run(["tmux", "list-panes", "-t", s, "-F", "#{pane_pid}"],
+                           capture_output=True, text=True)
+        kids = subprocess.run(["pgrep", "-P", r.stdout.split()[0], "-a"],
+                              capture_output=True, text=True).stdout.split("\n")[0] \
+            if r.stdout.strip() else ""
+        cmd = kids.split(" ", 1)[1] if " " in kids else ""
+        if "python" not in cmd:
+            continue
+        subprocess.run(["tmux", "kill-session", "-t", s], capture_output=True)
+        subprocess.run(["bash", f"{BASH_DIR}/start_tmux.sh", s, f"cd {BASE_DIR} && {cmd}", "2000"],
+                       capture_output=True, cwd=BASE_DIR)
+        restarted.append(s)
+    for s, stop, start in ((PROC_TMUX, stop_processor, start_processor),
+                           (QA_TMUX, stop_qa, start_qa), (BACKUP_TMUX, stop_backup, start_backup)):
+        if _tmux_running(s):
+            stop()
+            start()
+            restarted.append(s)
+    if _tmux_running(p2cfg.LIVE_TMUX):
+        try:
+            with open(p2cfg.LIVE_STATUS_PATH) as f:
+                src = "udp" if str(json.load(f).get("source", "")).startswith("udp") else "file"
+        except (OSError, ValueError):
+            src = None
+        importlib.reload(p2cfg)
+        subprocess.run(["tmux", "kill-session", "-t", p2cfg.LIVE_TMUX], capture_output=True)
+        subprocess.Popen(["tmux", "new-session", "-d", "-s", p2cfg.LIVE_TMUX]
+                         + p2cfg.live_command(src))
+        restarted.append(p2cfg.LIVE_TMUX)
+    # the GUI last, from a detached shell (this process is inside vmm_flask)
+    subprocess.Popen(["setsid", "bash", "-c",
+                      f"sleep 3; tmux kill-session -t vmm_flask; cd {BASE_DIR} && "
+                      f"bash {BASH_DIR}/start_tmux.sh vmm_flask {BASE_DIR}/flask_app/start_flask.sh 5000"],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    return jsonify({"success": True, "restarted": restarted + ["vmm_flask"],
+                    "message": f"Campaign {new['campaign_name']} applied: data in {d}, backup to "
+                               f"{new['eos_dir']}. Restarted {', '.join(restarted) or 'no running service'}; "
+                               "the GUI restarts in a few seconds."})
+
+
+# ---------------------------------------------------------------------------
+# Config scan panel (Setup tab): choose chip configs and run config_scan.py,
+# the sequencer that takes one run per config (select -> apply -> warm reset
+# -> run -> next), instead of typing its command line in a tmux session.
+# ---------------------------------------------------------------------------
+CONFIG_SCAN_PY = f"{BASE_DIR}/config_scan.py"
+CONFIG_SCAN_PYTHON = f"{BASE_DIR}/.venv/bin/python"
+CONFIG_SCAN_LOG = "/local/p2/config_scan.log"
+CONFIG_SCAN_STOP = f"{BASE_DIR}/config/config_scan_stop"
+CONFIG_SCAN_TMUX = "vmm_config_scan"
+CONFIG_SCAN_OVERHEAD_MIN = 6        # config_scan.OVERHEAD_MIN: apply, warm reset, start
+
+
+def _effective_run_plan():
+    """RUN_PLAN the next run would take: the GUI's value, else the code literal."""
+    return gui_settings.overrides().get("run_plan", _settings_defaults().get("run_plan"))
+
+
+def _config_scan_pids():
+    """PIDs of running config_scan.py sequencers: a python process whose command
+    starts with the script. Anchored, so a shell or ssh command that merely
+    contains the text (a tmux wrapper, a pgrep loop) is never matched."""
+    r = subprocess.run(["pgrep", "-f", r"^[^ ]*python[^ ]* [^ ]*config_scan\.py --until"],
+                       capture_output=True, text=True)
+    return [int(p) for p in r.stdout.split() if p.strip().isdigit()]
+
+
+def _config_scan_progress(max_lines=4000):
+    """The last scan in the log: its configs with state, and its last lines."""
+    try:
+        with open(CONFIG_SCAN_LOG, errors="replace") as f:
+            lines = f.readlines()[-max_lines:]
+    except OSError:
+        return None
+    start = max((i for i, l in enumerate(lines) if "| CONFIG SCAN START:" in l), default=None)
+    if start is None:
+        return None
+    rows, cur, ended, header = {}, None, False, lines[start].split("| ", 1)[-1].strip()
+    order = []
+    for l in lines[start:]:
+        msg = l.split("| ", 1)[-1].rstrip("\n")
+        m = msg.strip()
+        if m.startswith("queued: "):
+            c = m[len("queued: "):]
+            order.append(c)
+            rows[c] = {"cfg": c, "state": "queued", "run": None, "detail": ""}
+        elif m.startswith("=== ") and m.endswith(" ==="):
+            cur = m[4:].rsplit(" (", 1)[0]
+            if cur in rows:
+                rows[cur]["state"] = "running"
+        elif cur in rows and m.startswith("started run_"):
+            rows[cur]["run"] = m.split()[1]
+        elif cur in rows and " finished " in m:
+            rows[cur].update(state="done", detail=m.split(" finished ", 1)[1].lstrip("— "))
+        elif m.startswith("SKIP "):
+            c = m[5:].split(":", 1)[0]
+            if c in rows:
+                rows[c].update(state="skipped", detail=m.split(":", 1)[1].strip())
+        elif m.startswith("STOP requested"):
+            for r in rows.values():
+                if r["state"] == "queued":
+                    r["state"] = "stopped"
+        elif cur in rows and rows[cur]["state"] == "running" and (
+                "refusing" in m or "failed" in m or "ABORTING" in m or "STOPPING" in m):
+            rows[cur].update(state="failed", detail=m)
+        elif m.startswith("CONFIG SCAN END"):
+            ended = True
+            for r in rows.values():
+                if r["state"] == "running":
+                    r["state"] = "failed"
+    return {"header": header, "ended": ended, "rows": [rows[c] for c in order],
+            "tail": [l.rstrip("\n") for l in lines[start:]][-25:]}
+
+
+def _config_scan_request(data):
+    configs = [str(c).strip() for c in (data.get("configs") or []) if str(c).strip()]
+    if not configs:
+        raise ValueError("choose at least one chip configuration")
+    known = set(chip.ext_files())
+    unknown = [c for c in configs if c not in known]
+    if unknown:
+        raise ValueError(f"not in config_ext: {', '.join(unknown)}")
+    try:
+        minutes = int(data.get("minutes"))
+    except (TypeError, ValueError):
+        raise ValueError("minutes per config must be a whole number")
+    least = 5 if IS_BEAM_SITE else 2
+    if not least <= minutes <= 600:
+        raise ValueError(f"minutes per config must be {least}-600")
+    until = str(data.get("until", "")).strip()
+    if not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", until):
+        raise ValueError("finish by must be a time HH:MM")
+    return configs, minutes, until
+
+
+def _config_scan_cmd(configs, minutes, until, dry_run=False):
+    return ([CONFIG_SCAN_PYTHON, CONFIG_SCAN_PY, "--until", until,
+             "--configs", ",".join(configs), "--minutes", str(minutes)]
+            + (["--dry-run"] if dry_run else []))
+
+
+@app.route("/config_scan")
+def config_scan_status():
+    return jsonify({"configs": chip.ext_files(), "running": bool(_config_scan_pids()),
+                    "stop_requested": os.path.exists(CONFIG_SCAN_STOP),
+                    "progress": _config_scan_progress(), "overhead_min": CONFIG_SCAN_OVERHEAD_MIN,
+                    "min_minutes": 5 if IS_BEAM_SITE else 2, "run_state": _run_state()})
+
+
+@app.route("/config_scan/check", methods=["POST"])
+def config_scan_check():
+    """The script's own --dry-run, into a scratch log: what it would do, nothing touched."""
+    try:
+        configs, minutes, until = _config_scan_request(request.get_json(silent=True) or {})
+    except ValueError as e:
+        return jsonify({"success": False, "errors": [str(e)]}), 400
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        env = {**os.environ, "CONFIG_SCAN_LOG": os.path.join(d, "dry.log")}
+        r = subprocess.run(_config_scan_cmd(configs, minutes, until, dry_run=True),
+                           capture_output=True, text=True, timeout=60, env=env, cwd=BASE_DIR)
+    out = [l.split("| ", 1)[-1] for l in r.stdout.splitlines()]
+    notes = []
+    if _effective_run_plan() != "config_scan":
+        notes.append(f"The run type is '{_effective_run_plan()}'; Start will set it to "
+                     "'config_scan' (the scan refuses any other).")
+    ok = r.returncode == 0 and not any(l.startswith(("Only ", "REFUSING")) for l in out)
+    return jsonify({"success": ok, "output": out, "notes": notes,
+                    "errors": [] if ok else [out[-1] if out else r.stderr.strip()[-300:]]})
+
+
+@app.route("/config_scan/start", methods=["POST"])
+def config_scan_start():
+    try:
+        configs, minutes, until = _config_scan_request(request.get_json(silent=True) or {})
+    except ValueError as e:
+        return jsonify({"success": False, "errors": [str(e)]}), 400
+    if _config_scan_pids():
+        return jsonify({"success": False, "errors": ["A config scan is already running."]}), 409
+    state = _run_state()
+    if state not in RUN_IDLE_STATES:
+        return jsonify({"success": False, "errors": [
+            f"A run is in progress ({state}); start the scan when it has ended."]}), 409
+    # the scan only runs with RUN_PLAN config_scan; set it the way the tab does
+    if _effective_run_plan() != "config_scan":
+        gui_settings.save({"run_plan": "config_scan"}, who=request.remote_addr or "gui")
+        log_event("SETTING", "flask_config_scan", key="run_plan", new="config_scan",
+                  remote_addr=request.remote_addr)
+    if os.path.exists(CONFIG_SCAN_STOP):
+        os.remove(CONFIG_SCAN_STOP)
+    subprocess.run(["tmux", "kill-session", "-t", CONFIG_SCAN_TMUX], capture_output=True)
+    cmd = " ".join(shlex.quote(a) for a in _config_scan_cmd(configs, minutes, until))
+    subprocess.run(["tmux", "new-session", "-d", "-s", CONFIG_SCAN_TMUX, "-c", BASE_DIR,
+                    "bash", "-c", f"{cmd}; echo; echo '[config scan ended - press Enter]'; read"],
+                   check=True)
+    log_event("CONFIG_SCAN_START", "flask_config_scan", n=len(configs), minutes=minutes,
+              until=until, configs=",".join(configs), remote_addr=request.remote_addr)
+    return jsonify({"success": True, "message":
+                    f"Config scan started: {len(configs)} config(s) x {minutes} min, "
+                    f"finishing by {until} (tmux {CONFIG_SCAN_TMUX})."})
+
+
+@app.route("/config_scan/stop", methods=["POST"])
+def config_scan_stop():
+    """after_run: no further config is started; now: interrupt the sequencer
+    (its cleanup runs). The run in progress is not stopped either way; use
+    Stop Run for that."""
+    mode = (request.get_json(silent=True) or {}).get("mode", "after_run")
+    pids = _config_scan_pids()
+    if not pids:
+        return jsonify({"success": False, "message": "No config scan is running."}), 400
+    if mode == "now":
+        import signal
+        for p in pids:
+            try:
+                os.kill(p, signal.SIGINT)
+            except OSError:
+                pass
+        log_event("CONFIG_SCAN_STOP", "flask_config_scan", mode="now", remote_addr=request.remote_addr)
+        return jsonify({"success": True, "message": "Config scan interrupted. The run in "
+                        "progress continues to its end; use Stop Run to end it now."})
+    with open(CONFIG_SCAN_STOP, "w") as f:
+        f.write(f"requested from the GUI by {request.remote_addr}\n")
+    log_event("CONFIG_SCAN_STOP", "flask_config_scan", mode="after_run",
+              remote_addr=request.remote_addr)
+    return jsonify({"success": True, "message": "The scan will stop after the current run."})
+
+
+@app.route("/settings/restart/<component>", methods=["POST"])
+def settings_restart(component):
+    """Restart one component so saved settings take effect now.
+
+    Processor and QA: as their Stop/Start buttons (each start regenerates its
+    config; a killed job is re-queued). Guardian: its own tmux session. The live
+    monitor is restarted from the Live tab (it keeps its source choice there).
+    """
+    if component == "processor":
+        stop_processor()
+        return start_processor()
+    if component == "qa":
+        stop_qa()
+        return start_qa()
+    if component == "guardian":
+        subprocess.run(["tmux", "kill-session", "-t", "vmm_mem_guardian"], capture_output=True)
+        r = subprocess.run(["bash", f"{BASH_DIR}/start_tmux.sh", "vmm_mem_guardian",
+                            f"{BASE_DIR}/.venv/bin/python {BASE_DIR}/mem_guardian.py", "2000"],
+                           capture_output=True, text=True, cwd=BASE_DIR)
+        log_event("RESTART", "flask_settings", component="mem_guardian",
+                  remote_addr=request.remote_addr)
+        ok = _tmux_running("vmm_mem_guardian")
+        return jsonify({"success": ok, "message": "Memory guardian restarted" if ok
+                        else f"Memory guardian did not start: {r.stdout}{r.stderr}"})
+    return jsonify({"success": False, "message": f"unknown component {component!r}"}), 400
 
 
 @app.route("/start_qa", methods=["POST"])
@@ -1183,6 +2112,90 @@ def live_hits():
             tot["hits_est"] += st["hits"]
             tot["bytes"] += st["bytes"]
     return jsonify({"success": True, "run": run_name, **tot})
+
+
+@app.route("/hv_data_live")
+def hv_data_live():
+    """Live HV traces from banco's read-only USB-supply monitor
+    (banco_hv/hv_serial_live.py: N1471 + iseg NHR in the lab), proxied so the
+    browser needs neither banco's address nor its token.
+
+    Reached through config/dream_bridge.json -> hv_live_url (the same URL the
+    shim logs each sub-run from), with /hv_live swapped for /hv_history. Same
+    {time, voltage, current} shape as /hv_data, plus 'power' per channel and
+    'latest' (banco's time of the newest reading)."""
+    from urllib.parse import urlencode
+    try:
+        with open(DREAM_BRIDGE_CONFIG) as f:
+            cfg = json.load(f)
+    except Exception:
+        cfg = {}
+    url = cfg.get("hv_live_url", "")
+    if not url.rstrip("/").endswith("/hv_live"):
+        return jsonify({"success": False, "message": "no hv_live_url in config/dream_bridge.json"})
+    try:
+        minutes = max(1, min(int(request.args.get("minutes", 60)), 24 * 60))
+    except ValueError:
+        minutes = 60
+    q = {"minutes": minutes}
+    if cfg.get("hv_live_token"):
+        q["token"] = cfg["hv_live_token"]
+    hist = url.rstrip("/")[:-len("/hv_live")] + "/hv_history?" + urlencode(q)
+    try:
+        with _urlreq.urlopen(hist, timeout=4) as r:
+            d = json.loads(r.read().decode())
+        d["source"] = "banco-live"
+        return jsonify(d)
+    except Exception as e:
+        return jsonify({"success": False, "message": f"banco HV monitor: {e}"})
+
+
+def _hv_service_base():
+    """(base URL, read token) of banco's HV service, from dream_bridge.json hv_live_url."""
+    try:
+        with open(DREAM_BRIDGE_CONFIG) as f:
+            cfg = json.load(f)
+    except Exception:
+        cfg = {}
+    url = cfg.get("hv_live_url", "").rstrip("/")
+    if not url.endswith("/hv_live"):
+        return None, None
+    return url[:-len("/hv_live")], cfg.get("hv_live_token", "")
+
+
+@app.route("/hvctl/", defaults={"sub": ""}, methods=["GET", "POST"])
+@app.route("/hvctl/<path:sub>", methods=["GET", "POST"])
+def hv_control_proxy(sub):
+    """The HV Control tab: banco's control page and its api/* calls, proxied.
+
+    banco_hv/hv_serial_live.py owns the serial ports and does ALL validation
+    (per-electrode voltage limits, control password, action log); this route
+    only relays, adding the read token so the browser never needs it. The
+    control password still has to be typed by the person in the page."""
+    from urllib.parse import urlencode
+    import urllib.error as _urlerr
+    if sub not in ("", "api/state", "api/actions", "api/set", "api/all_off", "api/unlock"):
+        return jsonify({"ok": False, "message": "not found"}), 404
+    base, token = _hv_service_base()
+    if not base:
+        return jsonify({"ok": False, "message": "no hv_live_url in config/dream_bridge.json"}), 503
+    url = f"{base}/{sub}" + (("?" + urlencode({"token": token})) if token else "")
+    headers = {"X-HV-Client": f"vmm-gui from {request.remote_addr}"}
+    data = None
+    if request.method == "POST":
+        data = request.get_data()
+        headers["Content-Type"] = "application/json"
+    req = _urlreq.Request(url, data=data, headers=headers, method=request.method)
+    try:
+        # long enough for ALL OFF across 6 channels with read-back
+        with _urlreq.urlopen(req, timeout=60) as r:
+            body, code, ctype = r.read(), r.status, r.headers.get("Content-Type", "application/json")
+    except _urlerr.HTTPError as e:
+        body, code, ctype = e.read(), e.code, e.headers.get("Content-Type", "application/json")
+    except Exception as e:
+        return jsonify({"ok": False, "message": f"banco HV service unreachable: {e}"}), 502
+    return Response(body, status=code, content_type=ctype,
+                    headers={"Cache-Control": "no-store"})
 
 
 @app.route("/hv_data_dream")

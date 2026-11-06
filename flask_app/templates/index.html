@@ -211,6 +211,20 @@
       <span class="panel-title">HV Monitor</span>
       <span class="panel-header-note" id="hv-note">latest voltage and current readings from HV control</span>
       <span class="ms-auto d-flex align-items-center gap-2">
+        <span id="hv-live-controls" class="d-none align-items-center gap-2">
+          <label for="hv-source-select" class="text-muted small mb-0">Show</label>
+          <select id="hv-source-select" class="form-select form-select-sm" style="width:auto;"
+                  title="Live = banco's USB HV supplies right now; Sub-run = the hv_monitor.csv recorded with the selected sub-run">
+            <option value="live">Live (banco)</option>
+            <option value="subrun">Sub-run</option>
+          </select>
+          <select id="hv-window-select" class="form-select form-select-sm" style="width:auto;" title="Live time window">
+            <option value="15">15 min</option>
+            <option value="60" selected>1 h</option>
+            <option value="360">6 h</option>
+            <option value="1440">24 h</option>
+          </select>
+        </span>
         <label for="hv-subrun-select" class="text-muted small mb-0">Subrun</label>
         <select id="hv-subrun-select" class="form-select form-select-sm" style="width:auto;">
           <option value="">(none)</option>
@@ -300,9 +314,36 @@
 
 <!-- Analysis Browser Tab -->
 <div class="tab-pane fade" id="analysis-browser">
+  <div class="panel mb-3">
+    <div class="panel-header">
+      <span class="panel-title">Detector view</span>
+      <span class="panel-header-note">Per run and per sub-run, from the processed data and the
+        mapping: hits on the detector surface, rate and ADC per channel of every VMM,
+        amplitude, rate vs time, and the trend across sub-runs. The same for every campaign.</span>
+    </div>
+    <div class="panel-body">
+      <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
+        <select id="dv-run" class="form-select form-select-sm" style="width:auto; min-width:16rem;"></select>
+        <select id="dv-item" class="form-select form-select-sm" style="width:auto; min-width:16rem;"></select>
+        <button id="dv-build" class="btn btn-info btn-sm">Build</button>
+        <span id="dv-status" class="text-muted" style="font-size:0.85rem;"></span>
+      </div>
+      <div class="table-responsive mt-3">
+        <table class="table table-dark table-sm align-middle mb-0">
+          <thead><tr><th>Detector</th><th class="text-end">Hits</th><th class="text-end">Rate</th>
+            <th class="text-end">Hz/cm²</th><th class="text-end">Live ch.</th><th class="text-end">Dead ch.</th>
+            <th class="text-end">Noisy ch.</th><th class="text-end">Mean ADC</th></tr></thead>
+          <tbody id="dv-summary"><tr><td colspan="8" class="text-muted">Choose a run</td></tr></tbody>
+        </table>
+      </div>
+      <div id="dv-note" class="text-muted mt-1" style="font-size:0.8rem;"></div>
+    </div>
+  </div>
+  <div id="dv-plots" class="mb-4"></div>
+
   <div class="panel">
     <div class="panel-header">
-      <span class="panel-title">Analysis</span>
+      <span class="panel-title">All plots (analysis folder)</span>
       <nav aria-label="breadcrumb">
         <ol class="breadcrumb" id="ab-breadcrumb"></ol>
       </nav>
@@ -599,6 +640,304 @@
 </div>
 
 <!-- Disk Space Tab -->
+<div class="tab-pane fade" id="live">
+  <div class="panel mb-3">
+    <div class="panel-header">
+      <span class="panel-title">Live</span>
+      <span class="panel-header-note">Hit rates from the capture being written, every few
+        seconds (p2-monitor live, tmux <code>vmm_live</code>). Rates are over the last
+        <span id="live-window">–</span> s of data; under a flood the monitor samples and
+        says how much it read.</span>
+    </div>
+    <div class="panel-body">
+      <div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+        <select id="live-source" class="form-select form-select-sm" style="width:auto;"
+                title="Where the live monitor reads the data">
+          <option value="file">from the capture files</option>
+          <option value="udp">from the network port</option>
+        </select>
+        <button id="live-toggle" class="btn btn-info btn-sm">Start Live</button>
+        <span id="live-state" class="badge bg-secondary">–</span>
+        <span id="live-following" class="text-muted" style="font-size:0.85rem;"></span>
+      </div>
+      <div id="live-figures" class="mt-3" style="display:flex; gap:2rem; flex-wrap:wrap; font-size:0.9rem;"></div>
+      <div id="live-note" class="text-warning mt-2" style="font-size:0.85rem;"></div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="panel h-100">
+        <div class="panel-header"><span class="panel-title">Per detector and connector</span></div>
+        <div class="panel-body">
+          <div class="table-responsive">
+            <table class="table table-dark table-sm align-middle mb-0">
+              <thead><tr><th>Where</th><th class="text-end">Rate</th><th class="text-end">Hz/cm²</th>
+                <th class="text-end">Live ch.</th><th class="text-end">Hottest ch.</th></tr></thead>
+              <tbody id="live-phys"><tr><td colspan="5" class="text-muted">No data yet</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="panel h-100">
+        <div class="panel-header"><span class="panel-title">Per FEC, hybrid and chip</span>
+          <span class="panel-header-note">chip = FEC:VMM</span></div>
+        <div class="panel-body">
+          <div class="table-responsive" style="max-height:420px; overflow-y:auto;">
+            <table class="table table-dark table-sm align-middle mb-0">
+              <thead><tr><th>Where</th><th class="text-end">Rate</th>
+                <th class="text-end">Live ch.</th><th class="text-end">Hottest ch.</th></tr></thead>
+              <tbody id="live-elec"><tr><td colspan="4" class="text-muted">No data yet</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel mt-3">
+    <div class="panel-header"><span class="panel-title">Electronics: active channels</span>
+      <span class="panel-header-note">Every FEC · VMM that sends hits, mapped or not, channel by
+        channel (0-63, left to right). For finding which channel a cable lands on: plug it and
+        watch "last 5 s". With "from the network port" it updates every second.</span></div>
+    <div class="panel-body">
+      <div style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap; font-size:0.85rem;">
+        <label><input type="radio" name="el-span" value="recent" checked> last 5 s</label>
+        <label><input type="radio" name="el-span" value="window"> whole window</label>
+        <label><input type="checkbox" id="el-unmapped"> only chips not in the setup</label>
+        <span id="el-scale" class="text-muted"></span>
+      </div>
+      <div id="el-grid" class="mt-2" style="font-size:0.75rem;"><span class="text-muted">No data yet</span></div>
+    </div>
+  </div>
+
+  <div class="panel mt-3">
+    <div class="panel-header"><span class="panel-title">Rate plots</span>
+      <span class="panel-header-note" id="live-png-note">redrawn every
+        <span id="live-plot-every">–</span> s while the monitor runs</span></div>
+    <div class="panel-body" id="live-pngs">
+      <div class="text-muted">No plots yet</div>
+    </div>
+  </div>
+</div>
+
+<div class="tab-pane fade" id="setup">
+  <div class="panel mb-3">
+    <div class="panel-header">
+      <span class="panel-title">Setup</span>
+      <span class="panel-header-note">What the next run records, and the stand it is
+        recorded with: detectors, trigger, readout cabling (dated) and HV. Every run
+        configuration, the processor, the QA and the live monitor read the same setup file.</span>
+    </div>
+    <div class="panel-body">
+      <div id="su-head" style="font-size:0.85rem;">Loading…</div>
+      <button id="su-edit-btn" class="btn btn-info btn-sm mt-2">Change the stand…</button>
+      <span id="su-edit-why" class="text-muted ms-2" style="font-size:0.8rem;"></span>
+    </div>
+  </div>
+
+  <div class="panel mb-3">
+    <div class="panel-header"><span class="panel-title">Campaign: where the data go</span>
+      <span class="panel-header-note">The data directory and the EOS folder the runs are backed
+        up to. Changing them restarts every DAQ service together, so it is only allowed with no
+        run and no scan in progress.</span></div>
+    <div class="panel-body">
+      <div id="cp-now" style="font-size:0.85rem;">Loading…</div>
+      <button class="btn btn-outline-info btn-sm mt-2" id="cp-edit">Start a new campaign / change directories…</button>
+      <div id="cp-form" class="mt-2 d-none">
+        <table class="table table-dark table-sm align-middle mb-2" style="max-width:900px;"><tbody>
+          <tr><td style="width:12rem;">Campaign name</td><td><input id="cp-name" class="form-control form-control-sm" placeholder="e.g. fe55_3det_202611"></td></tr>
+          <tr><td>Data directory</td><td><input id="cp-data" class="form-control form-control-sm" placeholder="/local/p2/p2data/&lt;campaign&gt;/"></td></tr>
+          <tr><td>EOS backup folder</td><td><input id="cp-eos" class="form-control form-control-sm" placeholder="/eos/experiment/.../&lt;campaign&gt;/"></td></tr>
+        </tbody></table>
+        <button class="btn btn-info btn-sm" id="cp-check">Check</button>
+        <button class="btn btn-success btn-sm" id="cp-apply" disabled>Apply campaign</button>
+        <button class="btn btn-outline-secondary btn-sm" id="cp-cancel">Cancel</button>
+        <div id="cp-result" class="mt-2" style="font-size:0.85rem;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel mb-3">
+    <div class="panel-header"><span class="panel-title">Run: what the next Start Run records</span>
+      <span class="panel-header-note" id="su-run-summary"></span></div>
+    <div class="panel-body">
+      <div id="su-run"></div>
+      <button id="su-run-save" class="btn btn-info btn-sm">Save run settings</button>
+      <span id="su-run-msg" class="ms-2" style="font-size:0.85rem;"></span>
+      <div class="text-muted mt-2" style="font-size:0.8rem;">Calibration runs: not defined
+        yet (tell us what they need: pulser amplitudes, channels, test-pulse DAC steps…).</div>
+    </div>
+  </div>
+
+  <div class="panel mb-3">
+    <div class="panel-header"><span class="panel-title">Config scan</span>
+      <span class="panel-header-note">A sequence of runs, one per chip configuration: for
+        each config, apply → warm reset (all hybrids ready) → run → next. Driven by
+        config_scan.py, which refuses a config it cannot finish in time.</span></div>
+    <div class="panel-body">
+      <div class="row g-3">
+        <div class="col-lg-6">
+          <div style="font-size:0.85rem;" class="mb-1"><b>Available configs</b>
+            <span class="text-muted" id="cs-count"></span></div>
+          <input id="cs-filter" class="form-control form-control-sm mb-1" placeholder="filter, e.g. peaktime200 thr">
+          <div id="cs-avail" style="max-height:260px; overflow-y:auto; font-size:0.8rem;"></div>
+        </div>
+        <div class="col-lg-6">
+          <div style="font-size:0.85rem;" class="mb-1"><b>Scan, in this order</b>
+            <span class="text-muted">(click a config on the left to add it)</span></div>
+          <div id="cs-chosen" style="max-height:260px; overflow-y:auto; font-size:0.8rem;"></div>
+          <div class="mt-2" style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap; font-size:0.85rem;">
+            <span>minutes per config <input id="cs-min" type="number" min="2" max="600" class="form-control form-control-sm d-inline-block" style="width:5rem;"></span>
+            <span>finish by <input id="cs-until" type="time" class="form-control form-control-sm d-inline-block" style="width:7rem;"></span>
+          </div>
+          <div id="cs-plan" class="text-muted mt-1" style="font-size:0.8rem;"></div>
+        </div>
+      </div>
+      <div class="mt-2" style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+        <button class="btn btn-info btn-sm" id="cs-check">Check (dry run)</button>
+        <button class="btn btn-success btn-sm" id="cs-start" disabled>Start scan</button>
+        <button class="btn btn-outline-warning btn-sm" id="cs-stop-after">Stop after the current run</button>
+        <button class="btn btn-outline-danger btn-sm" id="cs-stop-now">Stop now</button>
+      </div>
+      <div id="cs-result" class="mt-2" style="font-size:0.85rem;"></div>
+      <div id="cs-progress" class="mt-3"></div>
+    </div>
+  </div>
+
+  <div class="panel mb-3 d-none" id="su-editor">
+    <div class="panel-header"><span class="panel-title">Change the stand</span>
+      <span class="panel-header-note">Saved as a new dated entry, in force from the moment
+        you save; earlier runs keep the stand of their time. Checked in full before it is
+        written, and committed to the setup file's history with your note.</span></div>
+    <div class="panel-body">
+      <div class="row g-3">
+        <div class="col-lg-6">
+          <div style="font-size:0.85rem;" class="mb-1"><b>Detectors under test</b>
+            <span class="text-muted">(station name, which chamber stands there, position)</span></div>
+          <table class="table table-dark table-sm align-middle mb-1">
+            <thead><tr><th>Station</th><th>Chamber</th><th>z (mm)</th><th></th></tr></thead>
+            <tbody id="ed-dets"></tbody></table>
+          <button class="btn btn-outline-info btn-sm" id="ed-add-det">+ detector</button>
+        </div>
+        <div class="col-lg-6">
+          <div style="font-size:0.85rem;" class="mb-1"><b>External trigger</b></div>
+          <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap; font-size:0.85rem;">
+            <label><input type="checkbox" id="ed-trig-on" class="form-check-input"> used</label>
+            <span>hybrid <input id="ed-trig-h" type="number" min="0" class="form-control form-control-sm d-inline-block" style="width:5rem;"></span>
+            <span>VMM <input id="ed-trig-v" type="number" min="0" max="31" class="form-control form-control-sm d-inline-block" style="width:5rem;"></span>
+            <span>channel <input id="ed-trig-c" type="number" min="0" max="63" class="form-control form-control-sm d-inline-block" style="width:5rem;"></span>
+          </div>
+          <div class="text-muted mt-1" style="font-size:0.75rem;">At the beam: H0, VMM 0, channel 44. Its VMM must not also be cabled to a detector.</div>
+        </div>
+      </div>
+      <div style="font-size:0.85rem;" class="mt-3 mb-1"><b>Readout cabling</b>
+        <span class="text-muted">: each detector connector has a bottom and a top half, read by
+        the bottom and top VMM of the hybrid its cable goes to</span></div>
+      <div id="ed-cabling"></div>
+      <div class="mt-3">
+        <label style="font-size:0.85rem;" for="ed-note"><b>What changed and why</b> (required; becomes the history entry)</label>
+        <textarea id="ed-note" class="form-control form-control-sm" rows="2"></textarea>
+      </div>
+      <div class="mt-2" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+        <button class="btn btn-info btn-sm" id="ed-preview">Check and preview</button>
+        <button class="btn btn-success btn-sm" id="ed-save" disabled>Save new stand</button>
+        <button class="btn btn-outline-secondary btn-sm" id="ed-cancel">Cancel</button>
+      </div>
+      <div id="ed-result" class="mt-2" style="font-size:0.85rem;"></div>
+    </div>
+  </div>
+  <div class="row g-3">
+    <div class="col-lg-5">
+      <div class="panel h-100">
+        <div class="panel-header"><span class="panel-title">Detectors</span></div>
+        <div class="panel-body"><div class="table-responsive">
+          <table class="table table-dark table-sm align-middle mb-0">
+            <thead><tr><th>Station</th><th>Chamber</th><th class="text-end">z (mm)</th></tr></thead>
+            <tbody id="su-dets"></tbody></table></div>
+          <div id="su-trigger" class="text-muted mt-2" style="font-size:0.8rem;"></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-7">
+      <div class="panel h-100">
+        <div class="panel-header"><span class="panel-title">HV</span>
+          <span class="panel-header-note" id="su-hv-note"></span></div>
+        <div class="panel-body"><div class="table-responsive">
+          <table class="table table-dark table-sm align-middle mb-0">
+            <thead><tr><th>Detector</th><th>Electrode</th><th class="text-end">Card</th>
+              <th class="text-end">Channel</th><th class="text-end">Operating (V)</th>
+              <th class="text-end">Ceiling (V)</th></tr></thead>
+            <tbody id="su-hv"></tbody></table></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel mt-3">
+    <div class="panel-header"><span class="panel-title">Readout cabling</span>
+      <span class="panel-header-note">Each entry applies from its date until the next; a run
+        uses the one in force when it starts, and old runs keep theirs.</span></div>
+    <div class="panel-body" id="su-cabling"></div>
+  </div>
+  <div class="panel mt-3">
+    <div class="panel-header"><span class="panel-title">Changes to the setup file</span></div>
+    <div class="panel-body" id="su-history" style="font-size:0.85rem;"></div>
+  </div>
+</div>
+
+<div class="tab-pane fade" id="settings">
+  <div class="panel mb-3">
+    <div class="panel-header">
+      <span class="panel-title">Settings</span>
+      <span class="panel-header-note">Change how data are processed and monitored without
+        editing code. What a run records (type, durations, voltage scans) and the stand
+        itself are in the Setup tab. The values in the code stay the defaults; every
+        change is validated, logged, and takes effect where shown.</span>
+    </div>
+    <div class="panel-body">
+      <div id="set-info" class="text-muted" style="font-size:0.85rem;">Loading…</div>
+      <div class="mt-2" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+        <span class="text-muted" style="font-size:0.85rem;">Apply saved settings now:</span>
+        <button class="btn btn-outline-info btn-sm" data-restart="processor">Restart Processor</button>
+        <button class="btn btn-outline-info btn-sm" data-restart="qa">Restart QA</button>
+        <button class="btn btn-outline-info btn-sm" data-restart="guardian">Restart Memory Guardian</button>
+        <span class="text-muted" style="font-size:0.8rem;">Live monitor: Stop and Start it
+          in the Live tab. Run settings: used by the next Start Run.</span>
+      </div>
+    </div>
+  </div>
+  <div id="set-groups"></div>
+  <div class="panel mt-3">
+    <div class="panel-header"><span class="panel-title">Recent changes</span></div>
+    <div class="panel-body">
+      <div class="table-responsive">
+        <table class="table table-dark table-sm align-middle mb-0">
+          <thead><tr><th>When</th><th>Who</th><th>Setting</th><th>From</th><th>To</th></tr></thead>
+          <tbody id="set-history"><tr><td colspan="5" class="text-muted">No changes yet</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# HV Control (lab sites): banco_hv's control page, proxied by /hvctl/. One
+   implementation for this tab and banco's own desktop (http://localhost:5010/).
+   The frame loads on first open, so a closed tab costs nothing. #}
+<div class="tab-pane fade" id="hv-control">
+  <iframe id="hv-control-frame" title="Lab HV Control" data-src="/hvctl/"
+          style="width:100%;height:calc(100vh - 110px);border:0;background:#0e1116;"></iframe>
+</div>
+<script>
+(function () {
+  const tab = document.querySelector('a[href="#hv-control"]');
+  const frame = document.getElementById("hv-control-frame");
+  if (tab && frame) tab.addEventListener("shown.bs.tab", () => {
+    if (!frame.getAttribute("src")) frame.setAttribute("src", frame.dataset.src);
+  });
+})();
+</script>
+
 <div class="tab-pane fade" id="disk-space">
   <div class="panel mb-3">
     <div class="panel-header">
@@ -884,10 +1223,47 @@ document.getElementById("restart-all").addEventListener("click", () => {
 // Local hv_monitor.csv first (bench sites); at sps the crate belongs to the
 // Dream DAQ, so fall back to the read-only /hv_data_dream proxy: matched run
 // when one exists (combined runs share names), else Dream's live current run.
+// Lab (non-beam) sites: the chambers run from USB supplies on banco, monitored
+// read-only by banco_hv/hv_serial_live.py. "Live" shows that monitor now,
+// whether or not a run is going; "Sub-run" shows what a sub-run recorded.
+const HV_LIVE_AVAILABLE = !SITE_BEAM;
+if (HV_LIVE_AVAILABLE) {
+    const c = document.getElementById("hv-live-controls");
+    c.classList.remove("d-none");
+    c.classList.add("d-flex");
+}
+function hvMode() {
+    return HV_LIVE_AVAILABLE ? document.getElementById("hv-source-select").value : "subrun";
+}
+
+async function fetchHVLive(note) {
+    const minutes = document.getElementById("hv-window-select").value;
+    try {
+        const res = await fetch(`/hv_data_live?minutes=${encodeURIComponent(minutes)}`);
+        const data = await res.json();
+        if (data && data.success) {
+            const p = data.power || {};
+            const on = Object.keys(p).filter(k => p[k]);
+            const errs = Object.entries(data.errors || {}).map(([k, v]) => `${k}: ${v}`);
+            note.textContent = `LIVE — banco HV monitor, newest reading ${data.latest || "STALE"}` +
+                ` · ON: ${on.length ? on.join(", ") : "none"}` +
+                (errs.length ? ` · READ ERROR ${errs.join("; ")}` : "");
+            return data;
+        }
+        note.textContent = `live HV unavailable: ${(data && data.message) || "?"}`;
+    } catch (e) {
+        note.textContent = `live HV unavailable: ${e}`;
+    }
+    return null;
+}
+
 async function fetchHVData() {
     const run = document.getElementById("run-select").value;
     const subrun = document.getElementById("hv-subrun-select").value;
     const note = document.getElementById("hv-note");
+    if (hvMode() === "live") {
+        return await fetchHVLive(note);
+    }
     try {
         const res = await fetch(`/hv_data?run=${encodeURIComponent(run)}&subrun=${encodeURIComponent(subrun)}`);
         const data = await res.json();
@@ -896,6 +1272,12 @@ async function fetchHVData() {
             return data;
         }
     } catch (e) { /* fall through to the Dream proxy */ }
+    if (HV_LIVE_AVAILABLE) {
+        // No Dream DAQ in the lab (its bridge URL is the CERN one): asking it
+        // would only time out every 5 s.
+        note.textContent = "this sub-run recorded no HV (hv_monitor.csv) — switch Show to Live";
+        return null;
+    }
     try {
         const res = await fetch(`/hv_data_dream?run=${encodeURIComponent(run)}&subrun=${encodeURIComponent(subrun)}`);
         const data = await res.json();
@@ -926,7 +1308,8 @@ function _hvLighten(hex, amt) {
     return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
 }
 function hvTraceColor(name) {
-    const [det, electrode] = name.split("_");
+    // Lab monitor labels carry a "P2_" prefix (P2_IN_Drift) -> key on IN/MID/OUT.
+    const [det, electrode] = name.replace(/^P2_/, "").split("_");
     const base = HV_DET_COLOR[det] || "#8b96a5";
     return (electrode || "").toLowerCase() === "drift" ? _hvLighten(base, 0.42) : base;
 }
@@ -960,7 +1343,9 @@ async function updateHVPlots() {
 
         // uirevision keyed to run/subrun: Plotly preserves zoom/pan/legend state across
         // auto-refreshes (key unchanged) but resets the view when the subrun changes (new key).
-        const uirev = `${run}/${subrun}`;
+        const uirev = hvMode() === "live"
+            ? `live/${document.getElementById("hv-window-select").value}`
+            : `${run}/${subrun}`;
 
         // Dark styling done explicitly — plotly.js does not resolve the
         // 'plotly_dark' template name (that only works from Python).
@@ -1146,6 +1531,8 @@ document.getElementById("hv-subrun-select").addEventListener("change", () => {
     updateHVPlots();
     updateLVPlots();
 });
+document.getElementById("hv-source-select").addEventListener("change", updateHVPlots);
+document.getElementById("hv-window-select").addEventListener("change", updateHVPlots);
 
 // initial load
 loadRuns();
@@ -3255,6 +3642,925 @@ setInterval(() => { if (spsTabActive()) spsRenderTax(); }, 60000);
   const dsTab = document.querySelector('a[href="#disk-space"]');
   if (dsTab) dsTab.addEventListener("shown.bs.tab", loadUsage);
   setMode("free");
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Live tab: reads /live/status (the p2-monitor live process's JSON); polls only
+// while the tab is shown.
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const pane = $("live");
+  let running = null;
+
+  function si(v, unit) {
+    if (v === null || v === undefined || isNaN(v)) return "–";
+    const steps = [[1e9, "G"], [1e6, "M"], [1e3, "k"], [1, ""]];
+    for (const [f, p] of steps) if (Math.abs(v) >= f) return (v / f).toPrecision(3) + " " + p + unit;
+    return v === 0 ? "0 " + unit : v.toPrecision(3) + " " + unit;
+  }
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+  function ageBadge(age) {
+    if (age === null || age === undefined) return '<span class="badge bg-secondary">no data</span>';
+    const cls = age < 15 ? "bg-success" : age < 60 ? "bg-warning text-dark" : "bg-danger";
+    const txt = age < 120 ? age.toFixed(0) + " s" : age < 7200 ? (age / 60).toFixed(0) + " min"
+              : (age / 3600).toFixed(1) + " h";
+    return `<span class="badge ${cls}">newest data ${txt} ago</span>`;
+  }
+
+  function rows(obj, areal) {
+    return Object.entries(obj || {}).map(([k, v]) => `<tr><td>${esc(k)}</td>
+      <td class="text-end">${si(v.rate_hz, "Hz")}</td>
+      ${areal ? `<td class="text-end">${v.rate_hz_per_cm2 !== undefined ? v.rate_hz_per_cm2.toPrecision(3) : "–"}</td>` : ""}
+      <td class="text-end">${v.live_channels}/${v.channels}</td>
+      <td class="text-end">${si(v.max_channel_rate_hz, "Hz")}</td></tr>`).join("");
+  }
+  // Why there is no fresh data: a run that is still starting (the FEC sends
+  // nothing until ~40 s after Start: HV/LV handshake, then acquisition on; and
+  // nothing between sub-runs), or no run at all.
+  function runNote(d, s) {
+    if (!d.running) return "";
+    const fresh = s && s.rates && s.data_age_s !== null && s.data_age_s < 15;
+    if (fresh) return "";
+    if (d.run_active)
+      return `Run in progress (${d.run_state}), no data yet: the FEC starts sending ` +
+             "about 40 s after Start Run (HV/LV handshake, then acquisition on), " +
+             "and pauses between sub-runs.";
+    return s && s.rates
+      ? "No run in progress: the numbers below are from the last data received."
+      : "No run in progress: waiting for a run to start.";
+  }
+
+  function group(title, cols) {
+    return `<tr><td colspan="${cols}" class="text-muted" style="font-size:0.75rem; padding-top:0.6rem;">${title}</td></tr>`;
+  }
+
+  function render(d) {
+    running = d.running;
+    const btn = $("live-toggle");
+    btn.textContent = running ? "Stop Live" : "Start Live";
+    btn.className = running ? "btn btn-outline-secondary btn-sm" : "btn btn-info btn-sm";
+    btn.disabled = !d.available && !running;
+    $("live-state").className = "badge " + (running ? "bg-success" : "bg-secondary");
+    $("live-state").textContent = running ? "running" : (d.available ? "stopped" : "p2 venv missing");
+    $("live-window").textContent = d.options ? d.options.window : "–";
+    $("live-plot-every").textContent = d.options ? d.options.plot_every : "–";
+    const sel = $("live-source");
+    if (!sel.dataset.init) {                     // offer only what this site has
+      [...sel.options].forEach(o => { o.disabled = !(d.sources || ["file"]).includes(o.value); });
+      if (d.udp_address) sel.options[1].textContent = `from the network port (${d.udp_address})`;
+      sel.value = d.default_source || "file";
+      sel.dataset.init = "1";
+    }
+    sel.disabled = !!running;
+
+    const s = d.status;
+    if (!s) {
+      $("live-following").textContent = "";
+      $("live-figures").innerHTML = "";
+      $("live-note").textContent = running ? (runNote(d, null) || "Waiting for the first poll…") : "";
+      return;
+    }
+    const isUdp = (s.source || "").startsWith("udp");
+    if (isUdp) $("live-source").value = "udp";
+    $("live-following").innerHTML = isUdp
+      ? `network ${esc(s.source.replace("udp://", ""))} · setup ${esc(s.setup || d.setup || "–")}`
+      : s.capture
+      ? `${esc(s.run || "")} / ${esc(s.subrun || "")} / ${esc(s.capture)} · setup ${esc(s.setup || d.setup || "–")}`
+      : `waiting for captures in ${esc(s.raw_dir)}`;
+    const v = s.volume || {}, sm = s.sampling || {};
+    const frac = sm.window_fraction !== undefined ? sm.window_fraction : sm.fraction_read;
+    const figs = [
+      ageBadge(s.data_age_s),
+      `<span><b>${si(v.hits_per_s, "hits/s")}</b></span>`,
+      `<span><b>${v.mb_per_min_udp !== undefined ? v.mb_per_min_udp.toPrecision(3) : "–"}</b> MB/min</span>`,
+      `<span>${(s.hits_total || 0).toLocaleString()} hits since start</span>`,
+      frac !== null && frac !== undefined && frac < 1
+        ? `<span class="badge bg-warning text-dark" title="Rates are scaled to the full stream">sampling: ${(100 * frac).toFixed(frac < 0.1 ? 1 : 0)} % of packets decoded</span>` : "",
+      sm.memory_events ? `<span class="badge bg-danger">memory limit hit ${sm.memory_events}×</span>` : "",
+    ];
+    $("live-figures").innerHTML = figs.filter(Boolean).join("");
+    $("live-note").textContent = (d.file_age_s !== null && running && d.file_age_s > 30)
+      ? `The monitor has not written for ${d.file_age_s} s.` : runNote(d, s);
+
+    const r = s.rates || {};
+    $("live-phys").innerHTML = r.per_detector
+      ? group("detectors", 5) + rows(r.per_detector, true) + group("connectors", 5) + rows(r.per_connector, true)
+      : `<tr><td colspan="5" class="text-muted">No mapping (setup) or no data</td></tr>`;
+    $("live-elec").innerHTML = r.per_fec
+      ? group("FECs", 4) + rows(r.per_fec, false)
+        + (r.per_hybrid ? group("hybrids", 4) + rows(r.per_hybrid, false) : "")
+        + group("chips (FEC:VMM)", 4) + rows(r.per_chip, false)
+      : `<tr><td colspan="4" class="text-muted">No data yet</td></tr>`;
+
+    lastStatus = s;
+    renderElectronics();
+    const names = Object.keys(d.pngs || {});
+    $("live-pngs").innerHTML = names.length
+      ? names.map(n => `<img src="/live/png/${n}?t=${d.pngs[n]}" class="img-fluid mb-3" alt="${n}"
+                          style="background:#fcfcfb; border-radius:6px; display:block;">`).join("")
+      : '<div class="text-muted">No plots yet</div>';
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch("/live/status");
+      render(await res.json());
+    } catch (e) { /* server busy: next poll */ }
+  }
+
+  $("live-toggle").addEventListener("click", async () => {
+    if (running) {
+      if (!confirm("Stop the live monitor?")) return;
+      const d = await (await fetch("/live/stop", { method: "POST" })).json();
+      showPopup(d.message, "#6c757d");
+    } else {
+      const d = await (await fetch("/live/start", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: $("live-source").value }) })).json();
+      showPopup(d.message, d.success ? "#17a2b8" : "#dc3545");
+    }
+    setTimeout(poll, 800);
+  });
+
+  const tab = document.querySelector('a[href="#live"]');
+  if (tab) tab.addEventListener("shown.bs.tab", poll);
+  // every 2 s while the tab is shown: the network source updates every second
+  setInterval(() => { if (pane.classList.contains("active")) poll(); }, 2000);
+
+  // ---- electronics view: one row per FEC·VMM, 64 channel cells -------------
+  var lastStatus = null;           // var: set by render() above, hoisted
+  const BLUES = ["#1b2a3f", "#1f4f8a", "#2a78d6", "#5aa2ef", "#9ccaf8", "#e8f3ff"];
+  function cellColour(v, lo, hi) {
+    if (!v) return "transparent";
+    const f = hi > lo ? (Math.log10(v) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)) : 1;
+    return BLUES[Math.max(0, Math.min(BLUES.length - 1, Math.round(f * (BLUES.length - 1))))];
+  }
+  function fmtHz(v) {
+    return v >= 1e6 ? (v / 1e6).toPrecision(3) + " MHz" : v >= 1e3 ? (v / 1e3).toPrecision(3) + " kHz"
+         : v >= 1 ? v.toPrecision(3) + " Hz" : v ? (v * 1e3).toPrecision(3) + " mHz" : "0";
+  }
+  function renderElectronics() {
+    const e = lastStatus && lastStatus.electronics;
+    if (!e || !Object.keys(e.chips).length) {
+      $("el-grid").innerHTML = '<span class="text-muted">No hits in the window yet</span>';
+      $("el-scale").textContent = "";
+      return;
+    }
+    const span = document.querySelector('input[name="el-span"]:checked').value;
+    const key = span === "recent" ? "recent_hz" : "window_hz";
+    let chips = Object.entries(e.chips);
+    if ($("el-unmapped").checked) chips = chips.filter(([, c]) => !c.where);
+    // unmapped chips first (what you are looking for when plugging cables), then by FEC, VMM
+    chips.sort(([a, ca], [b, cb]) => (!!ca.where - !!cb.where) ||
+      a.split(":").map(Number)[0] - b.split(":").map(Number)[0] || a.split(":").map(Number)[1] - b.split(":").map(Number)[1]);
+    const vals = chips.flatMap(([, c]) => (c[key] || []).filter(v => v > 0));
+    const lo = vals.length ? Math.min(...vals) : 1, hi = vals.length ? Math.max(...vals) : 1;
+    $("el-scale").textContent = `over the last ${(span === "recent" ? e.recent_s : e.window_s).toFixed(1)} s of data · ` +
+      `colour: ${fmtHz(lo)} (dark) to ${fmtHz(hi)} (light), log scale`;
+    $("el-grid").innerHTML = chips.length ? chips.map(([id, c]) => {
+      const [fec, vmm] = id.split(":");
+      const r = c[key] || [];
+      const active = r.map((v, ch) => [v, ch]).filter(([v]) => v > 0);
+      const top = active.sort((a, b) => b[0] - a[0]).slice(0, 4).map(([v, ch]) => `ch ${ch} ${fmtHz(v)}`).join(", ");
+      const cells = r.map((v, ch) => `<span title="FEC ${fec} VMM ${vmm} ch ${ch}: ${fmtHz(v)}"
+          style="display:inline-block; width:10px; height:14px; margin-right:1px; border-radius:2px;
+                 background:${cellColour(v, lo, hi)}; outline:1px solid rgba(255,255,255,0.08);"></span>`).join("");
+      return `<div style="display:flex; align-items:center; gap:0.6rem; margin-bottom:3px; flex-wrap:wrap;">
+          <span style="width:9.5rem; flex:none;"><b>FEC ${fec} · VMM ${vmm}</b><br>${c.where
+            ? `<span class="text-muted">${esc(c.where)}</span>` : '<span class="badge bg-warning text-dark">not in setup</span>'}</span>
+          <span style="white-space:nowrap;">${cells}</span>
+          <span class="text-muted">${active.length}/64 active${top ? " · " + top : ""}</span></div>`;
+    }).join("") : '<span class="text-muted">No chip outside the setup sends hits</span>';
+  }
+  document.querySelectorAll('input[name="el-span"]').forEach(r => r.addEventListener("change", renderElectronics));
+  $("el-unmapped").addEventListener("change", renderElectronics);
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Settings tab: /settings (gui_settings.py). Each group saves only the fields
+// that were edited; the server validates everything and writes nothing on error.
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const fmt = v => v === null || v === undefined ? "–" : (typeof v === "boolean" ? (v ? "yes" : "no") : String(v));
+  let data = null;
+
+  function input(s) {
+    const id = `set-${s.key}`;
+    if (s.type === "choice")
+      return `<select id="${id}" class="form-select form-select-sm" style="width:auto;">` +
+        s.choices.map(c => `<option value="${esc(c)}"${c === s.value ? " selected" : ""}>${esc(c)}</option>`).join("") +
+        `</select>`;
+    if (s.type === "bool")
+      return `<input id="${id}" type="checkbox" class="form-check-input"${s.value ? " checked" : ""}>`;
+    if (s.type === "hostport")
+      return `<input id="${id}" type="text" class="form-control form-control-sm" style="width:12rem;" value="${esc(s.value || "")}">`;
+    const step = s.type === "float" ? "any" : "1";
+    return `<input id="${id}" type="number" class="form-control form-control-sm" style="width:8rem;"
+              min="${s.min}" max="${s.max}" step="${step}" value="${esc(s.value)}">`;
+  }
+
+  function read(s) {
+    const el = $(`set-${s.key}`);
+    if (s.type === "bool") return el.checked;
+    if (s.type === "int" || s.type === "float") return el.value === "" ? "" : Number(el.value);
+    return el.value;
+  }
+
+  function render(d) {
+    data = d;
+    const r = d.running || {};
+    $("set-info").innerHTML =
+      `site <b>${esc(d.site)}</b> · next run <b>run_${d.next_run ?? "?"}</b> · ` +
+      `run state <b>${esc(d.run_state || "–")}</b> · chip config applied ` +
+      `<b>${esc(d.chip_config_applied || "–")}</b> · running: ` +
+      ["vmm_processor", "vmm_qa_watcher", "vmm_live", "vmm_mem_guardian"]
+        .map(n => `${n.replace("vmm_", "")} ${r[n] ? "✓" : "✗"}`).join(", ") +
+      (d.hv_targets ? "" : " · HV is held on banco (HV-scan plans unavailable)");
+    // the run settings live in the Setup tab (what is recorded, with the stand)
+    $("set-groups").innerHTML = Object.entries(d.groups).filter(([g]) => g !== "run" && g !== "campaign").map(([g, title]) => {
+      const rows = d.settings.filter(s => s.group === g).map(s => `<tr>
+          <td style="min-width:16rem;">${esc(s.label)}
+            ${s.help ? `<div class="text-muted" style="font-size:0.75rem;">${esc(s.help)}</div>` : ""}</td>
+          <td>${input(s)}</td>
+          <td class="text-muted" style="font-size:0.8rem;">default ${esc(fmt(s.default))}
+            ${s.changed ? `<br><span class="badge bg-info text-dark">changed</span>
+              <a href="#" class="ms-1" data-reset="${s.key}" style="font-size:0.75rem;">back to default</a>` : ""}</td>
+          <td class="text-muted" style="font-size:0.75rem;">${esc(s.applies)}</td></tr>`).join("");
+      return `<div class="panel mb-3"><div class="panel-header"><span class="panel-title">${esc(title)}</span></div>
+        <div class="panel-body"><div class="table-responsive">
+          <table class="table table-dark table-sm align-middle mb-2">
+            <thead><tr><th>Setting</th><th>Value</th><th></th><th>Takes effect at</th></tr></thead>
+            <tbody>${rows}</tbody></table></div>
+          <button class="btn btn-info btn-sm" data-save="${g}">Save ${esc(title.toLowerCase())}</button>
+          <span id="set-msg-${g}" class="ms-2" style="font-size:0.85rem;"></span></div></div>`;
+    }).join("");
+    $("set-history").innerHTML = d.history.length
+      ? d.history.map(h => `<tr><td>${esc(h.time)}</td><td>${esc(h.who)}</td>
+          <td>${esc((d.settings.find(s => s.key === h.key) || {}).label || h.key)}</td>
+          <td>${esc(fmt(h.old))}</td><td>${esc(h.new === null ? "default" : fmt(h.new))}</td></tr>`).join("")
+      : '<tr><td colspan="5" class="text-muted">No changes yet</td></tr>';
+  }
+
+  async function load() {
+    try { render(await (await fetch("/settings")).json()); }
+    catch (e) { $("set-info").textContent = "Could not load the settings: " + e; }
+  }
+
+  async function post(changes, msgEl) {
+    const res = await fetch("/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+                                           body: JSON.stringify({ changes }) });
+    const d = await res.json();
+    if (d.success) {
+      showPopup(d.message, "#17a2b8");
+      await load();
+    } else if (msgEl) {
+      msgEl.className = "ms-2 text-danger";
+      msgEl.textContent = (d.errors || [d.message]).join(" ");
+    } else {
+      showPopup((d.errors || [d.message]).join(" "), "#dc3545");
+    }
+  }
+
+  $("set-groups").addEventListener("click", async ev => {
+    const save = ev.target.closest("[data-save]");
+    const reset = ev.target.closest("[data-reset]");
+    if (save) {
+      const g = save.dataset.save, changes = {};
+      data.settings.filter(s => s.group === g).forEach(s => {
+        const v = read(s);
+        if (String(v) !== String(s.value)) changes[s.key] = v;
+      });
+      const msg = $(`set-msg-${g}`);
+      if (!Object.keys(changes).length) { msg.className = "ms-2 text-muted"; msg.textContent = "Nothing changed."; return; }
+      const label = k => data.settings.find(s => s.key === k);
+      const list = Object.entries(changes).map(([k, v]) =>
+        `  ${label(k).label}: ${fmt(label(k).value)} → ${fmt(v)}`).join("\n");
+      if (!confirm(`Save these settings?\n\n${list}`)) return;
+      await post(changes, msg);
+    } else if (reset) {
+      ev.preventDefault();
+      const s = data.settings.find(x => x.key === reset.dataset.reset);
+      if (!confirm(`Set "${s.label}" back to its default (${fmt(s.default)})?`)) return;
+      await post({ [s.key]: null }, null);
+    }
+  });
+
+  document.querySelectorAll("[data-restart]").forEach(b => b.addEventListener("click", async () => {
+    const what = b.textContent.replace("Restart ", "");
+    if (!confirm(`Restart the ${what} now? A job it is running is stopped and re-queued.`)) return;
+    const d = await (await fetch(`/settings/restart/${b.dataset.restart}`, { method: "POST" })).json();
+    showPopup(d.message, d.success ? "#17a2b8" : "#dc3545");
+    setTimeout(load, 1500);
+  }));
+
+  const tab = document.querySelector('a[href="#settings"]');
+  if (tab) tab.addEventListener("shown.bs.tab", load);
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Setup tab (read-only): /setup, the site's setup file.
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "–").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+  function cablingTable(rows) {
+    return `<div class="table-responsive"><table class="table table-dark table-sm align-middle mb-2">
+      <thead><tr><th>Detector</th><th>Connector</th><th>Hybrid</th><th>FEC</th>
+        <th>Bottom VMM</th><th>Top VMM</th><th>Cable</th><th>Strip order</th></tr></thead><tbody>` +
+      rows.map(r => `<tr><td>${esc(r.detector)}</td><td>c${esc(r.connector)}</td>
+        <td>H${esc(r.hybrid)}</td><td>${r.fec ?? "any"}</td><td>${esc(r.bottom_vmm)}</td>
+        <td>${esc(r.top_vmm)}</td><td>${esc(r.cable)}</td>
+        <td class="text-muted" style="font-size:0.8rem;">${r.bottom_order || r.top_order
+          ? `bottom ${esc(r.bottom_order || "reverse")}, top ${esc(r.top_order || "reverse")}` : "reverse"}</td></tr>`).join("") +
+      `</tbody></table></div>`;
+  }
+
+  function render(d) {
+    if (d.error) { $("su-head").innerHTML = `<span class="text-danger">Cannot read the setup: ${esc(d.error)}</span>`; return; }
+    const users = Object.entries(d.used_by);
+    const same = users.every(([, v]) => v === users[0][1]);
+    $("su-head").innerHTML =
+      `<b>${esc(d.name)}</b> (site ${esc(d.site)}): ${esc(d.description)}<br>
+       file <code>${esc(d.path)}</code> · sha256 ${esc((d.sha256 || "").slice(0, 12))}
+       ${d.editable_copy ? "" : `<br><span class="text-warning">This is the copy shipped with p2-mapping;
+         this machine has no own copy in ${esc(d.setups_dir)}.</span>`}
+       <br>${same ? `<span class="text-success">✓ run configuration, processor, QA and live monitor all use this file</span>`
+                  : `<span class="text-danger">Components read different setups: ` +
+                    users.map(([k, v]) => `${esc(k)}: ${esc(v)}`).join("; ") + `</span>`}`;
+    $("su-dets").innerHTML = d.detectors.map(x => `<tr><td>${esc(x.name)}</td>
+      <td>${esc(x.alias)}</td><td class="text-end">${esc(x.z_mm)}</td></tr>`).join("");
+    $("su-trigger").textContent = d.trigger
+      ? `Trigger: hybrid ${d.trigger.hybrid}, VMM ${d.trigger.vmm}, channel ${d.trigger.ch}`
+      : "No trigger channel (self-triggered).";
+    const hv = d.hv;
+    $("su-hv-note").textContent = !hv ? "not described in the setup file"
+      : hv.set_here ? "set by this DAQ (targets sent with every sub-run)"
+      : `not set by this DAQ: ${hv.note || ""}`;
+    $("su-hv").innerHTML = hv && hv.rows.length
+      ? hv.rows.map(r => `<tr><td>${esc(r.name)}${r.reference ? ' <span class="badge bg-secondary">reference</span>' : ""}</td>
+          <td>${esc(r.electrode)}</td><td class="text-end">${esc(r.card)}</td><td class="text-end">${esc(r.channel)}</td>
+          <td class="text-end">${esc(r.operating)}</td><td class="text-end">${esc(r.ceiling)}</td></tr>`).join("")
+      : `<tr><td colspan="6" class="text-muted">No channel map${hv && hv.ceilings
+          ? ` (ceilings: ${Object.entries(hv.ceilings).map(([k, v]) => `${k} ${v} V`).join(", ")})` : ""}</td></tr>`;
+    $("su-cabling").innerHTML = d.cabling.slice().reverse().map(e => `
+      <div class="mb-3">
+        <div style="font-size:0.9rem;"><b>from ${esc(e.valid_from)}</b>
+          ${e.current ? '<span class="badge bg-success ms-1">in force now</span>' : ""}
+          <span class="text-muted ms-2">${esc(e.note)}</span></div>
+        ${e.changes.length ? `<div class="text-info" style="font-size:0.8rem;">changed from the previous entry: ${e.changes.map(esc).join("; ")}</div>` : ""}
+        ${e.current ? cablingTable(e.rows)
+          : `<details><summary class="text-muted" style="font-size:0.8rem;">show ${e.rows.length} rows</summary>${cablingTable(e.rows)}</details>`}
+      </div>`).join("");
+    $("su-history").innerHTML = d.history.length
+      ? d.history.map(h => `<div><code>${esc(h.commit)}</code> ${esc(h.date)} · ${esc(h.author)} · ${esc(h.message)}</div>`).join("")
+      : '<span class="text-muted">No change history (the file is not in a git repository on this machine).</span>';
+  }
+
+  async function load() {
+    try { render(await (await fetch("/setup")).json()); }
+    catch (e) { $("su-head").textContent = "Could not load the setup: " + e; }
+  }
+  const tab = document.querySelector('a[href="#setup"]');
+  if (tab) tab.addEventListener("shown.bs.tab", load);
+  window.setupTabReload = load;
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Setup tab: the Run section (/settings, group 'run') and the stand editor
+// (/setup/entry: preview, then save as a new dated entry).
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const fmt = v => v === null || v === undefined ? "–" : Array.isArray(v) ? v.join(", ") : String(v);
+
+  // ---------------- Run section ----------------
+  let runS = null, stations = [], draft = {};
+  const val = k => (k in draft ? draft[k] : runS.find(s => s.key === k).value);
+
+  function runField(s) {
+    const id = `run-${s.key}`, v = val(s.key);
+    let input;
+    if (s.type === "choice")
+      input = `<select id="${id}" data-k="${s.key}" class="form-select form-select-sm" style="width:auto;">` +
+        s.choices.map(c => `<option${c === v ? " selected" : ""}>${esc(c)}</option>`).join("") + `</select>`;
+    else if (s.type === "list")
+      input = stations.map(st => `<label class="me-3"><input type="checkbox" class="form-check-input"
+                 data-k="${s.key}" data-item="${esc(st)}"${(v || []).includes(st) ? " checked" : ""}> ${esc(st)}</label>`).join("");
+    else if (s.type === "intlist")
+      input = `<input id="${id}" data-k="${s.key}" type="text" class="form-control form-control-sm"
+                 style="width:16rem;" placeholder="e.g. 450, 440, 420, 400" value="${esc((v || []).join(", "))}">`;
+    else
+      input = `<input id="${id}" data-k="${s.key}" type="number" class="form-control form-control-sm"
+                 style="width:8rem;" min="${s.min}" max="${s.max}" step="${s.type === "float" ? "any" : 1}" value="${esc(v)}">`;
+    return `<tr><td style="min-width:15rem;">${esc(s.label)}${s.help ? `<div class="text-muted" style="font-size:0.75rem;">${esc(s.help)}</div>` : ""}</td>
+      <td>${input}</td><td class="text-muted" style="font-size:0.8rem;">default ${esc(fmt(s.default))}
+      ${s.changed || s.key in draft ? '<span class="badge bg-info text-dark ms-1">changed</span>' : ""}</td></tr>`;
+  }
+
+  function summary() {
+    const p = val("run_plan"), cap = val("capture_duration_s");
+    const t = m => m >= 60 ? `${(m / 60).toFixed(m % 60 ? 1 : 0)} h` : `${m} min`;
+    let s = "";
+    if (p === "lab_source") s = `${val("lab_n_subruns")} × ${val("lab_subrun_min")} min of ${val("lab_measurement")} = ${t(val("lab_n_subruns") * val("lab_subrun_min"))}`;
+    else if (p === "config_scan") s = `one run of ${val("config_scan_subrun_min")} min at the applied chip config`;
+    else if (p === "trigger_test") s = `${val("trigger_test_min")} min`;
+    else if (p === "operating_long") s = `${val("operating_long_n_subruns")} × ${val("operating_long_subrun_min")} min = ${t(val("operating_long_n_subruns") * val("operating_long_subrun_min"))}`;
+    else if (p === "hv_scan") {
+      const list = val("hv_scan_voltages");
+      const pts = Array.isArray(list) && list.length ? list
+        : Array.from({length: Math.min(val("hv_scan_points"), 50)}, (_, i) => val("hv_scan_start_v") + i * val("hv_scan_step_v"));
+      const n = pts.length;
+      s = `${n} points × ${val("hv_scan_min_per_point")} min = ${t(n * val("hv_scan_min_per_point"))}; ` +
+          `${val("hv_scan_mode") === "drift" ? "drift" : "mesh"}: ${pts.join(", ")} V on ${fmt(val("hv_scan_detectors"))}`;
+    } else s = `${val("scan_subrun_min")} min per point (points fixed in the code)`;
+    // Lab: what each sub-run will be set to (hv_scan: the stations it does not step)
+    if (!SITE_BEAM && runS.some(x => x.key === "hv_P2_IN_mesh")) {
+      const hv = ["P2_IN", "P2_MID", "P2_OUT"].map(d => `${d} ${val(`hv_${d}_mesh`)}/${val(`hv_${d}_drift`)}`).join(", ");
+      s += ` · HV set on banco before each sub-run (mesh/drift V): ${hv}`;
+    }
+    return `${s} · one capture file every ${cap} s`;
+  }
+
+  function renderRun() {
+    const plan = val("run_plan");
+    const shown = runS.filter(s => (!s.plans || s.plans.includes(plan)) && !(s.lab_only && SITE_BEAM));
+    $("su-run").innerHTML = `<div class="table-responsive"><table class="table table-dark table-sm align-middle mb-2">
+      <tbody>${shown.map(runField).join("")}</tbody></table></div>`;
+    $("su-run-summary").textContent = summary();
+  }
+
+  $("su-run").addEventListener("change", ev => {
+    const el = ev.target, k = el.dataset.k;
+    if (!k) return;
+    const s = runS.find(x => x.key === k);
+    if (s.type === "list")
+      draft[k] = [...document.querySelectorAll(`[data-k="${k}"]`)].filter(c => c.checked).map(c => c.dataset.item);
+    else if (s.type === "intlist") {
+      const t = el.value.trim();
+      // empty = back to the start/step/points rule (the server resets the key)
+      draft[k] = t === "" ? "" : t.split(",").map(x => x.trim()).filter(x => x !== "").map(Number);
+      if (t === "" && !(s.value || []).length) { delete draft[k]; renderRun(); return; }
+    } else if (s.type === "int" || s.type === "float") draft[k] = el.value === "" ? "" : Number(el.value);
+    else draft[k] = el.value;
+    if (JSON.stringify(draft[k]) === JSON.stringify(s.value)) delete draft[k];
+    renderRun();
+  });
+
+  $("su-run-save").addEventListener("click", async () => {
+    const msg = $("su-run-msg");
+    if (!Object.keys(draft).length) { msg.className = "ms-2 text-muted"; msg.textContent = "Nothing changed."; return; }
+    const list = Object.entries(draft).map(([k, v]) =>
+      `  ${runS.find(s => s.key === k).label}: ${fmt(runS.find(s => s.key === k).value)} → ${fmt(v)}`).join("\n");
+    if (!confirm(`Save these run settings (used by the next Start Run)?\n\n${list}\n\n${summary()}`)) return;
+    const d = await (await fetch("/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                body: JSON.stringify({ changes: draft }) })).json();
+    if (d.success) { showPopup(d.message, "#17a2b8"); msg.textContent = ""; draft = {}; await loadRun(); }
+    else { msg.className = "ms-2 text-danger"; msg.textContent = (d.errors || [d.message]).join(" "); }
+  });
+
+  async function loadRun() {
+    const d = await (await fetch("/settings")).json();
+    runS = d.settings.filter(s => s.group === "run");
+    stations = d.stations || [];
+    renderRun();
+  }
+
+  // ---------------- stand editor ----------------
+  let setupData = null, ed = null, previewed = false;
+
+  function edRender() {
+    $("ed-dets").innerHTML = ed.dets.map((x, i) => `<tr>
+      <td><input data-d="${i}" data-f="name" class="form-control form-control-sm" value="${esc(x.name)}"></td>
+      <td><input data-d="${i}" data-f="alias" class="form-control form-control-sm" value="${esc(x.alias)}" placeholder="e.g. det3"></td>
+      <td><input data-d="${i}" data-f="z_mm" type="number" step="any" class="form-control form-control-sm" style="width:7rem;" value="${esc(x.z_mm)}"></td>
+      <td><button class="btn btn-outline-danger btn-sm" data-deldet="${i}" title="remove this detector and its connectors">×</button></td></tr>`).join("");
+    const t = ed.trig;
+    $("ed-trig-on").checked = !!t.on;
+    ["h", "v", "c"].forEach(k => { $(`ed-trig-${k}`).value = t[k] ?? ""; $(`ed-trig-${k}`).disabled = !t.on; });
+    const nconn = setupData.n_connectors || 8;
+    const order = (i, half) => `<select data-c="${i}" data-f="${half}_order" class="form-select form-select-sm" style="width:auto;">` +
+      ["reverse", "linear"].map(o => `<option${(ed.conns[i][half + "_order"] || "reverse") === o ? " selected" : ""}>${o}</option>`).join("") + `</select>`;
+    $("ed-cabling").innerHTML = ed.dets.map(det => {
+      const idx = ed.conns.map((c, i) => [c, i]).filter(([c]) => c.detector === det.name)
+                    .sort((a, b) => a[0].connector - b[0].connector);
+      const rows = idx.map(([c, i]) => `
+        <tr><td rowspan="2"><select data-c="${i}" data-f="connector" class="form-select form-select-sm" style="width:auto;">` +
+          Array.from({length: nconn}, (_, k) => k + 1).map(n => `<option value="${n}"${n === Number(c.connector) ? " selected" : ""}>c${n}</option>`).join("") +
+          `</select></td>
+          <td rowspan="2">H <input data-c="${i}" data-f="hybrid" type="number" min="0" class="form-control form-control-sm d-inline-block" style="width:4.5rem;" value="${esc(c.hybrid)}"></td>
+          <td rowspan="2"><input data-c="${i}" data-f="fec" class="form-control form-control-sm" style="width:4.5rem;" value="${esc(c.fec ?? "")}" placeholder="any"></td>
+          <td rowspan="2"><input data-c="${i}" data-f="cable" class="form-control form-control-sm" style="width:9rem;" value="${esc(c.cable)}"></td>
+          <td>c${esc(c.connector)}_bottom</td>
+          <td>VMM <input data-c="${i}" data-f="bottom_vmm" type="number" min="0" max="31" class="form-control form-control-sm d-inline-block" style="width:4.5rem;" value="${esc(c.bottom_vmm)}"></td>
+          <td>${order(i, "bottom")}</td>
+          <td rowspan="2"><button class="btn btn-outline-danger btn-sm" data-delconn="${i}">×</button></td></tr>
+        <tr><td>c${esc(c.connector)}_top</td>
+          <td>VMM <input data-c="${i}" data-f="top_vmm" type="number" min="0" max="31" class="form-control form-control-sm d-inline-block" style="width:4.5rem;" value="${esc(c.top_vmm)}"></td>
+          <td>${order(i, "top")}</td></tr>`).join("");
+      return `<div class="mb-2"><div style="font-size:0.85rem;"><b>${esc(det.name)}</b>
+          <span class="text-muted">${det.alias ? "chamber " + esc(det.alias) : ""}</span></div>
+        <div class="table-responsive"><table class="table table-dark table-sm align-middle mb-1">
+          <thead><tr><th>Connector</th><th>Hybrid</th><th>FEC</th><th>Cable</th><th>Half</th><th>VMM ID</th><th>Strip order</th><th></th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="8" class="text-muted">no connector cabled</td></tr>'}</tbody></table></div>
+        <button class="btn btn-outline-info btn-sm" data-addconn="${esc(det.name)}">+ connector on ${esc(det.name)}</button></div>`;
+    }).join("");
+  }
+
+  function edChanged() {
+    previewed = false;
+    $("ed-save").disabled = true;
+    $("ed-result").innerHTML = "";
+  }
+
+  $("su-editor").addEventListener("input", ev => {
+    const el = ev.target;
+    if (el.dataset.d !== undefined) {
+      const x = ed.dets[Number(el.dataset.d)], f = el.dataset.f, old = x.name;
+      x[f] = el.value;
+      if (f === "name") ed.conns.forEach(c => { if (c.detector === old) c.detector = el.value; });
+    } else if (el.dataset.c !== undefined) {
+      ed.conns[Number(el.dataset.c)][el.dataset.f] = el.value;
+    } else if (el.id === "ed-trig-on") {
+      ed.trig.on = el.checked;
+      if (el.checked && ed.trig.h === undefined) Object.assign(ed.trig, {h: 0, v: 0, c: 44});
+    } else if (el.id.startsWith("ed-trig-")) {
+      ed.trig[el.id.slice(-1)] = el.value;
+    } else if (el.id !== "ed-note") return;
+    edChanged();
+    // selects and the checkbox redraw at once; text fields redraw when left
+    // (the 'change' listener below), so typing keeps the cursor
+    if (el.dataset.f === "connector" || el.id === "ed-trig-on") edRender();
+  });
+  $("su-editor").addEventListener("change", ev => {
+    const f = ev.target.dataset.f;
+    if (f === "name" || f === "alias") edRender();
+  });
+
+  $("su-editor").addEventListener("click", ev => {
+    const b = ev.target;
+    if (b.dataset.deldet !== undefined) {
+      const name = ed.dets[Number(b.dataset.deldet)].name;
+      if (!confirm(`Remove ${name} and its connectors from the stand?`)) return;
+      ed.dets.splice(Number(b.dataset.deldet), 1);
+      ed.conns = ed.conns.filter(c => c.detector !== name);
+    } else if (b.dataset.delconn !== undefined) {
+      ed.conns.splice(Number(b.dataset.delconn), 1);
+    } else if (b.dataset.addconn !== undefined) {
+      const used = ed.conns.filter(c => c.detector === b.dataset.addconn).map(c => Number(c.connector));
+      const free = Array.from({length: setupData.n_connectors || 8}, (_, k) => k + 1).find(n => !used.includes(n)) || 1;
+      ed.conns.push({detector: b.dataset.addconn, connector: free, hybrid: "", bottom_vmm: "", top_vmm: "", cable: "", fec: ""});
+    } else if (b.id === "ed-add-det") {
+      ed.dets.push({name: `DET${ed.dets.length + 1}`, alias: "", z_mm: 0});
+    } else return;
+    edChanged();
+    edRender();
+  });
+
+  function payload(preview) {
+    return { preview, note: $("ed-note").value, detectors: ed.dets,
+             trigger: ed.trig.on ? {hybrid: ed.trig.h, vmm: ed.trig.v, ch: ed.trig.c} : null,
+             hybrids: ed.conns };
+  }
+
+  async function send(preview) {
+    const res = await fetch("/setup/entry", { method: "POST", headers: { "Content-Type": "application/json" },
+                                             body: JSON.stringify(payload(preview)) });
+    return res.json();
+  }
+
+  $("ed-preview").addEventListener("click", async () => {
+    const d = await send(true);
+    if (d.success) {
+      previewed = true;
+      $("ed-save").disabled = false;
+      $("ed-result").innerHTML = `<div class="text-success">Checks passed. From ${esc(d.valid_from)} (when you save) the stand would change:</div>
+        <ul class="mb-0">${d.changes.map(c => `<li>${esc(c)}</li>`).join("")}</ul>`;
+    } else {
+      $("ed-result").innerHTML = `<div class="text-danger">${(d.errors || []).map(esc).join("<br>")}</div>`;
+    }
+  });
+
+  $("ed-save").addEventListener("click", async () => {
+    if (!previewed) return;
+    if (!confirm("Save this as the new stand, in force from now? Runs started from now on, and the processor and live monitor, will use it.")) return;
+    const d = await send(false);
+    if (d.success) {
+      showPopup(d.message, "#28a745");
+      $("su-editor").classList.add("d-none");
+      if (window.setupTabReload) await window.setupTabReload();
+      await loadSetup();
+    } else {
+      $("ed-result").innerHTML = `<div class="text-danger">${(d.errors || []).map(esc).join("<br>")}</div>`;
+      $("ed-save").disabled = true;
+    }
+  });
+
+  $("ed-cancel").addEventListener("click", () => $("su-editor").classList.add("d-none"));
+
+  $("su-edit-btn").addEventListener("click", () => {
+    const s = setupData.stand_now;
+    ed = { dets: s.detectors.map(x => ({name: x.name, alias: x.alias || "", z_mm: x.z_mm})),
+           trig: s.trigger ? {on: true, h: s.trigger.hybrid, v: s.trigger.vmm, c: s.trigger.ch} : {on: false},
+           conns: s.hybrids.map(r => ({...r, fec: r.fec ?? ""})) };
+    $("ed-note").value = "";
+    edChanged();
+    edRender();
+    $("su-editor").classList.remove("d-none");
+    $("su-editor").scrollIntoView({behavior: "smooth"});
+  });
+
+  async function loadSetup() {
+    setupData = await (await fetch("/setup")).json();
+    const why = setupData.error ? "the setup file cannot be read"
+      : !setupData.editable_copy ? `this machine has no editable copy in ${setupData.setups_dir}`
+      : setupData.run_active ? `a run is in progress (${setupData.run_state}): change the stand after it ends`
+      : !setupData.stand_now ? "no cabling entry is in force now" : "";
+    $("su-edit-btn").disabled = !!why;
+    $("su-edit-why").textContent = why;
+  }
+
+  const tab = document.querySelector('a[href="#setup"]');
+  if (tab) tab.addEventListener("shown.bs.tab", () => { loadRun(); loadSetup(); });
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Analysis tab, detector view (/detector_view): choose a run and a sub-run
+// (or the whole run), build it, show the summary and the plots.
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const si = (v, u) => v === null || v === undefined ? "–" :
+    Math.abs(v) >= 1e6 ? (v / 1e6).toPrecision(3) + " M" + u : Math.abs(v) >= 1e3 ? (v / 1e3).toPrecision(3) + " k" + u : v.toPrecision(3) + " " + u;
+  const CAPTION = {"rate_map.png": "Hits on the detector surface (rate per pad area)",
+    "vmm_adc.png": "ADC per channel, per VMM (map and mean)", "channel_rates.png": "Hit rate per channel, per VMM",
+    "amplitude.png": "Amplitude per detector and connector half", "time.png": "Hit rate vs time",
+    "level_rates.png": "Rate per detector, connector, hybrid, chip", "trend.png": "Trend across sub-runs"};
+  let runs = [], cur = null, poll = null;
+
+  async function loadRuns(keep) {
+    const d = await (await fetch("/detector_view/runs")).json();
+    runs = d.runs;
+    const sel = $("dv-run"), prev = keep || sel.value;
+    sel.innerHTML = runs.map(r => `<option value="${r.run}">${r.run} · ${r.captures} capture(s)` +
+      (r.built ? (r.stale ? " · needs update" : " · built") : "") + `</option>`).join("");
+    if (prev && runs.some(r => r.run === prev)) sel.value = prev;
+    await loadRun();
+  }
+
+  function renderItem() {
+    const it = cur && cur.items.find(i => i.item === $("dv-item").value);
+    const s = it && it.summary;
+    $("dv-summary").innerHTML = s && Object.keys(s.detectors || {}).length
+      ? Object.entries(s.detectors).map(([det, v]) => `<tr><td>${esc(det)}</td>
+          <td class="text-end">${(v.hits || 0).toLocaleString()}</td><td class="text-end">${si(v.rate_hz, "Hz")}</td>
+          <td class="text-end">${v.rate_hz_per_cm2 === null ? "–" : v.rate_hz_per_cm2.toPrecision(3)}</td>
+          <td class="text-end">${v.live_channels}/${v.channels}</td><td class="text-end">${v.dead_channels}</td>
+          <td class="text-end">${v.noisy_channels}</td><td class="text-end">${v.mean_adc === null ? "–" : v.mean_adc.toFixed(0)}</td></tr>`).join("")
+      : `<tr><td colspan="8" class="text-muted">${cur && cur.items.length ? "No detector data (no mapping?)" : "Not built yet: press Build"}</td></tr>`;
+    $("dv-note").textContent = s ? `${s.captures} capture(s), ${(s.live_time_s / 60).toFixed(1)} min live, setup ${s.setup || "–"}, ` +
+      `first capture ${s.first_capture || "–"}. Noisy = above ${10}× its VMM's median channel rate.` : "";
+    const run = $("dv-run").value;
+    $("dv-plots").innerHTML = it ? Object.entries(it.pngs).map(([n, t]) => `
+      <div class="panel mb-3"><div class="panel-header"><span class="panel-title">${esc(CAPTION[n] || n)}</span></div>
+        <div class="panel-body"><img src="/detector_view/png/${run}/${encodeURIComponent(it.item)}/${n}?t=${t}"
+          class="img-fluid" alt="${esc(n)}" style="background:#fcfcfb; border-radius:6px;"></div></div>`).join("") : "";
+  }
+
+  async function loadRun() {
+    const run = $("dv-run").value;
+    if (!run) { $("dv-status").textContent = "No runs yet."; return; }
+    cur = await (await fetch(`/detector_view/${run}`)).json();
+    const sel = $("dv-item"), prev = sel.value;
+    sel.innerHTML = cur.items.map(i => `<option value="${esc(i.item)}">${i.item === "_run" ? "whole run" : esc(i.item)}</option>`).join("");
+    if (prev && cur.items.some(i => i.item === prev)) sel.value = prev;
+    const r = runs.find(x => x.run === run) || {};
+    $("dv-build").textContent = r.built ? "Rebuild" : "Build";
+    $("dv-build").disabled = cur.building || !!cur.other_building;
+    $("dv-status").textContent = cur.building ? "building… " + (cur.log.slice(-1)[0] || "")
+      : cur.other_building ? `${cur.other_building} is being built`
+      : r.stale ? "new captures since the last build: Rebuild to include them"
+      : r.built ? `built ${new Date(r.built * 1000).toLocaleString()}` : "";
+    renderItem();
+    clearTimeout(poll);
+    if (cur.building || cur.other_building) poll = setTimeout(() => loadRuns(run), 4000);
+  }
+
+  $("dv-run").addEventListener("change", () => { $("dv-item").innerHTML = ""; loadRun(); });
+  $("dv-item").addEventListener("change", renderItem);
+  $("dv-build").addEventListener("click", async () => {
+    const run = $("dv-run").value;
+    const d = await (await fetch(`/detector_view/${run}/build`, { method: "POST" })).json();
+    showPopup(d.message, d.success ? "#17a2b8" : "#dc3545");
+    setTimeout(() => loadRuns(run), 1500);
+  });
+
+  const tab = document.querySelector('a[href="#analysis-browser"]');
+  if (tab) tab.addEventListener("shown.bs.tab", () => loadRuns());
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Setup tab: campaign panel (/campaign): data directory and EOS folder.
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  let cur = null;
+
+  async function load() {
+    cur = await (await fetch("/campaign")).json();
+    const busy = cur.run_state && !["WAITING", "Run Complete", "ERROR"].includes(cur.run_state);
+    $("cp-now").innerHTML = `<b>${esc(cur.campaign_name)}</b> · data <code>${esc(cur.data_dir)}</code>
+      (${cur.free_gb ?? "?"} GB free) · backup <code>${esc(cur.eos_dir)}</code> <span class="text-muted">via ${esc(cur.xrootd_url)}</span>` +
+      (cur.history.length ? `<details class="mt-1"><summary class="text-muted" style="font-size:0.8rem;">earlier campaigns</summary>` +
+        cur.history.map(h => `<div class="text-muted" style="font-size:0.8rem;">${esc(h.time)}: ${esc(h.previous && h.previous.campaign_name)} → <b>${esc(h.campaign_name)}</b> (${esc(h.data_dir)})</div>`).join("") + `</details>` : "");
+    $("cp-edit").disabled = busy || cur.scan_running;
+    $("cp-edit").title = busy ? `a run is in progress (${cur.run_state})` : cur.scan_running ? "a config scan is running" : "";
+  }
+
+  const body = () => JSON.stringify({campaign_name: $("cp-name").value, data_dir: $("cp-data").value, eos_dir: $("cp-eos").value});
+  ["cp-name", "cp-data", "cp-eos"].forEach(id => $(id).addEventListener("input", () => { $("cp-apply").disabled = true; }));
+
+  $("cp-edit").addEventListener("click", () => {
+    $("cp-name").value = cur.campaign_name; $("cp-data").value = cur.data_dir; $("cp-eos").value = cur.eos_dir;
+    $("cp-result").innerHTML = ""; $("cp-apply").disabled = true;
+    $("cp-form").classList.remove("d-none");
+  });
+  $("cp-cancel").addEventListener("click", () => $("cp-form").classList.add("d-none"));
+
+  $("cp-check").addEventListener("click", async () => {
+    const d = await (await fetch("/campaign/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: body() })).json();
+    $("cp-apply").disabled = !d.success;
+    $("cp-result").innerHTML =
+      (d.errors.length ? `<div class="text-danger">${d.errors.map(esc).join("<br>")}</div>` : '<div class="text-success">Checks passed. Apply will:</div>') +
+      (d.success ? `<ul class="mb-1">${d.actions.map(a => `<li>${esc(a)}</li>`).join("")}</ul>` : "") +
+      d.warnings.map(w => `<div class="text-warning">${esc(w)}</div>`).join("");
+  });
+
+  $("cp-apply").addEventListener("click", async () => {
+    if (!confirm(`Apply campaign ${$("cp-name").value}?\n\nData: ${$("cp-data").value}\nBackup: ${$("cp-eos").value}\n\n` +
+                 "Every DAQ service is restarted, the GUI last: this page reloads in about 15 s.")) return;
+    const d = await (await fetch("/campaign/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: body() })).json();
+    if (!d.success) { $("cp-result").innerHTML = `<div class="text-danger">${(d.errors || []).map(esc).join("<br>")}</div>`; return; }
+    $("cp-result").innerHTML = `<div class="text-success">${esc(d.message)}</div><div class="text-muted">Reloading…</div>`;
+    setTimeout(() => location.reload(), 15000);
+  });
+
+  const tab = document.querySelector('a[href="#setup"]');
+  if (tab) tab.addEventListener("shown.bs.tab", load);
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Setup tab: config scan panel (/config_scan): choose configs, check with the
+// script's dry run, start/stop config_scan.py, follow its progress.
+// ---------------------------------------------------------------------------
+(function () {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const short = f => f.replace(/^p2b-config-cern-ext_/, "").replace(/\.txt$/, "");
+  let st = null, chosen = [], checked = false;
+
+  function plan() {
+    const m = Number($("cs-min").value) || 0, n = chosen.length, oh = (st && st.overhead_min) || 6;
+    const total = n * (m + oh);
+    const end = new Date(Date.now() + total * 60000);
+    $("cs-plan").textContent = n ? `${n} config(s) × (${m} min + ~${oh} min apply/reset/start) = ` +
+      `${total >= 60 ? (total / 60).toFixed(1) + " h" : total + " min"}; done around ` +
+      `${end.toTimeString().slice(0, 5)} if started now` : "";
+    if (!$("cs-until").value && n) $("cs-until").value = new Date(Date.now() + (total + 10) * 60000).toTimeString().slice(0, 5);
+  }
+
+  function renderLists() {
+    const f = $("cs-filter").value.toLowerCase().split(/\s+/).filter(Boolean);
+    const avail = st.configs.filter(c => f.every(w => c.toLowerCase().includes(w)));
+    $("cs-count").textContent = `(${avail.length} of ${st.configs.length})`;
+    $("cs-avail").innerHTML = avail.map(c => `<div class="py-1 border-bottom border-secondary"
+        style="cursor:pointer;" data-add="${esc(c)}" title="${esc(c)}">+ ${esc(short(c))}</div>`).join("");
+    $("cs-chosen").innerHTML = chosen.length ? chosen.map((c, i) => `<div class="py-1 border-bottom border-secondary"
+        style="display:flex; gap:0.4rem; align-items:center;" title="${esc(c)}">
+        <span class="text-muted" style="width:1.6rem;">${i + 1}.</span><span style="flex:1;">${esc(short(c))}</span>
+        <button class="btn btn-outline-secondary btn-sm py-0" data-up="${i}" ${i ? "" : "disabled"}>↑</button>
+        <button class="btn btn-outline-secondary btn-sm py-0" data-down="${i}" ${i < chosen.length - 1 ? "" : "disabled"}>↓</button>
+        <button class="btn btn-outline-danger btn-sm py-0" data-rm="${i}">×</button></div>`).join("")
+      : '<div class="text-muted">none yet</div>';
+    plan();
+  }
+
+  function dirty() { checked = false; $("cs-start").disabled = true; }
+
+  $("cs-filter").addEventListener("input", renderLists);
+  ["cs-min", "cs-until"].forEach(id => $(id).addEventListener("input", () => { dirty(); plan(); }));
+  $("cs-avail").addEventListener("click", ev => {
+    const c = ev.target.closest("[data-add]");
+    if (c) { chosen.push(c.dataset.add); dirty(); renderLists(); }
+  });
+  $("cs-chosen").addEventListener("click", ev => {
+    const b = ev.target.closest("button");
+    if (!b) return;
+    const i = Number(b.dataset.up ?? b.dataset.down ?? b.dataset.rm);
+    if (b.dataset.rm !== undefined) chosen.splice(i, 1);
+    else {
+      const j = b.dataset.up !== undefined ? i - 1 : i + 1;
+      [chosen[i], chosen[j]] = [chosen[j], chosen[i]];
+    }
+    dirty(); renderLists();
+  });
+
+  const body = () => JSON.stringify({ configs: chosen, minutes: Number($("cs-min").value), until: $("cs-until").value });
+
+  $("cs-check").addEventListener("click", async () => {
+    $("cs-result").innerHTML = '<span class="text-muted">checking…</span>';
+    const d = await (await fetch("/config_scan/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: body() })).json();
+    checked = d.success && !st.running;
+    $("cs-start").disabled = !checked;
+    $("cs-result").innerHTML = (d.success ? '<div class="text-success">The scan would run as follows (dry run, nothing touched):</div>'
+                                          : `<div class="text-danger">${(d.errors || []).map(esc).join("<br>")}</div>`) +
+      (d.notes || []).map(n => `<div class="text-warning">${esc(n)}</div>`).join("") +
+      (d.output && d.output.length ? `<pre class="mb-0" style="font-size:0.75rem; max-height:200px; overflow:auto;">${esc(d.output.join("\n"))}</pre>` : "");
+  });
+
+  $("cs-start").addEventListener("click", async () => {
+    if (!checked) return;
+    if (!confirm(`Start the config scan now?\n\n${chosen.length} config(s), ${$("cs-min").value} min each, ` +
+                 `finishing by ${$("cs-until").value}.\nEach config: apply → warm reset → run. It runs unattended.`)) return;
+    const d = await (await fetch("/config_scan/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: body() })).json();
+    if (d.success) { showPopup(d.message, "#28a745"); dirty(); }
+    else $("cs-result").innerHTML = `<div class="text-danger">${(d.errors || []).map(esc).join("<br>")}</div>`;
+    load();
+  });
+
+  async function stop(mode) {
+    const msg = mode === "now"
+      ? "Interrupt the config scan now? No further config is started; the run in progress continues to its end (use Stop Run to end it)."
+      : "Stop the config scan after the current run? The run in progress finishes normally.";
+    if (!confirm(msg)) return;
+    const d = await (await fetch("/config_scan/stop", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                         body: JSON.stringify({ mode }) })).json();
+    showPopup(d.message, d.success ? "#ffc107" : "#dc3545");
+    load();
+  }
+  $("cs-stop-after").addEventListener("click", () => stop("after_run"));
+  $("cs-stop-now").addEventListener("click", () => stop("now"));
+
+  function renderProgress() {
+    const p = st.progress;
+    $("cs-stop-after").disabled = !st.running || st.stop_requested;
+    $("cs-stop-now").disabled = !st.running;
+    if (st.running) $("cs-start").disabled = true;
+    if (!p) { $("cs-progress").innerHTML = '<span class="text-muted">No scan in the log yet.</span>'; return; }
+    const badge = {queued: "bg-secondary", running: "bg-info text-dark", done: "bg-success",
+                   failed: "bg-danger", skipped: "bg-warning text-dark", stopped: "bg-secondary"};
+    $("cs-progress").innerHTML =
+      `<div style="font-size:0.85rem;"><b>${st.running ? "Scan running" : "Last scan"}</b>
+         <span class="text-muted">${esc(p.header)}</span>
+         ${st.stop_requested ? '<span class="badge bg-warning text-dark ms-1">stop after current run requested</span>' : ""}</div>
+       <div class="table-responsive"><table class="table table-dark table-sm align-middle mb-1">
+         <thead><tr><th>#</th><th>Config</th><th>State</th><th>Run</th><th>Detail</th></tr></thead><tbody>` +
+      p.rows.map((r, i) => `<tr><td>${i + 1}</td><td title="${esc(r.cfg)}">${esc(short(r.cfg))}</td>
+         <td><span class="badge ${badge[r.state] || "bg-secondary"}">${esc(r.state)}</span></td>
+         <td>${esc(r.run || "")}</td><td class="text-muted" style="font-size:0.8rem;">${esc(r.detail)}</td></tr>`).join("") +
+      `</tbody></table></div>
+       <details><summary class="text-muted" style="font-size:0.8rem;">log</summary>
+         <pre style="font-size:0.75rem; max-height:220px; overflow:auto;">${esc(p.tail.join("\n"))}</pre></details>`;
+  }
+
+  async function load() {
+    st = await (await fetch("/config_scan")).json();
+    $("cs-min").min = st.min_minutes;
+    if (!$("cs-min").value) {
+      try {
+        const s = (await (await fetch("/settings")).json()).settings.find(x => x.key === "config_scan_subrun_min");
+        $("cs-min").value = s ? s.value : 30;
+      } catch (e) { $("cs-min").value = 30; }
+    }
+    renderLists();
+    renderProgress();
+  }
+
+  const pane = $("setup");
+  const tab = document.querySelector('a[href="#setup"]');
+  if (tab) tab.addEventListener("shown.bs.tab", load);
+  setInterval(() => { if (pane.classList.contains("active") && st && st.running) load(); }, 10000);
 })();
 </script>
 

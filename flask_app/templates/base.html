@@ -321,6 +321,9 @@
                     <a class="nav-link active" data-bs-toggle="tab" href="#overview">Overview</a>
                 </li>
                 <li class="nav-item">
+                    <a class="nav-link" data-bs-toggle="tab" href="#live">Live</a>
+                </li>
+                <li class="nav-item">
                     <a class="nav-link" data-bs-toggle="tab" href="#png-viewer">Online QA</a>
                 </li>
                 <li class="nav-item">
@@ -337,8 +340,20 @@
                     <a class="nav-link" data-bs-toggle="tab" href="#beam2">Beam2</a>
                 </li>
                 {% endif %}
+                {# Lab sites: the USB HV supplies on banco (banco_hv/). #}
+                {% if not beam_site %}
+                <li class="nav-item">
+                    <a class="nav-link" data-bs-toggle="tab" href="#hv-control">HV Control</a>
+                </li>
+                {% endif %}
                 <li class="nav-item">
                     <a class="nav-link" data-bs-toggle="tab" href="#disk-space">Disk Space</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" data-bs-toggle="tab" href="#setup">Setup</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" data-bs-toggle="tab" href="#settings">Settings</a>
                 </li>
             </ul>
         </div>
