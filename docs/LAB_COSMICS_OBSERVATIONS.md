@@ -384,3 +384,70 @@ Setup: ALINX FEC 192.168.0.12, hybrids H0 (scintillator trigger) and H1-H9 (thre
    measure per-channel pedestals and thresholds and set the trims as with vmmsc.
 5. **Minor: `apply` returns before the new configuration has taken effect** (obs. 12). The first status poll after `apply` still
    shows the previous config file.
+
+## 2026-11-05/06: p2basket-sc update, session lock, end of the wk2 adaptive scan
+
+Checked on vmm_daplxa. Sources: `/local/p2/deploy/`, `config/chip_config_state.json`, the `vmm_daq` tmux pane,
+`logs/adaptive/resume_wk2.out` and `state_wk2.json`, and the logbook (`LOGBOOK.md`, notes of 5-6 Nov).
+
+### New observations
+
+70. **New p2basket-sc deployed on 5 Nov** (on dedippce185 and dedippcu196). The first install, `install_2026-11-05T14h25m11sZ`
+    (`2026-11-05T123411Z-d2cb9ef-main`), went in at 15:25, during run_225, which was not disturbed. Its `python-venv/` had
+    group `idediplilas`, no access for others, and an ACL for `local-p2` only, so for basketp2 users
+    `p2basket-python` stopped at `python-venv/bin/activate: Permission denied`. Reproduce with
+    `/local/p2/deploy/bin/p2basket-python -c "import p2basket"`. In a plain non-interactive shell this ends with
+    `exec: python: not found` (exit 127). In the tmux stack the wrapper falls back to the pyenv `python`, which is how the
+    23 Oct install kept working with the same error (obs. 66). Shebli redeployed at 18:02 CET
+    (`install_2026-11-05T17h02m25sZ`, `2026-11-05T165959Z-d2cb9ef-dirty-main`), fixed the group by hand
+    (`chown -R :basketp2 /local/p2/deploy`) and fixed the deployment script. Since then `p2basket-python` imports `p2basket`
+    without errors, so obs. 2/66 is resolved. The banner says "dirty" again. The `p2basket-sc --help` text is identical to
+    the 23 Oct build.
+71. **"Link status 5 (DAQ ON) on all hybrids with no session lock"** (Shebli, 5 Nov 15:48) is expected. run_225 had been
+    acquiring since 13:15 (acq-on), and until then our run control sent acq-on/acq-off without taking a session lock. After
+    acq-off the hybrids read 4 (connected) or 0 (empty ports).
+72. **Session lock behaviour, measured on the 5 Nov build** (no run active):
+    - `p2basket-sc --session-lock N` stays in the foreground with a countdown, works with stdout piped, and removes the lock
+      on expiry or on SIGINT ("Session CANCELED").
+    - A second request from the same account returns at once with "ALREADY OWN" (rc 0).
+    - While we hold the lock, our own CLI commands and the `p2basket-python` warm reset (0 failed hybrids) run normally and
+      do not release it.
+    - `p2basket-sc --session-lock` with no number reports "Session is FREE" or "Session OWNED by <user>".
+    - The lock file `/run/p2basket/session.lock` starts with `uid start_epoch lifetime_s`.
+    - Without a lock, every command takes a 1-minute lock and drops it when it ends, so a 4 h run was unprotected
+      between acq-on and acq-off.
+73. **The DAQ now holds the session lock** (commit `60d134f`, `session_lock.py`, deployed 5 Nov 18:26).
+    - Warm reset and apply run under the lock, which is kept for 10 more minutes after a successful apply to cover the
+      start of the run.
+    - `vmm_daq_control` takes the lock over before acq-on and releases it after acq-off. If another user holds it, the
+      step is refused with their name.
+    - First real use, runs 226-230: the hand-over was accepted on all 5 probes, the run took over when the hand-over lock
+      expired (run_229, 18:40:40), and the lock was released at the end of the run. The bench was FREE afterwards.
+74. **K = -18 could not be measured** (retry on 5 Nov 18:28-18:45, runs 226-230).
+    - The first attempt (5 Nov 00:51) had failed when the chip-config apply timed out.
+    - In the retry, all 5 probes ran at 5-6 MB/min, and each flagged VMM 17 ch17 at 57-63 Hz, over the 50 Hz limit.
+    - VMM 17 is held at its K = -16 setting, because at -18 it would need more than 20 masked channels.
+    - The scan tool counts hot channels on held chips when deciding whether a probe is clean (`decide()`), but never adds
+      masks to held chips (`apply_new_masks()`). So the 5 probe configs were byte-identical, and the point was skipped
+      after `--max-iter` = 5 tries.
+    - This is a bug in `logs/adaptive/adaptive_thr_scan.py`. It is not fixed, and K = -18 was not retaken (decision of
+      6 Nov).
+    - VMM 17 ch17 was under 50 Hz at K = -16 in pass 2 (run_214), so its rate at the same setting has gone up a little.
+    - The DAQ has been idle since 5 Nov 18:45.
+75. **End of the wk2 adaptive scan** (3-5 Nov; `state_wk2.json`, masks in `logs/adaptive/masks_wk2.md`).
+    - The lowest point measured is K = -16 (pass 2, run_214: 180 min, 977 MB, 14.6 M hits).
+    - Pass 3 long runs (240 min each): K = 0 run_218, K = -6 run_221 (21.7 M hits), K = -8 run_223 (25.4 M hits),
+      K = -12 run_225 (21.8 M hits).
+    - At the end, 11 of the 18 detector chips are held, i.e. stopped following the scan. The number in brackets is how
+      many channels the scan masked on that chip:
+      - at K = -8: VMM 12 (19) and VMM 18 (14);
+      - at K = -12: VMM 16 (19);
+      - at K = -14: VMM 11 (19) and VMM 13 (20);
+      - at K = -16: VMM 3 (17), 8 (18), 10 (17), 15 (17), 17 (19) and 19 (18).
+
+### Update to the summary for the firmware / slow-control developers (as of 2026-11-06)
+
+- Item 3 (`p2basket-python` wrapper error) is **resolved** with the 5 Nov redeployment (obs. 70). The banner of that build
+  reads `-dirty` again.
+- Thank you for the session-lock manual. We now hold the lock for the whole of every run and every chip configuration
+  (obs. 72-73). The DAQ runs as ak271430, so the lock shows as owned by that account.
