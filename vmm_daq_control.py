@@ -34,6 +34,7 @@ from datetime import datetime
 from Server import Server
 from common_functions import (setup_logging, teardown_logging, create_dir_if_not_exist,
                               is_capture_file)
+from session_lock import SessionLockKeeper
 
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 STOP_VMM_FLAG = os.path.join(REPO_DIR, '.stop_vmm')
@@ -50,6 +51,7 @@ def main():
     while True:
         run_log_handler = None
         subrun_log_handler = None
+        lock = None
         try:
             with Server(port=port) as server:
                 server.receive()
@@ -80,10 +82,25 @@ def main():
                         _remove_file(STOP_VMM_FLAG)  # clear stale stop requests
                         _remove_file(os.path.join(raw_dir, CAPTURE_DONE_MARKER))
 
+                        # Hold the p2basket session lock from before acq-on until
+                        # after acq-off, so nobody else can touch the electronics
+                        # mid-run (see session_lock.py).
+                        lock, lock_msg = acquire_session_lock(effective_info, run_time)
+                        if lock is False:
+                            logging.error(f'Session lock not acquired: {lock_msg} — aborting sub-run')
+                            print(f'[vmm daq] SESSION LOCK ERROR: {lock_msg}')
+                            server.send(f'VMM DAQ error: session lock: {lock_msg}')
+                            lock = None
+                            teardown_logging(subrun_log_handler)
+                            subrun_log_handler = None
+                            res = server.receive()
+                            continue
+
                         # ALINX slow control: acquisition ON before capture starts.
                         alinx_ok = alinx_acq_on(effective_info)
                         if not alinx_ok:
                             logging.error('ALINX acq-on failed — aborting sub-run')
+                            lock = release_session_lock(lock)
                             server.send('VMM DAQ error: alinx acq-on failed')
                             teardown_logging(subrun_log_handler)
                             subrun_log_handler = None
@@ -117,6 +134,7 @@ def main():
                         status_thread.join(timeout=5)
 
                         alinx_acq_off(effective_info)
+                        lock = release_session_lock(lock)
 
                         # Tell the QA watcher the last file is final.
                         with open(os.path.join(raw_dir, CAPTURE_DONE_MARKER), 'w') as f:
@@ -140,6 +158,7 @@ def main():
                     run_log_handler = None
         except Exception as e:
             logging.exception(f'Unhandled error: {e}')
+            lock = release_session_lock(lock)
             if subrun_log_handler is not None:
                 teardown_logging(subrun_log_handler)
                 subrun_log_handler = None
@@ -209,6 +228,36 @@ def _run_sc(iface_info, action):
     for line in output.strip().splitlines():
         logging.info(f'slow control: {line}')
     return result.returncode == 0, output
+
+
+def acquire_session_lock(info, run_time_min):
+    """Take the p2basket session lock for this sub-run.
+    Returns (keeper, msg); keeper None when no lock applies (no p2basket
+    interface, or 'session_lock': false in the run config), False on failure.
+    The lock is taken in chunks of run time + margin and renewed if a run
+    outlasts it; a crashed DAQ leaves at most one chunk behind."""
+    if not info.get('session_lock', True):
+        return None, 'disabled in config'
+    ifaces = [i for i in _sc_interfaces(info) if i.get('slow_control') == 'p2basket']
+    if not ifaces:
+        return None, 'no p2basket interface'
+    sc = ifaces[0].get('p2basket_sc', 'p2basket-sc')
+    margin = float(info.get('session_lock_margin_min', 15))
+    chunk = min(run_time_min + margin, float(info.get('session_lock_max_chunk_min', 720)))
+    keeper = SessionLockKeeper(sc=sc, chunk_min=chunk, tag='run', log=logging.getLogger())
+    ok, msg = keeper.start()
+    print(f'[vmm daq] Session lock: {"OK" if ok else "FAILED"} — {msg}')
+    return (keeper if ok else False), msg
+
+
+def release_session_lock(keeper):
+    """Release (if held) and return None, for `lock = release_session_lock(lock)`."""
+    if keeper:
+        try:
+            keeper.stop()
+        except Exception as e:
+            logging.warning(f'session lock release failed: {e}')
+    return None
 
 
 def alinx_acq_on(info):
