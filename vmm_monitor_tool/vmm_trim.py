@@ -402,6 +402,19 @@ def cmd_pedestal(a):
     print('wrote', a.out)
 
 
+def cmd_sdt(a):
+    """Move the chip threshold (sdt) of some chips by a number of DAC counts."""
+    ext = ExtFile.load(a.ext)
+    sdt = ext.sdt()
+    for c in parse_list(a.chips, 0, N_CHIPS - 1, 'chip'):
+        if c not in sdt:
+            raise SystemExit('chip %d has no sdt line in %s' % (c, a.ext))
+        ext.set_sdt(c, sdt[c] + a.by)
+        print('chip %2d: sdt %d -> %d' % (c, sdt[c], sdt[c] + a.by))
+    ext.write(a.out, a.force)
+    print('wrote', a.out)
+
+
 def cmd_apply_table(a):
     ext = ExtFile.load(a.ext)
     with open(a.table) as f:
@@ -456,6 +469,12 @@ def main(argv=None):
     s.add_argument('--sdt-per-trim', type=float, default=1.38,
                    help='sdt counts equivalent to one trim step (measured; see the scan tool)')
     s.add_argument('--force', action='store_true'); s.set_defaults(fn=cmd_pedestal)
+
+    s = sub.add_parser('sdt', help='move the chip threshold of some chips by a number of DAC counts')
+    s.add_argument('ext'); s.add_argument('--out', required=True)
+    s.add_argument('--chips', default='2-19'); s.add_argument('--by', type=int, required=True,
+                                                               help='DAC counts, about 0.77 mV each; negative lowers')
+    s.add_argument('--force', action='store_true'); s.set_defaults(fn=cmd_sdt)
 
     s = sub.add_parser('apply-table', help='write the trims (and sdt) of a JSON table into a file')
     s.add_argument('ext'); s.add_argument('--out', required=True); s.add_argument('--table', required=True)
