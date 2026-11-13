@@ -68,21 +68,70 @@ The automatic tuner then found the minimum: of the 244, 164 needed nothing,
 been masked, 20 were raised as well. Result: clean (6 MB/min) with **no mask**
 on those 15 chips, in 5 iterations of 80 s.
 
-## Two things found on the way that you should know
+## The blind channel blocks on VMM 4, 7 and 9 — found, explained enough, recovered
 
-1. **Dead channel blocks on VMM 4, 7 and 9.** On these chips the baseline of
-   a block of channels (VMM 4: channels 42-63, VMM 7: 25-63, VMM 9: 22-63) is
-   30 to 250 mV **above** the threshold instead of 15-20 mV below. A channel
-   in that state cannot fire. In run_230 exactly these channels count 0.2 Hz
-   while their neighbours count 1-2 Hz. VMM 16 channel 33 is the same
-   (baseline 618 mV). The channels masked by hand in the scan files
-   (`m9c16to21`, `m4c36to41`) are the ones at the edge of these blocks. The
-   trim cannot repair this (it covers 33 mV). The cause is not known; it was
-   measured with HV off.
-2. **Tonight the original K=−18 file was not quiet**: with HV off, single
-   channels screamed (VMM 5 ch 46 at 876 kHz, VMM 15 ch 56 at 476 kHz) and
-   saturated the link. They are the channels with the smallest distance to
-   their baseline (5-8 mV). The equalised file has none of this.
+On these chips the baseline of a block of channels (VMM 4: channels 36-63,
+VMM 7: 23-63, VMM 9: 19-63; 114 channels) was 30 to 270 mV **above** the
+threshold instead of 15-20 mV below it. The channels masked by hand in the
+scan files (`m9c16to21`, `m4c36to41`) are the ones at the edge of these blocks.
+
+- They were blind: in run_230 they count 0.2 Hz while their neighbours count
+  1-2 Hz. With the internal test pulser (10.85 kHz), small and medium pulses
+  (pulser DAC 20, 40, 80): normal channels see 100 %, these channels **0 %**.
+- It is a configuration effect, not broken hardware. The displaced baseline
+  scales with the gain and goes back to normal (about 160 mV) with any of:
+  `sfm 0` on the chip (these chips run `sfm 1`), the leakage bit `sl 1` on the
+  channel, `slg 1`, the other polarity, the lowest gain. Chips 2 and 13, also
+  at `sfm 1`, do not show it, so something on the input of those channels
+  (detector or connector side) draws a DC current. Measured with HV off.
+- **Cure used: one line `sl 1` per affected channel.** With it the same
+  channels see **100 %** of the test pulses at all three amplitudes, and their
+  baseline and threshold distance are those of their neighbours. `sfm 0` on
+  the whole chip also normalises the baseline but made the chips flood.
+- VMM 16 channel 33 (baseline 619 mV) is not cured by `sl 1`: it stays masked.
+- **Not checked:** what `sl 1` does to these channels with HV on and real
+  signals. That is the first thing to look at in the next cosmic run.
+
+Also seen: with HV off the original K=−18 file was not quiet tonight (VMM 5
+ch 46 at 876 kHz, VMM 15 ch 56 at 476 kHz, saturating the link). These are the
+channels closest to their baseline (5-8 mV). The equalised file has none of it.
+
+## The file to try first
+
+`p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_trimmed_Km18_v1.txt`
+(in the GUI drop-down). Same gain, peaking time and chip thresholds as the
+lowest wk2 point (K=−18), with:
+
+| | wk2 file (K=−18, i5) | trimmed v1 |
+|---|---|---|
+| masked channels on the 18 detector chips | 276 | **1** (VMM 16 ch 33) |
+| blind channels | 114 | 0 (recovered with `sl 1`) |
+| spread of threshold−baseline inside a chip | 3.8 mV rms | 0.7 mV rms |
+| channels raised above the common level | — | 135 (87 by 2 steps, 39 by 4, 8 by 6, 1 by 8) |
+| noise capture, HV off | saturated tonight (single channels at 0.5-0.9 MHz) | 6.3 MB/min, no channel above 50 Hz |
+
+It was tuned with **HV off**. With HV on some channels will need more; that
+is what `adaptive_thr_scan.py --raise-steps` is for.
+
+## How far down can the chips go?
+
+Starting from the tuned file (15 chips), the chip thresholds were lowered four
+times by 4 `sdt` counts (3 mV), re-tuning each time:
+
+| chip thresholds | channels above 50 Hz at first | after tuning | channels at trim 0 | masks |
+|---|---|---|---|---|
+| −4 counts | 274 of 960 | clean | 0 | 0 |
+| −8 | 498 | clean | 0 | 0 |
+| −12 | 688 | clean except 1 channel | 4 | 0 |
+| −16 | 781 | clean except 4 channels | 21 | 0 |
+
+The tuner always ends clean, but look at what it does: at −16 it has raised
+four fifths of the channels back up. The median channel ends about 3 mV below
+the equalised K=−18 level and no lower. So with HV off the noise floor of
+these chips is about 3 mV below the K=−18 point; once the channels are
+equalised they reach it almost together. The gain from trimming is therefore
+not a much lower threshold: it is **no masks, no blind channels, and every
+channel sitting at its own noise edge**.
 
 ## The tools
 
@@ -92,7 +141,7 @@ until this branch is merged and deployed; the program itself is built at
 
 | File | What it does | Touches the chips? |
 |---|---|---|
-| `vmm_trim.py` | reads and edits exception files: summary, trims, raise a channel, shift `sdt` | no (text only) |
+| `vmm_trim.py` | reads and edits exception files: summary, trims, raise a channel, shift `sdt`, set a channel bit (`sm`, `sl`, `st`) | no (text only) |
 | `vmm_monitor.cpp`, `build.sh` | our measurement program, linked to the installed slow-control library | yes (rewrites the VMM registers) |
 | `vmm_monitor_scan.py` | maps, trim curve, DAC calibration, equalise, refine | yes, except `equalize`/`refine`/`report` |
 | `noise_probe.py` | 60 s noise capture with a given file, without a DAQ run and **without HV** | yes |
@@ -132,6 +181,14 @@ python3 vmm_trim.py raise FILE.txt --out NEWFILE.txt --chip 7 --channels 12,13 -
 - `--out` is a new file; the original is never changed. Add `--force` to overwrite an existing output.
 
 The new file appears in the GUI drop-down. Select it, **Configure chip**, run.
+
+### Set the leakage bit (or a mask, or the test pulse) on channels
+
+```
+python3 vmm_trim.py bit FILE.txt --out NEWFILE.txt --chip 7 --channels 23-63 --field sl --value 1 --why "baseline too high"
+```
+`--field` is one of `sm` (mask), `sl` (leakage), `st` (test pulse), `sth`, `sc`, `smx`.
+`--value 0` removes the lines again.
 
 ### Lower or raise a whole chip
 
@@ -202,4 +259,6 @@ as before. This mode is unit-tested but has **not yet been run on the stand**
 - The DAQ GUI does not know about these tools yet (no panel). The files they
   write are ordinary exception files, so everything else works unchanged:
   drop-down, provenance copy into the run folder, config scans.
-- The dead blocks on VMM 4, 7, 9 need a look at the hardware.
+- Why the inputs of those channel blocks on VMM 4, 7, 9 draw a DC current is not understood;
+  the `sl 1` cure is verified with test pulses only.
+- File names grow with every tuning step; copy the final file to a short name (as done for `trimmed_Km18_v1`).
