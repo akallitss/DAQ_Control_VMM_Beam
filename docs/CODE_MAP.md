@@ -112,11 +112,15 @@ Channel register fields (bit positions from the Dec 2025 source):
 | `sth` | 20 | test pulse x10 |
 | `sm` | 19 | **mask** (1 = channel off) |
 | `smx` | 18 | channel monitor mode: analog output vs trimmed threshold |
-| `sd` | 13-17, bit-reversed | **threshold trim, 5 bits, 0..31** |
+| `sd` | 13-17 | **threshold trim, 5 bits, 0..31** — see the bit-order warning below |
 | `sz10b` / `sz08b` / `sz06b` | 8-12 / 4-7 / 1-3, bit-reversed | ADC zero offsets |
 
-The bit reversal ("VMM2 bug", same in the RD51 software) is done inside the
-library: you write the plain number 0..31 to `sd`.
+**Bit order of `sd` (measured 2026-11-13).** The Dec 2025 source reverses the
+bits of `sd` inside the library (the "VMM2 bug" handling of the RD51 software).
+The build installed on 2026-11-05 does **not**: `sd = 1` is sent as bit 13 and
+acts on the chip as trim 16. To get trim *t* one must write `bit_reverse_5(t)`.
+`vmm_monitor_tool/vmm_trim.py` does this and comments each line with the real
+trim. Also: the binding accepts `sd = 32` silently and stores 0.
 
 Two homonyms to keep apart: global **`st`** in `bank1spi2` is the peak time;
 channel **`st`** is the test-capacitor switch.
@@ -196,10 +200,20 @@ measured even from C++. None of 1300-1900 except 1700 has a CLI name, and the
 binding cannot reach them. This is unfinished work of the slow-control
 developer, present in every install since 2026-10-22.
 
-Unknown until tested: a measurement must rewrite the VMM (monitor select
-`scmx`/`sm5_sm0`, channel `smx`) — whether the library restores the previous
-state afterwards is not visible from the headers. Assume **the chip is left
-modified** and re-apply the configuration after measuring.
+Tested 2026-11-13 with our own program `vmm_monitor_tool/vmm_monitor.cpp`,
+which constructs these command objects itself for any channel and calls
+`run()` on them:
+
+- `MeasureVmmChannel` works: with the channel bit `smx = 0` it returns the
+  channel baseline, with `smx = 1` the trimmed threshold, in mV. About 4 s per
+  channel for all 20 VMMs.
+- `MeasureThresholdDac`, `MeasureTemperature` work.
+- `MeasureChannelThreshold` always returns 0 (broken); not used.
+- A measurement rewrites the VMM registers from the model in memory and
+  leaves the monitor selection (`scmx`, `sm5_sm0`, `smx`) changed: the chips
+  must be configured again before taking data.
+- A masked channel (`sm = 1`) reads about 45 mV: no baseline. Measure with the
+  masks lifted.
 
 ---
 
@@ -307,22 +321,21 @@ p2basket_sc_config.py -b base.yaml -e <file>.txt      (layer 4)
         │  config-vmm-regs        → 20 UDP frames, 70 words each   (layer 3)
         ▼
 FEC → SPI → VMM registers                              (layers 2, 1)
-        effective threshold = global sdt (10 bit, per chip) shifted by trim sd (5 bit, per channel)
-        (sign and size of one trim step on our chips: not measured yet)
+        channel threshold = chip threshold (sdt, ~0.77 mV/count) - trim x ~1.1 mV   (measured)
 ```
 
 So the **per-channel trim already has a complete path**: a line
 `… Reg channel[NN] Field sd <0..31>` in an ext file is handled by exactly the
-code that handles today's `sm` lines. It has never been exercised with `sd`
-on this middleware. The legacy GUI did write trims to this hardware in
+code that handles today's `sm` lines. Verified on 2026-11-13 by measuring
+the thresholds on the chips (see `PER_CHANNEL_THRESHOLDS.md`). The legacy GUI did write trims to this hardware in
 November 2025 (`/local/p2/p2soft/_install/configs/config_alinx_channelThresholds_20251107-115622.json`,
 `sd` between about 7 and 21 per channel), so the firmware accepts them.
 
-What does not exist: any way to **read** a threshold. Not the register (write
-only), not the applied state (no dump), not the analog value (measurement
-classes not exposed, §3.5). The only read-back today is indirect, from data:
-the lower edge of each channel's ADC spectrum and its noise rate
-(`cosmic_vmm_analysis/adc_edge_vs_sdt.py`, `baseline_per_vmm.py`).
+Reading back: the registers are write-only and there is no dump of the applied
+state, but the **analog** baseline and threshold of every channel can be
+measured with `vmm_monitor_tool` (9 minutes for all 1280 channels). The
+indirect read-back from data (lower edge of each channel's ADC spectrum, noise
+rate) remains the cross-check.
 
 ---
 

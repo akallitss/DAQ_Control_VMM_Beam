@@ -1,7 +1,10 @@
 # Plan — set and read thresholds per channel
 
 Written 2026-11-12. Background and all file locations: `CODE_MAP.md`.
-Status: **plan only, nothing built, no hardware touched.**
+Status: **steps 1-4 done on 2026-11-13, see `PER_CHANNEL_THRESHOLDS.md` (results and how-to).**
+This file is kept as the record of the plan; where it disagrees with the results (bit order,
+asking the developer), the results are right. Still open: step 5 (GUI panel), a run of
+`adaptive_thr_scan.py --raise-steps` on the stand with HV, the dead blocks on VMM 4/7/9.
 
 ## What "threshold per channel" means on a VMM3a
 
