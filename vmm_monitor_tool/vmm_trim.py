@@ -402,6 +402,33 @@ def cmd_pedestal(a):
     print('wrote', a.out)
 
 
+CHANNEL_BITS = ('sm', 'sl', 'st', 'sth', 'sc', 'smx')
+
+
+def cmd_bit(a):
+    """Set one of the one-bit channel settings (mask sm, leakage sl, test pulse st, ...) on some channels."""
+    ext = ExtFile.load(a.ext)
+    chips = parse_list(a.chip, 0, N_CHIPS - 1, 'chip')
+    channels = parse_list(a.channels, 0, N_CHANNELS - 1, 'channel')
+    for c in chips:
+        hyb, vmm = hyb_vmm(c)
+        keep = []
+        for ln in ext.lines:                    # drop earlier lines for the same channels and field
+            m = LINE_RE.match(ln)
+            if (m and m['field'] == a.field and int(m['hyb']) == hyb and int(m['vmm']) == vmm
+                    and CHAN_RE.match(m['reg']) and int(CHAN_RE.match(m['reg'])[1]) in channels):
+                continue
+            keep.append(ln)
+        ext.lines = keep
+        if a.value:
+            ext.lines.append('# %s 1 on chip %d channels %s%s' % (a.field, c, a.channels, (': ' + a.why) if a.why else ''))
+            for ch in channels:
+                ext.lines.append('Sys 0 Bec 0 Hyb %d Vmm %d Reg channel[%02d] Field %-4s 1' % (hyb, vmm, ch, a.field))
+        print('chip %2d: %s = %d on %d channels' % (c, a.field, a.value, len(channels)))
+    ext.write(a.out, a.force)
+    print('wrote', a.out)
+
+
 def cmd_sdt(a):
     """Move the chip threshold (sdt) of some chips by a number of DAC counts."""
     ext = ExtFile.load(a.ext)
@@ -469,6 +496,14 @@ def main(argv=None):
     s.add_argument('--sdt-per-trim', type=float, default=1.38,
                    help='sdt counts equivalent to one trim step (measured; see the scan tool)')
     s.add_argument('--force', action='store_true'); s.set_defaults(fn=cmd_pedestal)
+
+    s = sub.add_parser('bit', help='set a one-bit channel setting: sm (mask), sl (leakage), st (test pulse), ...')
+    s.add_argument('ext'); s.add_argument('--out', required=True)
+    s.add_argument('--chip', required=True); s.add_argument('--channels', required=True)
+    s.add_argument('--field', required=True, choices=CHANNEL_BITS)
+    s.add_argument('--value', type=int, choices=(0, 1), required=True, help='0 removes the lines (0 is the default)')
+    s.add_argument('--why', default='', help='a few words written as a comment in the file')
+    s.add_argument('--force', action='store_true'); s.set_defaults(fn=cmd_bit)
 
     s = sub.add_parser('sdt', help='move the chip threshold of some chips by a number of DAC counts')
     s.add_argument('ext'); s.add_argument('--out', required=True)
