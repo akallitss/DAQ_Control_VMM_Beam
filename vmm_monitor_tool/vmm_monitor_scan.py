@@ -17,6 +17,7 @@ Commands:
   map       baseline and threshold of every channel of every chip
   trimcurve threshold of a few channels versus trim 0..31 (also proves the bit order)
   sdtcal    threshold-DAC voltage versus sdt: mV per sdt count, per chip
+  refine    second pass of equalize, from a map taken with the trims in place
   equalize  from a map, compute the trims that put every channel of a chip at
             the same distance above its own baseline; writes a trim table
   report    print a map
@@ -162,12 +163,13 @@ def save(path, obj):
 
 
 # ------------------------------------------------------------------- map ----
-def measure_map(mon, channels, repeat=1):
-    """baseline (smx 0) and threshold (smx 1) of the given channels, all chips."""
+def measure_map(mon, channels, repeat=1, extra=()):
+    """baseline (smx 0) and threshold (smx 1) of the given channels, all chips.
+    `extra`: more overlay lines (e.g. sm 0 everywhere: a masked channel shows no baseline)."""
     res = {}
     for name, smx in (('baseline', 0), ('threshold', 1)):
         t0 = time.time()
-        rows = mon.run('chan', channels, all_channel_lines('smx', smx), repeat)
+        rows = mon.run('chan', channels, list(extra) + all_channel_lines('smx', smx), repeat)
         acc = {}
         for _, ch, vals in rows:
             for chip, v in vals.items():
@@ -185,7 +187,9 @@ def cmd_map(a):
         glob = mon.run(['temp', 'thrdac'])
         out['temp_tenth_C'] = {str(c): v for c, v in glob[0][2].items()}
         out['thrdac'] = {str(c): v for c, v in glob[1][2].items()}
-        out.update(measure_map(mon, channels, a.repeat))
+        extra = all_channel_lines('sm', 0) if a.unmask else []
+        out['meta']['measured_unmasked'] = bool(a.unmask)
+        out.update(measure_map(mon, channels, a.repeat, extra))
         if a.ext:
             ext = vmm_trim.ExtFile.load(a.ext)
             out['sdt'] = {str(c): v for c, v in ext.sdt().items()}
@@ -292,53 +296,84 @@ def cmd_sdtcal(a):
 
 
 # -------------------------------------------------------------- equalize ----
-def equalize(m, mv_per_trim, mv_per_sdt, chips, headroom, keep_distance=None):
-    """Trim table that puts every channel of a chip at the same distance above
-    its own baseline.
+def _per_chip(path, key, default):
+    """{chip(str): value} from a trimcurve / sdtcal file, else the default for every chip."""
+    out = {str(c): default for c in range(N_CHIPS)}
+    if path:
+        with open(path) as f:
+            for c, d in json.load(f)['fit'].items():
+                out[c] = abs(d[key])
+    return out
 
-    For a chip, d(ch) = threshold(ch) - baseline(ch) as measured with the
-    trims the map was taken with. Removing those trims gives the distance at
-    trim 0, d0(ch) = d(ch) + old_trim(ch) * step. The trims can only lower a
-    channel, so every channel is brought down to a common target
-        target = min(d0) - headroom * step
-    (`headroom` trim steps are kept free so that single channels can later be
-    RAISED by up to that many steps). The chip sdt is then raised so that the
-    common distance equals what the chip had before (its median distance), or
-    `keep_distance` mV if given.
+
+def equalize(m, mv_per_trim, mv_per_sdt, chips, headroom, keep_distance=None, window=(120.0, 220.0),
+             max_from_median=15.0):
+    """Trim table that puts every channel of a chip at the same distance above
+    its own baseline, keeping `headroom` trim steps free on every channel so
+    that single channels can later be RAISED.
+
+    mv_per_trim, mv_per_sdt: {chip: mV} (measured per chip).
+
+    For a chip, d(ch) = threshold(ch) - baseline(ch) as measured, with the
+    trims the map was taken with. Without those trims the distance would be
+    d0(ch) = d(ch) + old_trim(ch) * step. A trim can only lower a channel, so
+    all channels are brought down to the lowest one, and then all of them
+    `headroom` steps further:
+        trim(ch) = headroom + (d0(ch) - min d0) / step
+    The chip sdt is raised to compensate, so that the common distance is what
+    the chip had before (its median), or `keep_distance` mV if given.
+
+    Channels whose baseline is outside `window` (mV), or whose distance is more
+    than `max_from_median` mV away from the median of their chip, are not normal (dead or
+    displaced baseline): they are left out of the calculation and get the
+    median trim of their chip, so they move with it. They are listed.
     """
-    step = abs(mv_per_trim)
     table, sdt_new, info = {}, {}, {}
     for c in chips:
         cs = str(c)
         if cs not in m['baseline']:
             continue
+        step, per_sdt = mv_per_trim[cs], mv_per_sdt[cs]
         b, t = m['baseline'][cs], m['threshold'][cs]
         old = m.get('trims', {}).get(cs, {})
         chans = sorted(b, key=int)
-        d0 = {ch: t[ch] - b[ch] + old.get(ch, 0) * step for ch in chans}
-        d_before = statistics.median(t[ch] - b[ch] for ch in chans)
-        target = min(d0.values()) - headroom * step
-        trims = {}
-        for ch in chans:
-            trims[ch] = int(round((d0[ch] - target) / step))
-        if max(trims.values()) > 31:
-            # the spread of this chip is larger than the trim range: keep the
-            # majority and let the highest channels stay high (they are the safe side)
-            over = [ch for ch in chans if trims[ch] > 31]
-            for ch in over:
-                trims[ch] = 31
-        want = d_before if keep_distance is None else keep_distance
-        dsdt = int(round((want - target) / mv_per_sdt))
-        table[cs] = {ch: v for ch, v in trims.items()}
-        if 'sdt' in m and cs in m['sdt']:
+        sane = [ch for ch in chans if window[0] <= b[ch] <= window[1]]
+        odd = [ch for ch in chans if ch not in sane]
+        if len(sane) < 8:
+            info[cs] = {'skipped': 'only %d channels with a normal baseline' % len(sane)}
+            continue
+        d0 = {ch: t[ch] - b[ch] + old.get(ch, 0) * step for ch in sane}
+        # a channel far from the rest of its chip (half-displaced baseline) must not set the scale
+        med0 = statistics.median(d0.values())
+        far = [ch for ch in sane if abs(d0[ch] - med0) > max_from_median]
+        sane = [ch for ch in sane if ch not in far]
+        odd += far
+        d0 = {ch: d0[ch] for ch in sane}
+        d_before = [t[ch] - b[ch] for ch in sane]
+        lowest = min(d0.values())
+        trims = {ch: headroom + int(round((d0[ch] - lowest) / step)) for ch in sane}
+        clipped = sorted((ch for ch in sane if trims[ch] > 31), key=int)
+        for ch in clipped:
+            trims[ch] = 31                     # stays a little high: the safe side
+        med_trim = int(statistics.median(trims.values()))
+        for ch in odd:
+            trims[ch] = med_trim
+        common = lowest - headroom * step      # distance of every sane channel after trimming, sdt unchanged
+        want = statistics.median(d_before) if keep_distance is None else keep_distance
+        dsdt = int(round((want - common) / per_sdt))
+        table[cs] = trims
+        if cs in m.get('sdt', {}):
             sdt_new[cs] = m['sdt'][cs] + dsdt
-        resid = [d0[ch] - trims[ch] * step - target for ch in chans]
-        info[cs] = {'distance_before_median_mV': d_before,
-                    'spread_before_rms_mV': statistics.pstdev([t[ch] - b[ch] for ch in chans]),
-                    'expected_spread_after_rms_mV': statistics.pstdev(resid),
-                    'target_distance_mV': want, 'sdt_change': dsdt,
-                    'trim_min': min(trims.values()), 'trim_max': max(trims.values()),
-                    'channels_clipped_at_31': sorted((ch for ch in chans if d0[ch] - 31 * step - target > step), key=int)}
+        after = [d0[ch] - trims[ch] * step + dsdt * per_sdt for ch in sane]
+        info[cs] = {'distance_before_median_mV': statistics.median(d_before),
+                    'spread_before_rms_mV': statistics.pstdev(d_before),
+                    'spread_before_range_mV': [min(d_before), max(d_before)],
+                    'expected_distance_after_mV': statistics.median(after),
+                    'expected_spread_after_rms_mV': statistics.pstdev(after),
+                    'sdt_change': dsdt, 'trim_min': min(trims[ch] for ch in sane),
+                    'trim_max': max(trims[ch] for ch in sane),
+                    'clipped_at_31': clipped, 'odd_baseline_channels': sorted(odd, key=int),
+                    'mv_per_trim': step, 'mv_per_sdt': per_sdt}
     return table, sdt_new, info
 
 
@@ -346,17 +381,69 @@ def cmd_equalize(a):
     with open(a.map) as f:
         m = json.load(f)
     chips = vmm_trim.parse_list(a.chips, 0, N_CHIPS - 1, 'chip')
-    table, sdt_new, info = equalize(m, a.mv_per_trim, a.mv_per_sdt, chips, a.headroom, a.distance)
+    per_trim = _per_chip(a.trimcurve, 'mV_per_trim', a.mv_per_trim)
+    per_sdt = _per_chip(a.sdtcal, 'mV_per_sdt', a.mv_per_sdt)
+    lo, hi = (float(x) for x in a.baseline_window.split(':'))
+    table, sdt_new, info = equalize(m, per_trim, per_sdt, chips, a.headroom, a.distance, (lo, hi))
     save(a.out, {'source_map': os.path.basename(a.map), 'source_ext': m['meta'].get('ext'),
                  'made': datetime.now().isoformat(timespec='seconds'), 'effective_trim': True,
-                 'headroom_steps': a.headroom, 'mv_per_trim': a.mv_per_trim, 'mv_per_sdt': a.mv_per_sdt,
-                 'trims': table, 'sdt': sdt_new, 'info': info})
-    print('chip  spread before -> expected after (mV rms)   distance kept (mV)   sdt change   trims min..max   clipped')
+                 'headroom_steps': a.headroom, 'trims': table, 'sdt': sdt_new, 'info': info})
+    print('chip  distance mV   spread rms mV    range before   sdt     trims    clipped  odd-baseline')
+    print('      before after  before  after                  change  min..max  at 31    channels')
     for c in sorted(info, key=int):
         i = info[c]
-        print('%4s %10.1f -> %5.1f %28.0f %12+d %10d..%-2d   %s' % (
-            c, i['spread_before_rms_mV'], i['expected_spread_after_rms_mV'], i['target_distance_mV'],
-            i['sdt_change'], i['trim_min'], i['trim_max'], ','.join(i['channels_clipped_at_31'])))
+        if 'skipped' in i:
+            print('%4s  skipped: %s' % (c, i['skipped']))
+            continue
+        print('%4s %7.0f %5.0f %7.1f %6.1f %8.0f..%-4.0f %+7d %6d..%-2d %6d    %s' % (
+            c, i['distance_before_median_mV'], i['expected_distance_after_mV'], i['spread_before_rms_mV'],
+            i['expected_spread_after_rms_mV'], i['spread_before_range_mV'][0], i['spread_before_range_mV'][1],
+            i['sdt_change'], i['trim_min'], i['trim_max'], len(i['clipped_at_31']),
+            ','.join(i['odd_baseline_channels'])))
+
+
+def refine(m, mv_per_trim, chips, window=(120.0, 220.0), max_from_median=15.0, min_trim=0):
+    """Second pass: the map was taken WITH trims; correct each channel by the
+    few steps it is still off the chip median. sdt is not changed. Small
+    corrections, so the differences between the trim steps of individual
+    channels (which limit the first pass) hardly matter."""
+    table, info = {}, {}
+    for c in chips:
+        cs = str(c)
+        if cs not in m['baseline']:
+            continue
+        step = mv_per_trim[cs]
+        b, t = m['baseline'][cs], m['threshold'][cs]
+        old = {ch: int(m.get('trims', {}).get(cs, {}).get(ch, 0)) for ch in b}
+        sane = [ch for ch in b if window[0] <= b[ch] <= window[1]]
+        d = {ch: t[ch] - b[ch] for ch in sane}
+        med = statistics.median(d.values())
+        sane = [ch for ch in sane if abs(d[ch] - med) <= max_from_median]
+        med = statistics.median(d[ch] for ch in sane)
+        new = dict(old)
+        for ch in sane:
+            new[ch] = min(31, max(min_trim, old[ch] + int(round((d[ch] - med) / step))))
+        table[cs] = new
+        info[cs] = {'distance_median_mV': med, 'spread_rms_mV': statistics.pstdev(d[ch] for ch in sane),
+                    'channels_changed': sum(1 for ch in sane if new[ch] != old[ch]),
+                    'trim_min': min(new[ch] for ch in sane), 'trim_max': max(new[ch] for ch in sane)}
+    return table, info
+
+
+def cmd_refine(a):
+    with open(a.map) as f:
+        m = json.load(f)
+    chips = vmm_trim.parse_list(a.chips, 0, N_CHIPS - 1, 'chip')
+    lo, hi = (float(x) for x in a.baseline_window.split(':'))
+    table, info = refine(m, _per_chip(a.trimcurve, 'mV_per_trim', a.mv_per_trim), chips, (lo, hi), min_trim=a.min_trim)
+    save(a.out, {'source_map': os.path.basename(a.map), 'source_ext': m['meta'].get('ext'),
+                 'made': datetime.now().isoformat(timespec='seconds'), 'effective_trim': True,
+                 'trims': table, 'sdt': {}, 'info': info})
+    print('chip  distance mV  spread rms mV (as measured)  channels changed  trims min..max')
+    for c in sorted(info, key=int):
+        i = info[c]
+        print('%4s %9.0f %12.1f %22d %10d..%d' % (c, i['distance_median_mV'], i['spread_rms_mV'],
+                                                 i['channels_changed'], i['trim_min'], i['trim_max']))
 
 
 def main():
@@ -374,6 +461,9 @@ def main():
 
     s = sub.add_parser('map'); common(s)
     s.add_argument('--channels', default='all'); s.add_argument('--repeat', type=int, default=1)
+    s.add_argument('--unmask', action='store_true',
+                   help='measure with every mask removed (a masked channel has no baseline to measure); '
+                        'the masks of the file are still recorded in the map')
     s.set_defaults(fn=cmd_map)
 
     s = sub.add_parser('trimcurve'); common(s)
@@ -387,11 +477,24 @@ def main():
     s = sub.add_parser('equalize')
     s.add_argument('--map', required=True); s.add_argument('--out', required=True)
     s.add_argument('--chips', default='2-19')
-    s.add_argument('--headroom', type=int, default=8,
-                   help='trim steps kept free so that single channels can later be raised (default 8, about 9 mV)')
+    s.add_argument('--headroom', type=int, default=12,
+                   help='trim steps kept free on every channel so that it can later be raised (default 12, about 13 mV)')
     s.add_argument('--distance', type=float, help='common threshold-baseline distance wanted, mV (default: keep the chip median)')
-    s.add_argument('--mv-per-trim', type=float, default=1.1); s.add_argument('--mv-per-sdt', type=float, default=0.8)
+    s.add_argument('--trimcurve', help='trimcurve result: mV per trim step of each chip')
+    s.add_argument('--sdtcal', help='sdtcal result: mV per sdt count of each chip')
+    s.add_argument('--mv-per-trim', type=float, default=1.1, help='used for chips without a measurement')
+    s.add_argument('--mv-per-sdt', type=float, default=0.77, help='used for chips without a measurement')
+    s.add_argument('--baseline-window', default='120:220',
+                   help='mV; channels with a baseline outside are not equalised (default 120:220)')
     s.set_defaults(fn=cmd_equalize)
+
+    s = sub.add_parser('refine', help='second equalisation pass from a map taken with trims')
+    s.add_argument('--map', required=True); s.add_argument('--out', required=True)
+    s.add_argument('--chips', default='2-19'); s.add_argument('--trimcurve')
+    s.add_argument('--mv-per-trim', type=float, default=1.1)
+    s.add_argument('--baseline-window', default='120:220')
+    s.add_argument('--min-trim', type=int, default=0, help='never go below this trim (keeps room to raise)')
+    s.set_defaults(fn=cmd_refine)
 
     s = sub.add_parser('report'); s.add_argument('map'); s.set_defaults(fn=cmd_report)
 
