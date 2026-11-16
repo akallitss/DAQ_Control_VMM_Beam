@@ -199,4 +199,65 @@ firmware, cable or gain/peaking-time change (σ and f0 depend on peaking time).
 | blind blocks VMM 4/7/9 | measured with and without `sl 1` |
 | HV-off vs HV-on noise | 4.4 now, 4.7 with HV |
 | the trims only lower | chip level at the highest target + headroom |
-| test files in `config_ext` | named `*_pulsercheck_*` (5 files from this check) |
+| test files in `config_ext` | named `*_pulsercheck_*` (5 files from this check) and `*_step1_c2c3_*` (17 files from step 1) |
+
+## 6. Step 1 done (16 Nov 2026, 17:48–18:09, chips 2 and 3, HV off, no run)
+
+Script `~/trim_work/pulser/step1.sh` (copy: `vmm_monitor_tool/step1_c2c3.sh`), results in `~/trim_work/out/step1/`:
+`map_trimmed_v1_now.json` (fresh monitor map), `ratescan/*.rates.json` (11 thresholds),
+`ratefit.json`, `pulser/*.ped.json` (3 phases × sdp10 80 and 160, 5 s each, pcaps kept),
+`compare.json`. Fit and comparison: `vmm_monitor_tool/noise_ratefit.py` (`fit`, `compare`).
+Start file `trimmed_Km18_v1`; the GUI file (`Km18_i5`) was configured again at the end (rc 0, armed).
+
+**Rate scan.** Chips 2 and 3 moved together by −14 … +10 sdt counts (30 s each); the
+three lowest points filled the 300 MB capture limit within 7–27 s (chip 3 floods first).
+Fit `ln R = a + b·d + c·d²` per channel, d = threshold − baseline from the monitor map,
+points with 1 Hz … 30 kHz and ≥ 30 hits (a common ~0.3 Hz of hits on every channel in
+one capture had to be cut out this way).
+
+| | chip 2 | chip 3 |
+|---|---|---|
+| channels with a 3-parameter fit | 45 / 64 | 61 / 64 |
+| σ (mV), median [range] | 3.6 [2.5 … 5.9] | 3.1 [2.0 … 3.9] |
+| d0 = noise centre − monitor baseline (mV), median | −1.0 | −0.3 |
+| f0 (MHz), median | 0.9 | 0.35 |
+
+- The monitor baseline **is** the noise centre within 1–2 mV for most channels: baseline +
+  n·σ can be computed from our map directly.
+- Measured f0 (0.35–0.9 MHz) is **lower** than the 1.0–2.6 MHz from the transfer function
+  (dead time after each hit, and f0/σ are correlated in a fit over 4–5 decades). For the
+  choice of n, use the measured f0: n = √(2 ln(f0/R)) gives n ≈ 4.0–4.6 for R = 50 Hz.
+- Chip 2 is quieter at its thresholds: 9 channels never fired even 14 counts down
+  (~11 mV) and 8 have only 1–2 usable points. **The scan has to go deeper for chip 2,
+  chip by chip** (one chip flooding stops the capture for the other).
+
+**Pulser σ (ADC) against rate-scan σ (mV)**, all 3 phases, zero-pulse extrapolation:
+
+| | chip 2 | chip 3 |
+|---|---|---|
+| channels compared (well-constrained fits) | 29 | 45 |
+| k = σ_mV / σ_ADC, median | 0.94 mV/ADC | 0.79 mV/ADC |
+| spread of k between channels | 9 % | 20 % |
+| correlation σ_mV vs σ_ADC (r) | 0.57 | 0.45 |
+| ends (ch 0–7) : middle (8–55), σ_mV | 2.98 : 3.60 | 2.87 : 3.29 |
+| ends : middle, σ_ADC | 2.91 : 3.92 | 3.04 : 4.26 |
+
+- Chip 2: the two agree channel by channel within ~9 %, one factor k.
+- Chip 3: the pulser σ grows much more towards the middle of the chip than the rate-scan
+  σ does (middle channels ratio 0.56–0.70, ends ~1.0). The pulser σ also grows with the
+  pulse amplitude (+0.3–0.7 ADC from sdp10 80 to 160). So the neighbour ADC contains
+  something beyond the discriminator noise: pulse-related pick-up and/or noise common
+  to the channels (all 22 pulsed channels fire at the same instant).
+- **Conclusion of step 1**: the pulser method is not (yet) a substitute for the rate
+  scan when setting thresholds. The rate scan measures directly what the
+  discriminator sees, in mV, and agrees with the monitor baseline. The pulser method
+  stays as the fast relative check (HV on/off, cables), once its excess is understood.
+
+**Next, proposed:**
+1. From the kept pulser pcaps (no stand time): event-by-event correlation of the
+   neighbour ADC values between channels of the same pulse (common-mode), and the
+   σ extrapolation done in quadrature; pulse fewer channels at once (every 6th) to
+   see whether the excess scales with the number of pulsed channels.
+2. Rate scan chip by chip, deeper (to −26 counts) and with 1-count steps near the edge,
+   for chips 2–19: ~10 min per chip, ~3 h for all, can run unattended (HV off).
+3. Then the `target` mode (4.5) with σ from the rate scan and f0 measured.

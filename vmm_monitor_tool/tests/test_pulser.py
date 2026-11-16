@@ -66,3 +66,17 @@ def test_merge_combines_L_and_U(tmp_path):
     m = pp.merge([str(a), str(b)])
     c = m['chips']['2']['5']['combined']
     assert c['n'] == 2000 and c['mean'] == 42.0 and abs(c['std'] - (16 + 4) ** 0.5) < 0.01
+
+
+def test_rate_fit_recovers_sigma():
+    import math
+    import noise_ratefit as nr
+    sigma, f0, d0 = 3.2, 1.5e6, 1.0
+    pts = []
+    for d in [x * 1.5 for x in range(2, 16)]:
+        r = f0 * math.exp(-(d - d0) ** 2 / (2 * sigma ** 2))
+        pts.append((d, r, int(r * 30)))
+    fit = nr.fit_channel(pts, 0.3, 30000)
+    assert abs(fit['free']['sigma_mV'] - sigma) < 0.01
+    assert abs(fit['free']['d0_mV'] - d0) < 0.05
+    assert abs(math.log(fit['free']['f0_Hz'] / f0)) < 0.01
