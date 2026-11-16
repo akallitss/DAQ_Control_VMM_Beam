@@ -38,10 +38,20 @@ import vmm_trim  # noqa: E402
 NCH = 64
 
 
-def decode(path, limit_mb=0):
-    """-> chip, channel, adc, over (numpy arrays) and the time span (s) of the capture."""
+def gray2bin(g):
+    b = g.copy()
+    s = g >> 1
+    while s.any():
+        b ^= s
+        s >>= 1
+    return b
+
+
+def decode(path, limit_mb=0, with_bcid=False):
+    """-> chip, channel, adc, over (numpy arrays, in stream order) [+ bcid with with_bcid] and the time
+    span (s) of the capture."""
     limit = int(limit_mb * 1e6) if limit_mb else None
-    out = ([], [], [], [])
+    out = ([], [], [], [], [])
     t0 = t1 = None
     tick = 1e-6
     done = 0
@@ -100,7 +110,11 @@ def decode(path, limit_mb=0):
                 out[1].append(((d2 >> 8) & 0x3F).astype(np.uint8))
                 out[2].append(((d1 >> 12) & 0x3FF).astype(np.uint16))
                 out[3].append(((d2 >> 14) & 1).astype(np.uint8))
+                if with_bcid:
+                    out[4].append(gray2bin((d1 & 0xFFF).astype(np.uint16)))
     arrs = [np.concatenate(x) if x else np.zeros(0, dtype=np.uint16) for x in out]
+    if not with_bcid:
+        arrs = arrs[:4]
     return arrs, ((t1 - t0) if t0 is not None else 0.0)
 
 

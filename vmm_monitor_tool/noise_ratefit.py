@@ -177,6 +177,10 @@ def cmd_compare(a):
                 t = a.amp1 / (a.amp2 - a.amp1)
                 row['sigma_adc_0'] = round(q1['std'] - t * (q2['std'] - q1['std']), 3)
                 row['ped_adc_0'] = round(q1['mean'] - t * (q2['mean'] - q1['mean']), 2)
+                # quadrature: an extra spread proportional to the pulse adds sigma^2 = (kappa a)^2
+                v1, v2 = q1['std'] ** 2, q2['std'] ** 2
+                v0 = v1 - (v2 - v1) * a.amp1 ** 2 / (a.amp2 ** 2 - a.amp1 ** 2)
+                row['sigma_adc_0q'] = round(math.sqrt(v0), 3) if v0 > 0 else None
             for kind in ('fixed', 'free'):
                 if kind in x:
                     row['sigma_mV_' + kind] = x[kind]['sigma_mV']
@@ -184,9 +188,9 @@ def cmd_compare(a):
             rows[k] = row
         summ = {}
         for kind in ('fixed', 'free'):
-            for adc in ('sigma_adc_a1', 'sigma_adc_0'):
+            for adc in ('sigma_adc_a1', 'sigma_adc_0', 'sigma_adc_0q'):
                 pairs = [(r['sigma_mV_' + kind], r[adc]) for r in rows.values()
-                         if ('sigma_mV_' + kind) in r and adc in r and r[adc] > 0.5]
+                         if ('sigma_mV_' + kind) in r and r.get(adc) and r[adc] > 0.5]
                 if len(pairs) >= 5:
                     ratio = [p / q for p, q in pairs]
                     summ['%s_vs_%s' % (kind, adc)] = {

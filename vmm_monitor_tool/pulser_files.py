@@ -37,8 +37,8 @@ import vmm_trim  # noqa: E402
 N_CHANNELS = 64
 
 
-def pulsed_channels(phase):
-    return [ch for ch in range(N_CHANNELS) if ch % 3 == phase]
+def pulsed_channels(phase, stride=3):
+    return [ch for ch in range(N_CHANNELS) if ch % stride == phase]
 
 
 def set_global(ext, chip, reg, field, value, note):
@@ -54,13 +54,13 @@ def set_global(ext, chip, reg, field, value, note):
     ext.lines.append('Sys 0 Bec 0 Hyb %d Vmm %d Reg %s Field %s %d # %s' % (hyb, vmm, reg, field, value, note))
 
 
-def make(base, chips, phase, sdp10, unmask, sng=1):
+def make(base, chips, phase, sdp10, unmask, sng=1, stride=3):
     ext = vmm_trim.ExtFile.load(base)
-    pulsed = pulsed_channels(phase)
+    pulsed = pulsed_channels(phase, stride)
     report = {}
     ext.lines.append('')
-    ext.lines.append('# ---- pedestal/noise with the internal pulser: phase %d (st 1 on ch %% 3 == %d), '
-                     'sng %d, sdp10 %d, chips %s' % (phase, phase, sng, sdp10, ','.join(map(str, chips))))
+    ext.lines.append('# ---- pedestal/noise with the internal pulser: phase %d (st 1 on ch %% %d == %d), '
+                     'sng %d, sdp10 %d, chips %s' % (phase, stride, phase, sng, sdp10, ','.join(map(str, chips))))
     for c in chips:
         hyb, vmm = vmm_trim.hyb_vmm(c)
         unmasked = ext.unmask(c, list(range(N_CHANNELS))) if unmask else []
@@ -87,7 +87,8 @@ def main(argv=None):
     ap.add_argument('--out', help='output file (one phase)')
     ap.add_argument('--out-prefix', help='with --all-phases: PREFIX_p0.txt ... PREFIX_p2.txt')
     ap.add_argument('--chips', required=True, help='chips (0..19), e.g. 2,3 or 2-19')
-    ap.add_argument('--phase', type=int, choices=(0, 1, 2), default=0)
+    ap.add_argument('--phase', type=int, default=0)
+    ap.add_argument('--stride', type=int, default=3, help='pulse every N-th channel (3 = the standard method)')
     ap.add_argument('--all-phases', action='store_true')
     ap.add_argument('--sdp10', type=int, required=True, help='pulser DAC (0..1023); 40 gave 100%% efficiency at K=-18')
     ap.add_argument('--unmask', action='store_true', help='remove the masks of these chips (masked channels give no data)')
@@ -105,7 +106,7 @@ def main(argv=None):
             ap.error('--out is required (or --all-phases --out-prefix)')
         jobs = [(a.phase, a.out)]
     for phase, out in jobs:
-        ext, rep = make(a.base, chips, phase, a.sdp10, a.unmask)
+        ext, rep = make(a.base, chips, phase, a.sdp10, a.unmask, stride=a.stride)
         ext.write(out, a.force)
         for c, r in rep.items():
             print('chip %2d phase %d: %d pulsed channels, unmasked %s, still masked %s'

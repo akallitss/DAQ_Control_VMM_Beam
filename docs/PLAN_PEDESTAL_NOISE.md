@@ -261,3 +261,58 @@ one capture had to be cut out this way).
 2. Rate scan chip by chip, deeper (to −26 counts) and with 1-count steps near the edge,
    for chips 2–19: ~10 min per chip, ~3 h for all, can run unattended (HV off).
 3. Then the `target` mode (4.5) with σ from the rate scan and f0 measured.
+
+## 7. Where the extra pulser spread comes from (16 Nov 2026, 18:15–18:45)
+
+Tool: `vmm_monitor_tool/pulser_commonmode.py`. With the pulser, every pulse gives one
+hit per channel, read out in channel order 0..63, so each pulse can be rebuilt as one
+event (64 ADC values). Per event: CM = mean deviation of the neighbour channels from
+their pedestals; per channel the part following CM is fitted (coefficient β) and removed.
+
+Data: the 6 step-1 captures (3 phases × sdp10 80/160, threshold +40) and 4 new 5 s
+captures, phase 0 (`~/trim_work/out/step1b/`, script `vmm_monitor_tool/step1b_c2c3.sh`):
+every 6th channel pulsed at sdp10 80 (threshold +40); and at the normal `trimmed_v1`
+thresholds, every 3rd channel at sdp10 25 and 40 and every 6th at sdp10 40.
+At the normal thresholds sdp10 25 is enough: every pulsed channel counts 10.85 kHz,
+and the quiet `trimmed_v1` file needs no threshold raise (no contamination seen).
+
+| | chip 2 | chip 3 |
+|---|---|---|
+| CM spread per pulse (ADC) | 3.0–3.5 | 2.8–3.2 |
+| expected if the channels were independent | 0.6–1.0 | 0.6–0.9 |
+| mean correlation of neighbour pairs, near (≤3 ch) / far (≥10 ch) | 0.53–0.68 / 0.45–0.64 | 0.45–0.63 / 0.36–0.59 |
+| correlation of CM with the pulsed channels' ADC | 0.5–0.89 | 0.70–0.88 |
+| σ after removing CM, ends / middle (ADC) | 2.2–2.6 / 2.4–3.3 | 2.1–2.5 / 2.6–3.9 |
+
+What this shows:
+- **Most of the neighbour spread is one common shift of the whole chip per pulse**,
+  ~3 ADC, almost the same for neighbours next to each other and far apart. It also
+  moves the pulsed channels (hence the correlation with the pulse ADC).
+- **It does not depend on the pulse**: the same ~3 ADC for sdp10 25, 40, 80, 160 and with
+  half as many pulsed channels (every 6th). So it is not crosstalk proportional to the
+  pulse; it is a baseline shift of the chip at the moment of the read-out.
+- After removing it, the middle-vs-end difference is smaller, especially with every 6th
+  channel pulsed (ratio middle/ends 1.09–1.17, rate scan 1.15–1.21); with every 3rd
+  channel pulsed it stays 1.2–1.5.
+- Channel by channel the corrected pulser σ still does **not** follow the rate-scan σ
+  (r = 0.07–0.49, k = 1.1–1.5 mV/ADC depending on the settings).
+
+What it does **not** tell: whether that common shift also exists without the pulser
+(real low-frequency common noise that the discriminator sees, and that the rate scan
+includes) or is produced by the test-pulse injection itself (same for every amplitude).
+Part of the poor channel-by-channel agreement can also come from the rate scan's own
+precision (few points per channel on chip 2), which has not been measured yet.
+
+**Status of the pulser method**: fast and stable at chip level (pedestal, a σ per chip,
+a 3-ADC common mode per pulse), but not yet usable for **per-channel** thresholds.
+The rate scan stays the method for the thresholds.
+
+**Next, proposed:**
+1. Repeat the rate scan of chip 3 once (≈10 min, HV off) to measure how reproducible
+   the rate-scan σ is per channel. That fixes how good any agreement can be.
+2. Neighbour read-out **without the pulser**: one channel of a chip set at its noise edge
+   (trim) so that it fires at ~1 kHz by noise; its neighbours are then read at random
+   moments, with no injection. If their σ equals the CM-corrected pulser σ, the common
+   shift comes from the injection; if it equals the raw pulser σ, it is real noise.
+3. Meanwhile the per-chip deep rate scan (section 6, next 2) can start: it does not
+   depend on this.
