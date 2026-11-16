@@ -82,3 +82,16 @@ def test_detector_and_given_up():
     assert not HV.all_at_target(ch)
     assert HV.all_at_target(ch, skip={'N1471:0', 'N1471:1'})
     assert not HV.all_at_target(ch, skip=set(HV.TARGETS))     # nothing left is not "ok"
+
+
+def test_capture_point_recovers_from_a_stall(monkeypatch, tmp_path):
+    seq = [(0.0, {'live_s': 0.0, 'hits': {}}),                         # stalled chunk
+           (5.0, {'live_s': 60.0, 'hits': {'0': {'41': 20000}, '2': {'3': 10}}}),
+           (5.0, {'live_s': 60.0, 'hits': {'0': {'41': 20000}, '2': {'3': 5}}})]
+    calls = {'apply': 0}
+    monkeypatch.setattr(BS, 'capture_chunk', lambda p, s, m: seq.pop(0))
+    monkeypatch.setattr(BS.NP, 'select_and_apply', lambda name: calls.__setitem__('apply', calls['apply'] + 1))
+    monkeypatch.setattr(BS.shutil, 'copy', lambda a, b: None)
+    hits, live, mb, nrec = BS.capture_point('x.txt', 120, 60, 300, str(tmp_path), 'p00')
+    assert nrec == 1 and calls['apply'] == 1
+    assert live == 120.0 and hits['2']['3'] == 15 and mb == 10.0

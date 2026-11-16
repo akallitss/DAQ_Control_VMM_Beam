@@ -176,7 +176,7 @@ def capture_point(path, seconds, chunk_s, max_mb, out, i):
         mb, res = capture_chunk(pcap, s, max_mb)
         if stalled(res):
             nrec += 1
-            log('point %d: chunk with no heartbeat (%.2f MB, live %.1f s): full configure and capture again'
+            log('point %s: chunk with no heartbeat (%.2f MB, live %.1f s): full configure and capture again'
                 % (i, mb, res['live_s']))
             if nrec > 3:
                 raise FR.Abort('read-out stalled 4 times at one point')
