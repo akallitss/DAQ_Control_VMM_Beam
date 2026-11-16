@@ -1,0 +1,17 @@
+[21:22:39] GUI selection before: p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_safe_m9c16to21_m4c36to41_h0open_adwk2_Km18_i5.txt
+[21:22:39] configure: p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_fastscan_heal_g1.txt
+[21:23:06] captured 199.5 MB
+[21:23:11] 32776740 hits in 10.1 s live -> out/fastscan_20261116/full/diag/d_heal/p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_fastscan_heal_g1.rates.json
+[21:23:11] configure: p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_fastscan_heal_g2.txt
+[21:23:39] captured 264.3 MB
+[21:23:46] 43458608 hits in 10.0 s live -> out/fastscan_20261116/full/diag/d_heal/p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_fastscan_heal_g2.rates.json
+[21:23:46] configure: p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_fastscan_heal_g3.txt
+[21:24:13] captured 216.9 MB
+[21:24:17] 35640208 hits in 10.1 s live -> out/fastscan_20261116/full/diag/d_heal/p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_fastscan_heal_g3.rates.json
+[21:24:18] configure: p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_fastscan_heal_g4.txt
+[21:24:45] captured 229.5 MB
+[21:24:50] 37722068 hits in 10.1 s live -> out/fastscan_20261116/full/diag/d_heal/p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_fastscan_heal_g4.rates.json
+[21:24:50] configure: p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_fastscan_trimmed_v1_sdtm6.txt
+[21:25:17] captured 136.4 MB
+[21:25:21] 22369308 hits in 10.0 s live -> out/fastscan_20261116/full/diag/d_heal/p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_fastscan_trimmed_v1_sdtm6.rates.json
+[21:25:21] restoring the chips to p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_safe_m9c16to21_m4c36to41_h0open_adwk2_Km18_i5.txt

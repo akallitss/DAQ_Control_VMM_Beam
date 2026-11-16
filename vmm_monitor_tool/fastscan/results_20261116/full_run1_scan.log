@@ -1,0 +1,45 @@
+[20:29:15] fast_ratescan start: chips 2-19, offsets +4..-24, 15 s per point; args {'out_dir': '/local/home/ak271430/trim_work/out/fastscan_20261116/full', 'chips': '2-19', 'top': 4, 'bottom': -24, 'seconds': 15, 'max_mb': 300, 'ref_seconds': 30, 'mask_hz': 10000.0, 'stuck_min_hz': 1000.0, 'chip_max_hz': 1000000.0, 'leave_at': 60, 'no_maps': False, 'no_refs': False, 'restore': 'p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_safe_m9c16to21_m4c36to41_h0open_adwk2_Km18_i5.txt', 'dry_run': False}
+[20:29:15] HV {'P2_IN_Drift': 0.5, 'P2_IN_Mesh': 0.0, 'P2_MID_Drift': 0.245, 'P2_MID_Mesh': 0.484, 'P2_OUT_Drift': 0.0, 'P2_OUT_Mesh': 0.0}
+[20:29:15] GUI selection before: p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_safe_m9c16to21_m4c36to41_h0open_adwk2_Km18_i5.txt
+[20:29:17] links before: {0: 4, 1: 4, 2: 4, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4, 8: 4, 9: 4}
+[20:29:17] wrote /local/p2/p2testbench/TestBenchCERN/config_ext/p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_fastscan_trimmed_v1_sdtm6.txt
+[20:30:08] reference step1_c2c3_ratescan_sdtm6.txt: 23 MB, 3428928 hits in 30.0 s, links 4444444444
+[20:31:05] reference fastscan_trimmed_v1_sdtm6.txt: 258 MB, 42139764 hits in 30.1 s, links 4444444444
+[20:40:03] monitor map map_start.json in 538 s
+[20:40:06] links at the start of the sweep: {0: 4, 1: 4, 2: 4, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4, 8: 4, 9: 4}
+[20:40:33] pt  0 off  +4  write 3.8 s  cap 20.3 s (1 MB, live 15.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 1)  27 s | all chips < 1 kHz
+[20:41:00] pt  1 off  +3  write 3.8 s  cap 20.3 s (1 MB, live 15.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 1)  27 s | all chips < 1 kHz
+[20:41:27] pt  2 off  +2  write 3.8 s  cap 20.3 s (1 MB, live 15.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 1)  27 s | all chips < 1 kHz
+[20:41:55] pt  3 off  +1  write 3.8 s  cap 20.3 s (1 MB, live 15.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 1)  27 s | all chips < 1 kHz
+[20:42:22] pt  4 off  +0  write 3.8 s  cap 20.3 s (2 MB, live 14.9 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 1)  27 s | all chips < 1 kHz
+[20:42:49] pt  5 off  -1  write 3.8 s  cap 20.3 s (3 MB, live 14.9 s)  links 4444444444  total 0.01 MHz  +0 masks (sum 1)  27 s | 4:1k 10:1k 11:1k 13:1k 14:1k 15:2k 17:1k
+[20:43:16] pt  6 off  -2  write 3.8 s  cap 20.3 s (5 MB, live 15.0 s)  links 4444444444  total 0.04 MHz  +0 masks (sum 1)  27 s | 3:2k 4:3k 5:2k 8:1k 9:1k 10:3k 11:3k 13:3k 14:4k 15:5k 17:4k 18:2k 19:1k
+[20:43:44] pt  7 off  -3  write 3.8 s  cap 20.3 s (10 MB, live 15.0 s)  links 4444444444  total 0.10 MHz  +0 masks (sum 1)  27 s | 3:6k 4:9k 5:5k 8:3k 9:2k 10:8k 11:10k 12:2k 13:10k 14:11k 15:13k 16:2k 17:10k 18:4k 19:3k
+[20:44:11] pt  8 off  -4  write 3.8 s  cap 20.2 s (25 MB, live 15.0 s)  links 4444444444  total 0.26 MHz  +0 masks (sum 1)  28 s | 2:2k 3:15k 4:21k 5:14k 8:6k 9:7k 10:21k 11:25k 12:4k 13:25k 14:28k 15:38k 16:4k 17:27k 18:10k 19:7k
+[20:44:40] pt  9 off  -5  write 3.8 s  cap 20.2 s (58 MB, live 15.1 s)  links 4444444444  total 0.62 MHz  +3 masks (sum 4)  29 s | 2:4k 3:39k 4:48k 5:35k 7:2k 8:14k 9:15k 10:51k 11:61k 12:10k 13:56k 14:68k 15:99k 16:11k 17:65k 18:21k 19:18k
+[20:45:10] pt 10 off  -6  write 3.8 s  cap 20.1 s (119 MB, live 15.1 s)  links 4444444444  total 1.29 MHz  +19 masks (sum 23)  30 s | 2:8k 3:92k 4:76k 5:84k 7:5k 8:32k 9:36k 10:115k 11:138k 12:24k 13:120k 14:143k 15:164k 16:24k 17:143k 18:45k 19:39k
+[20:45:42] pt 11 off  -7  write 3.8 s  cap 20.3 s (191 MB, live 15.0 s)  links 4444444444  total 2.09 MHz  +66 masks (sum 89)  32 s | 2:17k 3:166k 4:154k 5:119k 7:12k 8:62k 9:75k 10:131k 11:255k 12:51k 13:227k 14:161k 15:169k 16:52k 17:264k 18:86k 19:86k
+[20:46:08] pt 12 off  -8  write 3.8 s  cap 20.1 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +257 masks (sum 346)  27 s | all chips < 1 kHz
+[20:46:35] pt 13 off  -9  write 3.8 s  cap 20.1 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:47:01] pt 14 off -10  write 3.8 s  cap 20.1 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:47:28] pt 15 off -11  write 3.8 s  cap 20.1 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:47:54] pt 16 off -12  write 3.8 s  cap 20.1 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:48:21] pt 17 off -13  write 3.8 s  cap 20.1 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:48:48] pt 18 off -14  write 3.8 s  cap 20.0 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:49:14] pt 19 off -15  write 3.8 s  cap 20.1 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:49:41] pt 20 off -16  write 3.8 s  cap 20.0 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:50:07] pt 21 off -17  write 3.8 s  cap 20.1 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:50:34] pt 22 off -18  write 3.8 s  cap 20.1 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:51:00] pt 23 off -19  write 3.8 s  cap 20.0 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:51:27] pt 24 off -20  write 3.8 s  cap 20.1 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:51:53] pt 25 off -21  write 3.8 s  cap 20.0 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:52:21] pt 26 off -22  write 3.8 s  cap 20.6 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:52:48] pt 27 off -23  write 3.8 s  cap 20.6 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:53:15] pt 28 off -24  write 3.8 s  cap 20.5 s (0 MB, live 0.0 s)  links 4444444444  total 0.00 MHz  +0 masks (sum 346)  27 s | all chips < 1 kHz
+[20:53:15] sweep done: 346 channels masked in total, chips left: []
+[20:54:06] reference step1_c2c3_ratescan_sdtm6.txt: 21 MB, 2993387 hits in 30.0 s, links 4444444444
+[20:55:04] reference fastscan_trimmed_v1_sdtm6.txt: 247 MB, 40273652 hits in 30.0 s, links 4444444444
+[21:04:02] monitor map map_end.json in 537 s
+[21:04:02] restoring p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_safe_m9c16to21_m4c36to41_h0open_adwk2_Km18_i5.txt
+[21:04:16] restored; links {0: 4, 1: 4, 2: 4, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4, 8: 4, 9: 4}
+[21:04:16] ALLDONE status: ok
