@@ -11,7 +11,10 @@
 >   **nothing** (links still 4) until a full configure; (2) channels held at/below their
 >   baseline for minutes go **silent on noise**, survive warm reset + configure, and are
 >   **brought back by test pulses**. §9.3 of PLAN (the 12 chip-3 channels) was effect (2).
-> - Next: the `target` mode (§5.1) from `fit_full2.json`.
+> - **Target mode done (22:20–22:54, §10)**: `config_ext/…_cosmic_target50_p2_rt3.txt` puts
+>   every channel at ~50 Hz of its own noise (HV off): measured per-channel median 30 Hz,
+>   p90 70 Hz, p99 ~100 Hz; thresholds 4.7 mV lower than `trimmed_Km18_v1` (median).
+>   Not yet tried with HV or in a cosmic run.
 
 For the next session. Read this first, then `PLAN_PEDESTAL_NOISE.md` (the full lab
 notebook of 16 Nov, §6–9 are the measurements), `PER_CHANNEL_THRESHOLDS.md` (the trim
@@ -67,6 +70,8 @@ sync by `scp` after every change (the box runs `main`, not this branch).
 | `noise_ratefit.py fit --map MAP --sdtcal out/sdtcal.json --rates DIR --chips … --out FIT.json` | per-channel σ fit (both centre-fixed and free) from a directory of `*.rates.json`; reads each capture's sdt from its exception file. Robust rules: only points above the channel's highest-rate point; walking up, stop at the first point < 3 Hz or < 30 hits; skip captures with a chip above 1 MHz |
 | `noise_ratefit.py fitmaps --pairs RATES:MAP …` | same with a monitor map per point (no DAC calibration) |
 | `noise_ratefit.py repeat FIT1 FIT2` | per-channel reproducibility |
+| `vmm_monitor_scan.py target …` | thresholds at a noise rate per channel from a rate-scan fit (§10) |
+| `rate_tune.py --ext F --map MAP --fit FIT --out-dir D` | closed-loop trim tuning on the measured rate (§10) |
 | `fastscan/vmm_only_config.py` | `p2basket_sc_config.py` without warm reset and FEC/hybrid write (run with `/local/p2/deploy/bin/p2basket-python`, cwd `TestBenchCERN`) |
 | `step1_c2c3.sh`, `step1b_c2c3.sh`, `step1c_c2c3.sh` | the chains run on 16 Nov (examples of a safe chain: HV check, restore at the end) |
 
@@ -256,3 +261,48 @@ each run are kept (`full2/` 97 MB).
 
 **9.5 Next** (§5): `target` mode from `full2/fit_full2.json` + `full/map_start.json`;
 channels with quality ≠ ok, or σ < 2 mV, listed and left at the chip level.
+
+## 10. Target mode: every channel at 50 Hz of its own noise (16 Nov 2026, 22:20–22:54, HV off)
+
+Files in `~/trim_work/out/fastscan_20261116/target/`; exception files in `config_ext/`
+(`…_cosmic_target50_p1.txt`, `_p2`, `_p2_rt1..3`). **Result: `…_cosmic_target50_p2_rt3.txt`.**
+
+1. **`vmm_monitor_scan.py target`** (from `full/map_start.json` = map of `trimmed_Km18_v1`, and
+   `full2/fit_full2.json`). Target per channel = where its **measured** scan curve crosses R = 50 Hz
+   (log-linear between the two points around it), not n·σ of the centre-fixed fit: ~150 channels
+   have their noise centre 4–9 mV below the monitor baseline, where that fit gives σ 1–2 mV and
+   f0 1–25 kHz (wrong model), while the measured crossing is right. Model n·σ only if not
+   bracketed (10 channels). Floor 6 mV above the monitor baseline (136 channels). Chip sdt set so
+   that the highest-target channel has trim 2; trims rounded towards the higher threshold.
+   Targets: chip medians 9.5–14.4 mV above baseline (n ≈ 3.9–4.1 σ); sdt −7…−26 counts.
+2. **Monitor map of pass 1** (`map_p1.json`): measured − target = +0.6 mV median, 1.0 mV rms.
+   **Pass 2** (`target --keep-sdt` on that map) did not improve it (1.3 mV rms in `map_p2.json`):
+   the monitor reads in 1 mV steps, so maps cannot place channels better than ~1 mV, i.e. a
+   factor ~5 in rate at 50 Hz. 60 s capture of pass 2 (`noise_ratefit.py checktarget`):
+   per-channel median 38 Hz but p90 253 Hz, p99 1.3 kHz, sum 134 kHz vs 41 kHz predicted.
+3. **`rate_tune.py`** (closed loop on the measured rate; step per channel from the local slope of
+   its own scan curve: raise above 2R, lower below R/4 by ≤ 2 steps, never closer than 6 mV;
+   channels > 10 kHz = bursts, not tuned). Converged in one iteration:
+
+   | file | median | p75 | p90 | p99 | channels > 100 Hz | sum (no bursts) |
+   |---|---|---|---|---|---|---|
+   | `target50_p2` | 38 Hz | 102 | 255 | 1365 | 297 | 133 kHz |
+   | `_rt1` | 29 | 49 | 72 | 103 | 19 | 40 kHz |
+   | `_rt2` | 30 | 48 | 71 | 99 | 11 | 42 kHz |
+   | **`_rt3`** | **30** | **49** | **70** | **102** | 14 | 41 kHz |
+
+   The 11–19 channels above 100 Hz change from capture to capture (noise fluctuation and
+   1-step quantisation); further iterations only move them back and forth.
+4. **Against `trimmed_Km18_v1`** (same 60 s, `probe/`): its channels are quiet (4.5 kHz in total
+   without bursts). `rt3` thresholds are **4.7 mV lower** (median; p10 −10.8, p90 −0.5 mV), at
+   12.5 mV above baseline (median; p10 7.1, p90 17.7). Trims 0…31 (2 channels at 0, 2 at 31).
+   Masked: chip 16 ch33 only (as in `trimmed_v1`).
+5. **Burst channels**, not tuned: chip 10 ch22 (38 kHz in `rt3`; 302 kHz in `trimmed_v1`; seen in
+   every capture since 21:33, so this one is persistent) and chip 13 ch4 (109 kHz in the last
+   capture). At 300 kHz, chip 10 ch22 alone would come close to the rate guard's
+   100 MB/min: mask it for a run if it stays there.
+
+**Next**: with the user, HV on + gas: `rate_tune.py` again with HV (detector noise is added on
+top; same tool, start from `rt3`), then a cosmic run with the scintillator trigger against
+`trimmed_Km18_v1` (efficiency vs threshold). Before physics data: pulse all channels once (§9.2)
+if any deep test was done.

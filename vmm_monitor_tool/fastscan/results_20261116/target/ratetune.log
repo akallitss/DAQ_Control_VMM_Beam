@@ -1,0 +1,6 @@
+[22:49:46] iteration 0 (p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_target50_p2.txt): per-channel median 38 Hz, p75 102, p90 255, p99 1365; 297 channels > 100 Hz; sum without bursts 133406 Hz; 473 trim changes next
+[22:51:05] iteration 1 (p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_target50_p2_rt1.txt): per-channel median 29 Hz, p75 49, p90 72, p99 103; 19 channels > 100 Hz; sum without bursts 39934 Hz; 138 trim changes next
+[22:52:24] iteration 2 (p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_target50_p2_rt2.txt): per-channel median 30 Hz, p75 48, p90 71, p99 99; 11 channels > 100 Hz; sum without bursts 41872 Hz; 62 trim changes next
+[22:53:43] iteration 3 (p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_target50_p2_rt3.txt): per-channel median 30 Hz, p75 49, p90 70, p99 102; 14 channels > 100 Hz; sum without bursts 41483 Hz; 39 trim changes next
+[22:53:43] restoring p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_safe_m9c16to21_m4c36to41_h0open_adwk2_Km18_i5.txt
+[22:53:55] ALLDONE last file p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_target50_p2_rt3.txt
