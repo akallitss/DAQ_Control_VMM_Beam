@@ -316,3 +316,61 @@ The rate scan stays the method for the thresholds.
    shift comes from the injection; if it equals the raw pulser σ, it is real noise.
 3. Meanwhile the per-chip deep rate scan (section 6, next 2) can start: it does not
    depend on this.
+
+**Decision (16 Nov evening, user):** calibrate with the monitor read-back (baseline) and
+the rate scan (σ); the pulser method is kept for later (open question: origin of the
+~3 ADC common shift).
+
+## 8. How good is the rate-scan σ? (16 Nov 2026, 19:13–19:38, chips 2–3, HV off, no run)
+
+Script `vmm_monitor_tool/step1c_c2c3.sh`, data `~/trim_work/out/step1c/`.
+
+**A. Repeat** of the step-1 sdt scan with the same 11 files, 75 min later. The raw rates
+agree within a few % at every point from sdt 0 to −10 counts. The first fit did not
+reproduce, because of two kinds of bad points that the fit now rejects
+(`noise_ratefit.py`):
+- a whole-chip burst during one capture gives ~1 Hz on every channel far above its noise
+  (both scans had one, at different points) → walking up in threshold, the first point
+  below 3 Hz ends the usable range;
+- at the lowest points chip 3 counts 3–5 MHz in total and saturates; and when the
+  threshold is within ~2 mV of the baseline a channel's count falls again (down to 0:
+  the comparator stays high) → captures with a chip above 1 MHz are skipped, and only
+  points above a channel's highest rate are used.
+
+With these rules (σ in mV, channels with ≥ 4 points):
+
+| | chip 2 | chip 3 |
+|---|---|---|
+| σ median, scan A / repeat B (centre fixed at the monitor baseline) | 3.48 / 3.52 | 3.22 / 3.20 |
+| per-channel reproducibility, centre fixed | **0.7 %** (r 0.99) | **0.5 %** (r 1.00) |
+| per-channel reproducibility, centre free | 8.5 % (r 0.25) | 7.7 % (r 0.45) |
+| noise centre − monitor baseline, median (free fit) | +1.1 … +2.4 mV | −1.9 … −0.2 mV |
+| f0 median (free fit) | 0.4–0.7 MHz | 1.2–1.4 MHz |
+
+The 3-parameter fit is too loose with 3–6 points per channel; the fit with the centre at
+the monitor baseline is very reproducible. Chip 3's f0 now matches the transfer-function
+value (1.0 MHz for white current noise at 200 ns).
+
+**B. Trim scan**: only 8 channels of chip 3 (3, 7, 10, 24, 25, 39, 46, 52) lowered with
+their own trim (+0 … +14 steps), the rest of the chip unchanged; each point has its own
+monitor map, so the threshold axis uses no DAC calibration at all. σ (centre fixed),
+trim scan vs sdt scans A / B:
+
+| ch | 3 | 7 | 10 | 24 | 25 | 39 | 46 | 52 |
+|---|---|---|---|---|---|---|---|---|
+| trim scan | 2.35 | 3.45 | 2.88 | 3.42 | 3.34 | 2.90 | 2.61 | 2.74 |
+| sdt scan A / B | 2.55 / 2.80 | 3.41 / 3.39 | 2.74 / 2.72 | 3.34 / 3.31 | 3.63 / 3.63 | 2.86 / 3.05 | – / 3.04 | 2.73 / 2.75 |
+
+Agreement within 0–15 %, typically ~3 %, with a different DAC, the threshold read
+directly, and only 8 channels firing instead of 64: no sign of chip-wide effects
+(dead time, saturation, common noise switched on by the flood) in the sdt scan, and the
+trim and sdt calibrations are consistent. (Both DACs were calibrated with the monitor, so
+a wrong monitor mV scale would not show here; nothing points to one.)
+
+**Limits seen**: the monitor reads in 1 mV steps; with 2–4 sdt counts between points
+a channel has only 3–6 points between 3 Hz and 30 kHz. → For the full scan:
+**1-count steps (~0.8 mV) over the noise window**, so each channel gets ~10 points.
+
+**Conclusion**: per channel, the rate-scan σ with the centre at the monitor baseline is
+reproducible to < 1 % and agrees with an independent single-channel trim scan to a few %.
+It can be used for baseline + n·σ.

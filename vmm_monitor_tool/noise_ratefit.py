@@ -14,7 +14,7 @@ monitor map (threshold - baseline, mV, at the map's sdt) plus the sdt shift of
 the capture times the chip's mV per sdt count (sdtcal). Two fits per channel:
     fixed : d0 = 0  (the monitor baseline is the noise centre); ln R linear in d^2
     free  : d0 free (offset between the monitor reading and the comparator)
-Points used: rate between --rmin and --rmax (default 0.3 Hz .. 30 kHz), weight =
+Points used: rate between --rmin and --rmax (default 3 Hz .. 30 kHz), weight =
 number of hits (Poisson). Standard library only.
 
     noise_ratefit.py fit --map MAP.json --sdtcal sdtcal.json --rates DIR --chips 2,3 --out FIT.json
@@ -61,8 +61,22 @@ def wlstsq(X, y, w):
 
 
 def fit_channel(pts, rmin, rmax):
-    """pts = [(d_mV, rate_Hz, hits)]. Returns dict with the fixed and free fits."""
-    use = [(d, r, h) for d, r, h in pts if rmin <= r <= rmax and h >= 30]
+    """pts = [(d_mV, rate_Hz, hits)]. Returns dict with the fixed and free fits.
+
+    Noise rates must fall with the threshold. Walking up in d, the first point below rmin (or with
+    fewer than 30 hits) ends the usable range: points above it are not noise of this channel
+    (e.g. a burst of the whole chip during one capture) and are ignored."""
+    use = []
+    pts = sorted(pts)
+    # below the point of highest rate the comparator sits high most of the time and the count
+    # falls again (down to 0): only the side above the maximum is the noise tail
+    start = max(range(len(pts)), key=lambda i: pts[i][1]) if pts else 0
+    for d, r, h in pts[start:]:
+        if r > rmax:
+            continue
+        if r < rmin or h < 30:
+            break
+        use.append((d, r, h))
     out = {'n_points': len(use)}
     # Poisson weight (1/var of ln R = hits), capped: beyond a few hundred hits the model, not the
     # counting statistics, limits a point, and the highest-rate points must not dominate.
@@ -95,7 +109,8 @@ def cmd_fit(a):
         r = json.load(open(f))
         fin = vmm_trim.ExtFile.load(os.path.join(a.ext_dir, r['ext'])).final()
         sdt = {c: 64 * fin[(c, 'bank1spi2', 'sdt')] + fin[(c, 'bank1spi1', 'sdt')] for c in chips}
-        scans.append((r, sdt))
+        tot = {c: sum(r['hits'].get(str(c), {}).values()) / r['live_s'] for c in chips}
+        scans.append((r, sdt, tot))
     res = {'map': os.path.basename(a.map), 'rates': [os.path.basename(f) for f in files], 'chips': {}}
     for c in chips:
         cs = str(c)
@@ -108,7 +123,9 @@ def cmd_fit(a):
                 continue
             d_map = m['threshold'][cs][k_] - m['baseline'][cs][k_]
             pts = []
-            for r, sdt in scans:
+            for r, sdt, tot in scans:
+                if tot[c] > a.chip_max_hz:          # chip saturated: counting not reliable
+                    continue
                 h = r['hits'].get(cs, {}).get(k_, 0)
                 pts.append((d_map + (sdt[c] - sdt_map) * k, h / r['live_s'], h))
             fit = fit_channel(pts, a.rmin, a.rmax)
@@ -127,6 +144,59 @@ def cmd_fit(a):
                  len(fr), S.median(fr) if fr else -1, S.median(d0) if d0 else 0, (S.median(f0) / 1e6) if f0 else 0))
     json.dump(res, open(a.out, 'w'), indent=1)
     print('wrote', a.out)
+
+
+def cmd_fitmaps(a):
+    """Like fit, but every capture has its own monitor map (taken with the same file just before), so d is
+    the MEASURED threshold - baseline of each channel at each point: no DAC calibration is used."""
+    chips = vmm_trim.parse_list(a.chips, 0, vmm_trim.N_CHIPS - 1, 'chip')
+    pairs = []
+    for p in a.pairs:
+        rf, mf = p.split(':')
+        pairs.append((json.load(open(rf)), json.load(open(mf))))
+    res = {'pairs': a.pairs, 'chips': {}}
+    for c in chips:
+        cs = str(c)
+        chans = {}
+        for ch in vmm_trim.parse_list(a.channels, 0, 63, 'channel'):
+            k_ = str(ch)
+            pts = []
+            for r, m in pairs:
+                if k_ not in m['baseline'].get(cs, {}):
+                    continue
+                h = r['hits'].get(cs, {}).get(k_, 0)
+                pts.append((m['threshold'][cs][k_] - m['baseline'][cs][k_], h / r['live_s'], h))
+            fit = fit_channel(pts, a.rmin, a.rmax)
+            fit['points'] = [(round(d, 2), round(rr, 2)) for d, rr, _ in sorted(pts)]
+            chans[k_] = fit
+            print('chip %s ch %2s: %d points  fixed %s  free %s' % (cs, k_, fit['n_points'], fit.get('fixed'), fit.get('free')))
+        res['chips'][cs] = {'channels': chans}
+    json.dump(res, open(a.out, 'w'), indent=1)
+    print('wrote', a.out)
+
+
+def cmd_repeat(a):
+    """Two fits of the same chips: per-channel difference of sigma (reproducibility)."""
+    A, B = json.load(open(a.first)), json.load(open(a.second))
+    for c in A['chips']:
+        if c not in B['chips']:
+            continue
+        for kind in ('free', 'fixed'):
+            pa, pb = [], []
+            for k, x in A['chips'][c]['channels'].items():
+                y = B['chips'][c]['channels'].get(k, {})
+                if (kind in x and kind in y and x['n_points'] >= a.min_points and y['n_points'] >= a.min_points
+                        and (kind == 'fixed' or (abs(x['free']['d0_mV']) < 8 and abs(y['free']['d0_mV']) < 8))):
+                    pa.append(x[kind]['sigma_mV'])
+                    pb.append(y[kind]['sigma_mV'])
+            if len(pa) < 3:
+                print('chip %s %s: too few channels (%d)' % (c, kind, len(pa)))
+                continue
+            rel = [(q - p) / ((p + q) / 2) for p, q in zip(pa, pb)]
+            print('chip %s %-5s: %2d channels | sigma median %.2f -> %.2f mV | per-channel difference: mean %+.1f %%, '
+                  'rms %.1f %% (-> single-scan precision ~%.1f %%) | r = %.2f'
+                  % (c, kind, len(pa), S.median(pa), S.median(pb), 100 * S.mean(rel), 100 * S.pstdev(rel),
+                     100 * S.pstdev(rel) / math.sqrt(2), pearson(pa, pb)))
 
 
 def neighbour_sigma(paths):
@@ -215,10 +285,25 @@ def main(argv=None):
     f.add_argument('--rates', required=True, help='directory with the *.rates.json of the scan')
     f.add_argument('--ext-dir', default=BENCH_EXT)
     f.add_argument('--chips', required=True)
-    f.add_argument('--rmin', type=float, default=1.0)
+    f.add_argument('--rmin', type=float, default=3.0)
     f.add_argument('--rmax', type=float, default=30000.0)
+    f.add_argument('--chip-max-hz', type=float, default=1.0e6,
+                   help='skip a capture for a chip whose total rate is above this (saturation)')
     f.add_argument('--out', required=True)
     f.set_defaults(fn=cmd_fit)
+    fm = sub.add_parser('fitmaps')
+    fm.add_argument('--pairs', nargs='+', required=True, help='RATES.json:MAP.json, one per capture')
+    fm.add_argument('--chips', required=True)
+    fm.add_argument('--channels', required=True)
+    fm.add_argument('--rmin', type=float, default=3.0)
+    fm.add_argument('--rmax', type=float, default=30000.0)
+    fm.add_argument('--out', required=True)
+    fm.set_defaults(fn=cmd_fitmaps)
+    rp = sub.add_parser('repeat')
+    rp.add_argument('first')
+    rp.add_argument('second')
+    rp.add_argument('--min-points', type=int, default=5)
+    rp.set_defaults(fn=cmd_repeat)
     c = sub.add_parser('compare')
     c.add_argument('--fit', required=True)
     c.add_argument('--ped', nargs='+', required=True, help='pulser_pedestal results, amplitude 1 (all phases)')
