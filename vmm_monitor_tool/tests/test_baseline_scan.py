@@ -1,0 +1,84 @@
+"""Tests of the threshold-above-baseline scan logic and the lab HV helpers (no hardware)."""
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'fastscan'))
+import baseline_scan as BS  # noqa: E402
+import hv_lab as HV  # noqa: E402
+import vmm_trim as vt  # noqa: E402
+
+EQ = """# eq
+Sys 0 Bec 0 Hyb 1 Vmm 0 Reg bank1spi1   Field sdt 53
+Sys 0 Bec 0 Hyb 1 Vmm 0 Reg bank1spi2   Field sdt  3 # 245
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg bank1spi1   Field sdt 34
+Sys 0 Bec 0 Hyb 1 Vmm 1 Reg bank1spi2   Field sdt  3 # 226
+""".splitlines()
+
+
+def _map():
+    return {'baseline': {'2': {'0': 160, '1': 170, '2': 165, '3': 40}, '3': {'0': 150, '1': 152}},
+            'threshold': {'2': {'0': 175, '1': 186, '2': 180, '3': 60}, '3': {'0': 165, '1': 168}},
+            'sdt': {'2': 245, '3': 226}}
+
+
+def test_chip_x0_ignores_odd_baselines():
+    x0, d = BS.chip_x0(_map(), [2, 3])
+    assert x0[2] == 15 and d[2][3] == 20          # ch3 (baseline 40 mV) listed, not in the median
+    assert x0[3] == 16
+
+
+def test_sdt_for_and_distances():
+    m = _map()
+    x0, d = BS.chip_x0(m, [2, 3])
+    k = {2: 0.8, 3: 0.75}
+    sdt_eq = {2: 245, 3: 226}
+    s = BS.sdt_for(40, sdt_eq, x0, k)
+    assert s == {2: 245 + round(25 / 0.8), 3: 226 + round(24 / 0.75)}
+    dist = BS.distances(d, sdt_eq, s, k)
+    assert abs(dist[2][0] - (15 + (s[2] - 245) * 0.8)) < 1e-6
+    assert abs(sorted(dist[2].values())[1] - 40) < 0.5   # chip median lands at X within half a step
+    s3 = BS.sdt_for(3, sdt_eq, x0, k)
+    assert s3[2] < 245 and s3[3] < 226
+
+
+def test_point_file_sets_sdt_masks_and_left():
+    ext = vt.ExtFile(list(EQ))
+    out, used = BS.point_file(ext, {2: 270, 3: 250}, [2, 3], {2: {5}, 3: set()}, {3}, {2: 245, 3: 226})
+    assert used == {2: 270, 3: 266}
+    assert out.sdt()[2] == 270 and out.sdt()[3] == 266
+    sm = out.channel_bits('sm')
+    assert sm[2] == [5] and len(sm[3]) == 64
+
+
+def test_stall_and_heartbeat():
+    assert BS.stalled({'live_s': 0.0, 'hits': {}})
+    assert BS.stalled({'live_s': 30.0, 'hits': {'2': {'1': 5}}})
+    assert not BS.stalled({'live_s': 30.0, 'hits': {'0': {'41': 10000}}})
+    assert not BS.stalled({'live_s': 30.0, 'hits': {'5': {'1': 5000}}})   # heartbeat quiet but data flow
+
+
+def test_seconds_grow_with_x():
+    assert BS.seconds_for(40) == 600 and BS.seconds_for(20) == 180 and BS.seconds_for(12) == 60
+    assert BS.seconds_for(3) == 30
+
+
+def test_hv_status_logic():
+    on = {'power': 1, 'vmon': 719.0, 'v0': 720.0, 'status_text': 'ok'}
+    assert HV.bad_status(on) is None and HV.at_target(on, 720.0)
+    assert HV.bad_status({'power': 0, 'status_text': 'trip'}).startswith('OFF')
+    assert HV.bad_status({'power': 1, 'status_text': 'OVC'}) == 'status OVC'
+    assert not HV.at_target({'power': 1, 'vmon': 700.0}, 720.0)
+    st = HV.stage_values(0.5)
+    assert st['N1471:0'] == 360.0 and st['NHR:0'] == 215.0
+    assert max(HV.stage_values(1.0).values()) == 730.0
+
+
+def test_detector_and_given_up():
+    assert HV.detector('N1471:0') == 'P2_IN' and HV.detector('NHR:1') == 'P2_MID'
+    ch = {hw: {'power': 1, 'vmon': v} for hw, (_, v) in HV.TARGETS.items()}
+    assert HV.all_at_target(ch)
+    ch['N1471:0'] = {'power': 0, 'vmon': 0.0}
+    assert not HV.all_at_target(ch)
+    assert HV.all_at_target(ch, skip={'N1471:0', 'N1471:1'})
+    assert not HV.all_at_target(ch, skip=set(HV.TARGETS))     # nothing left is not "ok"
