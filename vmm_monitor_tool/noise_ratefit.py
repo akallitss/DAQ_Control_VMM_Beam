@@ -146,6 +146,92 @@ def cmd_fit(a):
     print('wrote', a.out)
 
 
+def quality(fit):
+    if 'fixed' not in fit:
+        return 'none'
+    return 'ok' if fit['n_points'] >= 4 else 'few'
+
+
+def cmd_fitpoints(a):
+    """Fit of a fast_ratescan.py sweep: sdt and masks of every point come from its point_NN.json; a channel's
+    points while it was masked are skipped (a masked channel counts 0, which is not 'quiet'), and so are the
+    points where its chip was above --chip-max-hz or had left the sweep."""
+    m = json.load(open(a.map))
+    cal = json.load(open(a.sdtcal))['fit']
+    P = [json.load(open(f)) for f in sorted(glob.glob(os.path.join(a.points, 'point_*.json')))]
+    if not P:
+        raise SystemExit('no point_*.json in %s' % a.points)
+    chips = (vmm_trim.parse_list(a.chips, 0, vmm_trim.N_CHIPS - 1, 'chip') if a.chips else P[0]['sweep_chips'])
+    res = {'map': os.path.basename(a.map), 'points': len(P), 'offsets': [p['offset'] for p in P], 'chips': {}}
+    print('chip  ch_fit(ok/few)  sigma median [p10..p90] mV  free d0 median  masked  never>3Hz')
+    for c in chips:
+        cs = str(c)
+        k = cal[cs]['mV_per_sdt']
+        sdt_map = m['sdt'][cs]
+        chans = {}
+        for ch in range(64):
+            k_ = str(ch)
+            if k_ not in m['baseline'].get(cs, {}):
+                continue
+            d_map = m['threshold'][cs][k_] - m['baseline'][cs][k_]
+            pts, masked_at = [], None
+            for p in P:
+                if ch in p['masked'].get(cs, []) or c in p.get('left', []):
+                    if masked_at is None:
+                        masked_at = p['offset']
+                    continue
+                if p['chip_total_hz'].get(cs, 0) > a.chip_max_hz or not p['live_s']:
+                    continue
+                h = p['hits'].get(cs, {}).get(k_, 0)
+                pts.append((d_map + (p['sdt'][cs] - sdt_map) * k, h / p['live_s'], h))
+            fit = fit_channel(pts, a.rmin, a.rmax)
+            fit.update({'baseline_mV': m['baseline'][cs][k_], 'd_at_map_mV': round(d_map, 2),
+                        'masked_from_offset': masked_at, 'max_rate_Hz': round(max([r for _, r, _ in pts] or [0]), 1),
+                        'points': [(round(d, 2), round(rr, 2)) for d, rr, _ in sorted(pts)]})
+            fit['quality'] = quality(fit)
+            chans[k_] = fit
+        res['chips'][cs] = {'mV_per_sdt': k, 'sdt_map': sdt_map, 'channels': chans}
+        fx = sorted(x['fixed']['sigma_mV'] for x in chans.values() if 'fixed' in x)
+        ok = sum(1 for x in chans.values() if x['quality'] == 'ok')
+        few = sum(1 for x in chans.values() if x['quality'] == 'few')
+        d0 = [x['free']['d0_mV'] for x in chans.values() if 'free' in x]
+        nm = sum(1 for x in chans.values() if x['masked_from_offset'] is not None)
+        quiet = sum(1 for x in chans.values() if x['max_rate_Hz'] < 3)
+        res['chips'][cs]['summary'] = {'n_ok': ok, 'n_few': few, 'n_masked': nm, 'n_never_above_3Hz': quiet,
+                                       'sigma_median_mV': S.median(fx) if fx else None}
+        q = (lambda f: fx[min(len(fx) - 1, int(f * len(fx)))]) if fx else (lambda f: float('nan'))
+        print('%4d  %3d (%2d/%2d)     %5.2f [%5.2f..%5.2f]           %+5.1f      %3d     %3d'
+              % (c, len(fx), ok, few, S.median(fx) if fx else float('nan'), q(0.1), q(0.9),
+                 S.median(d0) if d0 else float('nan'), nm, quiet))
+    json.dump(res, open(a.out, 'w'), indent=1)
+    print('wrote', a.out)
+
+
+def cmd_refdiff(a):
+    """Per-channel rate change between two captures of the same file (start/end references of a scan)."""
+    A, B = json.load(open(a.first)), json.load(open(a.second))
+    out = {'first': a.first, 'second': a.second, 'chips': {}}
+    for cs in sorted(set(A['hits']) | set(B['hits']), key=int):
+        ha, hb = A['hits'].get(cs, {}), B['hits'].get(cs, {})
+        flag, ratios = {}, []
+        for k_ in set(ha) | set(hb):
+            na, nb = ha.get(k_, 0), hb.get(k_, 0)
+            if max(na, nb) < a.min_hits:
+                continue
+            ra, rb = na / A['live_s'], nb / B['live_s']
+            ratio = (rb + 1e-9) / (ra + 1e-9)
+            if min(na, nb) >= a.min_hits:
+                ratios.append(ratio)
+            if ratio > a.factor or ratio < 1 / a.factor:
+                flag[k_] = [round(ra, 1), round(rb, 1)]
+        out['chips'][cs] = {'median_ratio': round(S.median(ratios), 3) if ratios else None, 'flagged': flag}
+        print('chip %2s: %2d channels compared, median ratio %s, %d changed by > x%.0f %s'
+              % (cs, len(ratios), '%.2f' % S.median(ratios) if ratios else '-', len(flag), a.factor,
+                 ' '.join('%s:%.0f->%.0f' % (k, v[0], v[1]) for k, v in sorted(flag.items(), key=lambda t: int(t[0])))[:300]))
+    if a.out:
+        json.dump(out, open(a.out, 'w'), indent=1)
+
+
 def cmd_fitmaps(a):
     """Like fit, but every capture has its own monitor map (taken with the same file just before), so d is
     the MEASURED threshold - baseline of each channel at each point: no DAC calibration is used."""
@@ -291,6 +377,23 @@ def main(argv=None):
                    help='skip a capture for a chip whose total rate is above this (saturation)')
     f.add_argument('--out', required=True)
     f.set_defaults(fn=cmd_fit)
+    fp = sub.add_parser('fitpoints', help='fit a fast_ratescan.py sweep (point_NN.json)')
+    fp.add_argument('--map', required=True)
+    fp.add_argument('--sdtcal', required=True)
+    fp.add_argument('--points', required=True, help='directory with the point_NN.json')
+    fp.add_argument('--chips', help='default: the sweep chips')
+    fp.add_argument('--rmin', type=float, default=3.0)
+    fp.add_argument('--rmax', type=float, default=30000.0)
+    fp.add_argument('--chip-max-hz', type=float, default=1.0e6)
+    fp.add_argument('--out', required=True)
+    fp.set_defaults(fn=cmd_fitpoints)
+    rd = sub.add_parser('refdiff', help='per-channel rate change between two captures of the same file')
+    rd.add_argument('first')
+    rd.add_argument('second')
+    rd.add_argument('--min-hits', type=int, default=30)
+    rd.add_argument('--factor', type=float, default=2.0)
+    rd.add_argument('--out')
+    rd.set_defaults(fn=cmd_refdiff)
     fm = sub.add_parser('fitmaps')
     fm.add_argument('--pairs', nargs='+', required=True, help='RATES.json:MAP.json, one per capture')
     fm.add_argument('--chips', required=True)

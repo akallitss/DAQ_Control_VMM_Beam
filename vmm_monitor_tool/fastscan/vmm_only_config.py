@@ -200,12 +200,12 @@ if __name__ == '__main__':
     p2basket.exec_cmd("version")
 
     # Load config file
-    conf_file_name = args.conf_dir + '//' + args.base_conf_file
+    conf_file_name = os.path.join(args.conf_dir, args.base_conf_file)  # fast scan: absolute paths allowed
     p2basket.exec_cmd("config-file", conf_file_name)
 
     # Read extended configuration with exceptions
     if args.ext_conf_file != "None":
-        ext_cfg_file_name = args.conf_dir + '//' + args.ext_conf_file
+        ext_cfg_file_name = os.path.join(args.conf_dir, args.ext_conf_file)  # fast scan: absolute paths allowed
         ext_config(ext_cfg_file_name)
     # end of if args.ext_conf_file != "None"
 
