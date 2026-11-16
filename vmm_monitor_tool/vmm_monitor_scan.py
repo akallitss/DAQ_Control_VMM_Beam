@@ -33,6 +33,7 @@ import argparse
 import json
 import os
 import re
+import math
 import statistics
 import subprocess
 import sys
@@ -446,6 +447,208 @@ def cmd_refine(a):
                                                  i['channels_changed'], i['trim_min'], i['trim_max']))
 
 
+def _mad(v):
+    med = statistics.median(v)
+    return med, statistics.median(abs(x - med) for x in v)
+
+
+def _usable(points):
+    """(d, rate) points of one channel on the noise-tail side: above its highest-rate point."""
+    pts = sorted(points)
+    if not pts:
+        return []
+    i = max(range(len(pts)), key=lambda j: pts[j][1])
+    return pts[i:]
+
+
+def rate_crossing(points, rate, floor_hz=0.05):
+    """d (mV) where the MEASURED rate falls through `rate`: log-linear between the highest-d point
+    at >= rate and the next point above it. None if not bracketed."""
+    pts = _usable(points)
+    for (d1, r1), (d2, r2) in zip(pts, pts[1:]):
+        if r1 >= rate > r2:
+            r2 = max(r2, floor_hz)
+            return d1 + (d2 - d1) * (math.log(r1) - math.log(rate)) / (math.log(r1) - math.log(r2))
+    return None
+
+
+def rate_at(points, d, floor_hz=0.05):
+    """Measured rate at d by log-linear interpolation of the tail points; None outside their range."""
+    pts = _usable(points)
+    for (d1, r1), (d2, r2) in zip(pts, pts[1:]):
+        if d1 <= d <= d2:
+            r1, r2 = max(r1, floor_hz), max(r2, floor_hz)
+            return math.exp(math.log(r1) + (math.log(r2) - math.log(r1)) * (d - d1) / (d2 - d1))
+    return None
+
+
+def target(m, fit, mv_per_trim, mv_per_sdt, chips, rate=50.0, n=None, margin=0.0, headroom=2,
+           mad_k=3.0, window=(120.0, 220.0), n_range=(3.0, 6.0), keep_sdt=False, min_target=6.0):
+    """Per-channel thresholds from a noise rate scan: each channel where ITS noise rate is `rate`.
+
+    m   : monitor map (baseline, threshold in mV) taken with the trims/sdt listed in it
+    fit : noise_ratefit.py fitpoints result (points (d, rate) and the fixed fit per channel)
+
+    Target distance above the monitor baseline, per channel (+ margin, at least min_target):
+      1. 'measured': where the measured rate crosses `rate` (log-linear between the two points around
+         it). Model-free; right also for channels whose noise centre is a few mV off the monitor
+         baseline, where the centre-fixed fit gives a too small sigma (16 Nov: ~150 channels).
+      2. 'model': n_ch * sigma, n_ch = sqrt(2 ln(f0 / rate)) clamped to n_range, if not bracketed;
+         'n': n * sigma for everyone when n is given.
+    With u = d_map + trim_old*step - d_t (how far the channel would be above its target at trim 0
+    and the map's sdt), a chip sdt shift S (counts) and a trim t give d = d_t + (u + S*k) - t*step:
+        t = floor((u + S*k) / step)     (floor: never below the target, at most one step above)
+        S = ceil((headroom*step - min_normal u) / k)    -> the highest-target normal channel gets t >= headroom
+    keep_sdt: S = 0 (second pass on a map taken WITH the new file: a Newton step towards d_t).
+    Normal channels: baseline inside `window`, fit quality ok, and (model targets only) sigma within
+    mad_k MAD of the chip median. The others get d_t = max(chip median d_t, own d_t if fitted) and are listed; a channel
+    that would need a negative trim is masked (it cannot be set high enough) and listed.
+    """
+    table, sdt_new, masks, info = {}, {}, {}, {}
+    for c in chips:
+        cs = str(c)
+        if cs not in m['baseline'] or cs not in fit['chips']:
+            continue
+        step, k = mv_per_trim[cs], mv_per_sdt[cs]
+        b, thr = m['baseline'][cs], m['threshold'][cs]
+        old = {ch: int(m.get('trims', {}).get(cs, {}).get(ch, 0)) for ch in b}
+        fc = fit['chips'][cs]['channels']
+        own, why = {}, {}
+        how = {}
+        for ch in b:
+            x = fc.get(ch, {})
+            if 'fixed' in x:
+                sig, f0 = x['fixed']['sigma_mV'], x['fixed'].get('f0_Hz')
+                dr = None if n is not None else rate_crossing(x.get('points', []), rate)
+                if dr is not None:
+                    how[ch] = 'measured'
+                elif n is not None:
+                    dr, how[ch] = n * sig, 'n'
+                else:
+                    nn = n_range[1] if not (f0 and f0 > rate) else \
+                        min(n_range[1], max(n_range[0], math.sqrt(2 * math.log(f0 / rate))))
+                    dr, how[ch] = nn * sig, 'model'
+                d = max(min_target, dr + margin)
+                if d > dr + margin:
+                    how[ch] += '+floor'
+                own[ch] = (d, d / sig, sig, f0)
+            if not window[0] <= b[ch] <= window[1]:
+                why[ch] = 'baseline %.0f mV' % b[ch]
+            elif x.get('quality') != 'ok':
+                why[ch] = 'fit %s' % x.get('quality', 'missing')
+        sig_ok = [own[ch][2] for ch in own if ch not in why]
+        if len(sig_ok) < 8:
+            info[cs] = {'skipped': 'only %d channels with a good fit' % len(sig_ok)}
+            continue
+        med_s, mad_s = _mad(sig_ok)
+        for ch in own:      # a measured crossing does not depend on the model; only model targets are vetted
+            if (ch not in why and not how[ch].startswith('measured')
+                    and abs(own[ch][2] - med_s) > mad_k * max(mad_s, 0.05)):
+                why[ch] = 'sigma %.2f mV (chip %.2f, MAD %.2f)' % (own[ch][2], med_s, mad_s)
+        normal = [ch for ch in b if ch not in why]
+        med_t = statistics.median(own[ch][0] for ch in normal)
+        d_t = {ch: own[ch][0] for ch in normal}
+        for ch in why:
+            d_t[ch] = max(med_t, own[ch][0]) if ch in own else med_t
+        u = {ch: thr[ch] - b[ch] + old[ch] * step - d_t[ch] for ch in b}
+        S = 0 if keep_sdt else int(math.ceil((headroom * step - min(u[ch] for ch in normal)) / k))
+        trims, clipped, masked = {}, [], []
+        for ch in b:
+            t = int(math.floor((u[ch] + S * k) / step + 1e-9))
+            if t > vmm_trim.TRIM_MAX:
+                clipped.append(ch)
+                t = vmm_trim.TRIM_MAX
+            if t < 0:
+                masked.append(ch)
+                t = 0
+            trims[ch] = t
+        exp_d = {ch: d_t[ch] + (u[ch] + S * k) - trims[ch] * step for ch in b}
+        pred = {}
+        for ch in own:
+            if ch in masked:
+                continue
+            r = rate_at(fc[ch].get('points', []), exp_d[ch])
+            _, _, sig, f0 = own[ch]
+            if r is None and f0:
+                r = f0 * math.exp(-exp_d[ch] ** 2 / (2 * sig ** 2))
+            if r is not None:
+                pred[ch] = r
+        table[cs] = trims
+        sdt_new[cs] = m['sdt'][cs] + S
+        if masked:
+            masks[cs] = sorted(masked, key=int)
+        over = [exp_d[ch] - d_t[ch] for ch in normal]
+        info[cs] = {'sdt_old': m['sdt'][cs], 'sdt_new': sdt_new[cs], 'sdt_change': S,
+                    'sigma_median_mV': round(med_s, 3), 'sigma_mad_mV': round(mad_s, 3),
+                    'target_median_mV': round(med_t, 2),
+                    'target_range_mV': [round(min(d_t[ch] for ch in normal), 2),
+                                        round(max(d_t[ch] for ch in normal), 2)],
+                    'n_median': round(statistics.median(own[ch][1] for ch in normal), 2),
+                    'distance_before_median_mV': round(statistics.median(thr[ch] - b[ch] for ch in normal), 2),
+                    'above_target_median_mV': round(statistics.median(over), 2),
+                    'above_target_max_mV': round(max(over), 2),
+                    'trim_min': min(trims[ch] for ch in normal), 'trim_max': max(trims[ch] for ch in normal),
+                    'clipped_at_31': sorted(clipped, key=int), 'masked': sorted(masked, key=int),
+                    'not_normal': {ch: why[ch] for ch in sorted(why, key=int)},
+                    'predicted_rate_sum_Hz': round(sum(pred.values()), 1),
+                    'target_from': {h: sum(1 for ch in normal if how.get(ch) == h)
+                                    for h in sorted(set(how[ch] for ch in normal))},
+                    'channels': {ch: {'target_mV': round(d_t[ch], 2), 'expected_mV': round(exp_d[ch], 2),
+                                      'trim': trims[ch], 'from': how.get(ch, 'chip median'),
+                                      'predicted_Hz': round(pred[ch], 2) if ch in pred else None}
+                                 for ch in sorted(b, key=int)},
+                    'mv_per_trim': step, 'mv_per_sdt': k}
+    return table, sdt_new, masks, info
+
+
+def cmd_target(a):
+    with open(a.map) as f:
+        m = json.load(f)
+    with open(a.fit) as f:
+        fit = json.load(f)
+    chips = vmm_trim.parse_list(a.chips, 0, N_CHIPS - 1, 'chip')
+    lo, hi = (float(x) for x in a.baseline_window.split(':'))
+    table, sdt_new, masks, info = target(
+        m, fit, _per_chip(a.trimcurve, 'mV_per_trim', a.mv_per_trim),
+        _per_chip(a.sdtcal, 'mV_per_sdt', a.mv_per_sdt), chips, rate=a.rate, n=a.n, margin=a.margin,
+        headroom=a.headroom, mad_k=a.mad_k, window=(lo, hi), keep_sdt=a.keep_sdt, min_target=a.min_target)
+    save(a.out, {'source_map': os.path.basename(a.map), 'source_fit': os.path.basename(a.fit),
+                 'source_ext': m['meta'].get('ext'), 'made': datetime.now().isoformat(timespec='seconds'),
+                 'effective_trim': True, 'rate_Hz': a.rate, 'n': a.n, 'margin_mV': a.margin,
+                 'headroom': a.headroom, 'keep_sdt': a.keep_sdt, 'trims': table, 'sdt': sdt_new,
+                 'masks': masks, 'info': info})
+    print('chip   sdt        sigma    n   target mV           before  above target  trims  pred.  not  clip mask')
+    print('       old->new   med    med   med [min..max]      med     med   max     min..max  Hz   normal')
+    for c in sorted(info, key=int):
+        i = info[c]
+        if 'skipped' in i:
+            print('%4s  skipped: %s' % (c, i['skipped']))
+            continue
+        print('%4s  %4d->%-4d %5.2f %5.2f %6.1f [%4.1f..%4.1f] %7.1f %6.2f %5.2f %5d..%-2d %6.0f %4d %4d %4d' % (
+            c, i['sdt_old'], i['sdt_new'], i['sigma_median_mV'], i['n_median'], i['target_median_mV'],
+            i['target_range_mV'][0], i['target_range_mV'][1], i['distance_before_median_mV'],
+            i['above_target_median_mV'], i['above_target_max_mV'], i['trim_min'], i['trim_max'],
+            i['predicted_rate_sum_Hz'], len(i['not_normal']), len(i['clipped_at_31']), len(i['masked']))
+            + '   ' + ' '.join('%s:%d' % kv for kv in i['target_from'].items()))
+    if a.ext_in and a.ext_out:
+        ext = vmm_trim.ExtFile.load(a.ext_in)
+        for cs, v in sdt_new.items():
+            ext.set_sdt(int(cs), int(v))
+        t = ext.trims()
+        for cs, d in table.items():
+            t[int(cs)] = {int(ch): v for ch, v in d.items()}
+        n_lines = ext.set_trims(t, 'target mode: baseline + n sigma (rate %s Hz, n %s, margin %.1f mV), map %s, fit %s'
+                                % (a.rate, a.n, a.margin, os.path.basename(a.map), os.path.basename(a.fit)))
+        for cs, chans in masks.items():
+            hyb, vmm = vmm_trim.hyb_vmm(int(cs))
+            ext.lines.append('# target mode: chip %s channels %s cannot reach their target (trim < 0): masked'
+                             % (cs, ','.join(chans)))
+            for ch in chans:
+                ext.lines.append('Sys 0 Bec 0 Hyb %d Vmm %d Reg channel[%02d] Field sm   1' % (hyb, vmm, int(ch)))
+        ext.write(a.ext_out, a.force)
+        print('wrote %s (%d trim lines, %d masked)' % (a.ext_out, n_lines, sum(len(v) for v in masks.values())))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='cmd', required=True)
@@ -495,6 +698,26 @@ def main():
     s.add_argument('--baseline-window', default='120:220')
     s.add_argument('--min-trim', type=int, default=0, help='never go below this trim (keeps room to raise)')
     s.set_defaults(fn=cmd_refine)
+
+    s = sub.add_parser('target', help='per-channel thresholds at baseline + n sigma from a rate-scan fit')
+    s.add_argument('--map', required=True, help='monitor map taken with the trims/sdt the new trims start from')
+    s.add_argument('--fit', required=True, help='noise_ratefit.py fitpoints result')
+    s.add_argument('--out', required=True); s.add_argument('--chips', default='2-19')
+    s.add_argument('--rate', type=float, default=50.0, help='noise rate per channel the threshold is set for (Hz)')
+    s.add_argument('--n', type=float, help='n*sigma with this n for every channel, instead of --rate')
+    s.add_argument('--margin', type=float, default=0.0, help='mV added to every target')
+    s.add_argument('--min-target', type=float, default=6.0,
+                   help='no channel closer than this to its monitor baseline (mV): the comparator sticks within '
+                        '~2 mV, and channels left near the baseline went silent on 16 Nov')
+    s.add_argument('--headroom', type=int, default=2, help='trim steps left on the highest-target channel')
+    s.add_argument('--mad-k', type=float, default=3.0)
+    s.add_argument('--keep-sdt', action='store_true', help="second pass: keep the map's sdt, correct the trims only")
+    s.add_argument('--trimcurve'); s.add_argument('--sdtcal')
+    s.add_argument('--mv-per-trim', type=float, default=1.1); s.add_argument('--mv-per-sdt', type=float, default=0.77)
+    s.add_argument('--baseline-window', default='120:220')
+    s.add_argument('--ext-in', help='write a new exception file from this one (the file the map was taken with)')
+    s.add_argument('--ext-out'); s.add_argument('--force', action='store_true')
+    s.set_defaults(fn=cmd_target)
 
     s = sub.add_parser('report'); s.add_argument('map'); s.set_defaults(fn=cmd_report)
 

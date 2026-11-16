@@ -207,6 +207,52 @@ def cmd_fitpoints(a):
     print('wrote', a.out)
 
 
+def cmd_checktarget(a):
+    """Noise rate per channel with a target-mode file, against the prediction from the rate scan:
+    the scan's measured curve (log-linear) at the threshold - baseline read in a monitor map of that
+    file. Flags channels above the target rate by a factor."""
+    import vmm_monitor_scan as VS
+    fit, m, r = json.load(open(a.fit)), json.load(open(a.map)), json.load(open(a.rates))
+    live = r['live_s']
+    masked = {c: set(map(str, v)) for c, v in m.get('masked', {}).items()}
+    out = {'fit': a.fit, 'map': a.map, 'rates': a.rates, 'chips': {}}
+    print('chip  channels  measured Hz  predicted Hz  ratio med  > %gx%g Hz   > 10x    loudest' % (a.factor, a.rate))
+    allm = allp = 0.0
+    for cs in sorted(fit['chips'], key=int):
+        if cs not in m['baseline']:
+            continue
+        rows, hot, very = {}, [], []
+        for k, x in fit['chips'][cs]['channels'].items():
+            if k in masked.get(cs, ()) or k not in m['baseline'][cs]:
+                continue
+            d = m['threshold'][cs][k] - m['baseline'][cs][k]
+            p = VS.rate_at(x.get('points', []), d)
+            if p is None and 'fixed' in x and x['fixed'].get('f0_Hz'):
+                p = x['fixed']['f0_Hz'] * math.exp(-d * d / (2 * x['fixed']['sigma_mV'] ** 2))
+            meas = r['hits'].get(cs, {}).get(k, 0) / live
+            rows[k] = {'d_mV': round(d, 1), 'measured_Hz': round(meas, 2), 'predicted_Hz': None if p is None else round(p, 2)}
+            if meas > a.factor * a.rate:
+                hot.append(k)
+            if meas > 10 * a.rate:
+                very.append(k)
+        ms = sum(v['measured_Hz'] for v in rows.values())
+        ps = sum(v['predicted_Hz'] or 0 for v in rows.values())
+        allm += ms
+        allp += ps
+        ratios = [v['measured_Hz'] / v['predicted_Hz'] for v in rows.values()
+                  if v['predicted_Hz'] and v['predicted_Hz'] >= 5 and v['measured_Hz'] * live >= 20]
+        loud = sorted(rows, key=lambda q: -rows[q]['measured_Hz'])[:3]
+        out['chips'][cs] = {'channels': rows, 'over_factor': hot, 'over_10x': very,
+                            'measured_sum_Hz': round(ms, 1), 'predicted_sum_Hz': round(ps, 1),
+                            'ratio_median': round(S.median(ratios), 3) if ratios else None}
+        print('%4s  %6d  %11.0f  %12.0f  %9s  %8d  %7d    %s' % (
+            cs, len(rows), ms, ps, '%.2f' % S.median(ratios) if ratios else '-', len(hot), len(very),
+            ' '.join('%s:%.0f' % (q, rows[q]['measured_Hz']) for q in loud)))
+    print('all chips: measured %.0f Hz, predicted %.0f Hz' % (allm, allp))
+    if a.out:
+        json.dump(out, open(a.out, 'w'), indent=1)
+
+
 def cmd_refdiff(a):
     """Per-channel rate change between two captures of the same file (start/end references of a scan)."""
     A, B = json.load(open(a.first)), json.load(open(a.second))
@@ -394,6 +440,12 @@ def main(argv=None):
     rd.add_argument('--factor', type=float, default=2.0)
     rd.add_argument('--out')
     rd.set_defaults(fn=cmd_refdiff)
+    ct = sub.add_parser('checktarget', help='measured noise rates of a target file vs the scan prediction')
+    ct.add_argument('--fit', required=True); ct.add_argument('--map', required=True, help='monitor map of that file')
+    ct.add_argument('--rates', required=True, help='noise_probe rates.json of that file')
+    ct.add_argument('--rate', type=float, default=50.0); ct.add_argument('--factor', type=float, default=3.0)
+    ct.add_argument('--out')
+    ct.set_defaults(fn=cmd_checktarget)
     fm = sub.add_parser('fitmaps')
     fm.add_argument('--pairs', nargs='+', required=True, help='RATES.json:MAP.json, one per capture')
     fm.add_argument('--chips', required=True)
