@@ -130,7 +130,10 @@ def hv_ok(mode):
     if mode == 'off':
         FR.check_hv()
         return True, 'off'
-    ch, _ = HV.state()
+    try:
+        ch, _ = HV.state()
+    except Exception as e:  # noqa: BLE001 - banco not readable this time: "not ok", the gate retries
+        return False, 'banco not readable: %s' % e
     skip = HV.read_given_up()        # detectors powered off by the guard after a trip
     ok = HV.all_at_target(ch, skip)
     return ok, HV.summary(ch) + (' | off after trip: %s' % sorted(skip) if skip else '')

@@ -88,8 +88,16 @@ def banco(path, body=None, timeout=30):
 
 
 def state():
-    """{hw: channel dict} for the six P2 channels; raises if banco cannot be read."""
-    st = banco('api/state')
+    """{hw: channel dict} for the six P2 channels; raises if banco cannot be read (3 tries)."""
+    for attempt in range(3):
+        try:
+            st = banco('api/state')
+            if st.get('channels'):
+                break
+        except Exception:  # noqa: BLE001
+            if attempt == 2:
+                raise
+        time.sleep(5)
     ch = {c['hw']: c for c in st.get('channels', [])}
     missing = [hw for hw in TARGETS if hw not in ch]
     if missing:
