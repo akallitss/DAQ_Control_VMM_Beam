@@ -306,3 +306,15 @@ Files in `~/trim_work/out/fastscan_20261116/target/`; exception files in `config
 top; same tool, start from `rt3`), then a cosmic run with the scintillator trigger against
 `trimmed_Km18_v1` (efficiency vs threshold). Before physics data: pulse all channels once (§9.2)
 if any deep test was done.
+
+**Stand at handover (16 Nov 2026, ~23:00)**, checked read-only: GUI on
+`…_safe_m9c16to21_m4c36to41_h0open_adwk2_Km18_i5.txt` (last apply 22:53:55, rc 0, armed,
+not running), no `/run/p2basket/session.lock` (session free), HV 0.5 V max, no
+fast_ratescan / rate_tune / noise_probe / vmm_monitor / dumpcap process of ours. Handed over
+to session d0ca01 (overnight threshold-above-baseline scan); this session does no more
+hardware actions. Files added to `config_ext/` tonight (all `p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_` +):
+`fastscan_trimmed_v1_sdtm6`, `fastscan_recover`, `fastscan_heal_g1..4`, `target50_p1`,
+`target50_p2`, `target50_p2_rt1..3` (11 files, `.txt`).
+Note for the 60 s check of `target50_p2` (§10.2): per-channel median 38 Hz, 54 channels
+> 500 Hz, chip 10 ch22 40 kHz (burst); measured/predicted per chip median 1.2–2.7
+(`results_20261116/target/check_p2.json`).
