@@ -74,8 +74,8 @@ def select_and_apply(name):
     raise SystemExit('apply did not finish')
 
 
-def sc(action):
-    r = subprocess.run([SC, '--config-file', BASE, '--' + action], cwd=BENCH, capture_output=True, text=True, timeout=120)
+def sc(action, config=BASE):
+    r = subprocess.run([SC, '--config-file', config, '--' + action], cwd=BENCH, capture_output=True, text=True, timeout=120)
     if r.returncode != 0:
         raise RuntimeError('p2basket-sc --%s failed: %s' % (action, (r.stdout + r.stderr)[-400:]))
 
@@ -107,6 +107,9 @@ def main():
     ap.add_argument('--max-mb', type=int, default=400, help='stop a capture early at this size')
     ap.add_argument('--restore', action='store_true', help='configure the chips with the original GUI selection at the end')
     ap.add_argument('--keep-pcap', action='store_true')
+    ap.add_argument('--fec-yaml', help='after each configure, write the FEC registers (only those) from this base '
+                                       'YAML, e.g. a copy with another test-pulse tp_number; the standard base FEC '
+                                       'registers are written back at the end')
     a = ap.parse_args()
 
     if daq_run_active() or capture_active():
@@ -119,7 +122,10 @@ def main():
             name = os.path.basename(name)
             log('configure: %s' % name)
             select_and_apply(name)
-            pcap = os.path.join(a.out_dir, name[:-4] + '.pcapng')
+            if a.fec_yaml:
+                log('FEC registers from %s' % a.fec_yaml)
+                sc('config-fec-regs', os.path.abspath(a.fec_yaml))
+            pcap =os.path.join(a.out_dir, name[:-4] + '.pcapng')
             mb = capture(pcap, a.seconds, a.max_mb)
             log('captured %.1f MB' % mb)
             res = count(pcap) if mb > 0.01 else {'live_s': 0.0, 'hits': {}}
@@ -133,6 +139,12 @@ def main():
             if not a.keep_pcap and os.path.exists(pcap):
                 os.remove(pcap)
     finally:
+        if a.fec_yaml:
+            try:
+                log('FEC registers back to the standard base YAML')
+                sc('config-fec-regs')
+            except BaseException as e:  # noqa: BLE001
+                log('could not restore the FEC registers: %s (a Configure chip will)' % e)
         if original:
             try:
                 gui('/chip_config/select', {'file': original})
