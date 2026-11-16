@@ -1,5 +1,18 @@
 # Handoff — fast noise rate scan of all chips (state at the end of 16 Nov 2026)
 
+> **Update 16 Nov, 20:17–21:51: the fast scan has been run on chips 2–19 (user's go).**
+> Result in §9 below. Short version:
+> - σ per channel for **1105 of 1152 channels** (≥ 4 points, centre fixed at the monitor
+>   baseline): `~/trim_work/out/fastscan_20261116/full2/fit_full2.json` (copy in
+>   `vmm_monitor_tool/fastscan/results_20261116/`). Chip medians 2.5–3.7 mV.
+> - Reproducible: a second full scan agrees per channel to 1–4 % rms on most chips (≤ 11 %),
+>   chip medians within ±4 %, r = 0.85–1.00.
+> - Two hardware effects found: (1) after a VMM-only write the read-out sometimes sends
+>   **nothing** (links still 4) until a full configure; (2) channels held at/below their
+>   baseline for minutes go **silent on noise**, survive warm reset + configure, and are
+>   **brought back by test pulses**. §9.3 of PLAN (the 12 chip-3 channels) was effect (2).
+> - Next: the `target` mode (§5.1) from `fit_full2.json`.
+
 For the next session. Read this first, then `PLAN_PEDESTAL_NOISE.md` (the full lab
 notebook of 16 Nov, §6–9 are the measurements), `PER_CHANNEL_THRESHOLDS.md` (the trim
 work of 13 Nov) and `CODE_MAP.md` (GUI → bench scripts → p2basket-sc → chip).
@@ -15,8 +28,8 @@ Memory note: `vmm-slow-control-code-map`.
    does not follow the discriminator noise per channel.
 4. Next: a **fast scan of chips 2–19 together** (~35 min, design in §4), then the `target`
    mode that writes the n·σ trim file, then a check of the predicted noise rates.
-5. **Nothing is running.** The stand is on `…_adwk2_Km18_i5.txt` (GUI apply rc 0, armed),
-   HV off (< 0.5 V on all six channels), LV on. The user decides when the scan runs.
+5. **Nothing is running.** The stand is on `…_adwk2_Km18_i5.txt` (GUI apply rc 0, armed,
+   restored 21:51), HV off (< 0.5 V on all six channels), LV on.
 
 ## 2. What is established (numbers you can rely on)
 
@@ -177,3 +190,69 @@ cat build/BUILT_AGAINST; /local/p2/deploy/bin/p2basket-sc --version | tail -1   
 /local/p2/deploy/bin/p2basket-sc --config-file /local/p2/p2testbench/TestBenchCERN/config_base/p2b-config-cern-base.yaml --read-link-status | grep linkStatus
 python3 vmm_monitor_tool/noise_ratefit.py repeat out/step1/ratefit3.json out/step1c/ratefit_repeat3.json   # today's reference result
 ```
+
+## 9. Result of the fast scan (16 Nov 2026, 20:17–21:51, HV off, no DAQ run)
+
+Driver: `vmm_monitor_tool/fastscan/fast_ratescan.py` (on the box in
+`~/trim_work/vmm_monitor_tool/fastscan/`). Fit: `noise_ratefit.py fitpoints` (sdt and masks of
+every point from `point_NN.json`; a channel's points while masked are skipped) and `refdiff`
+(start vs end reference). Tests: `tests/test_fast_ratescan.py` (24 pass on the box).
+Per point: VMM-only write 3.8 s, 15 s live capture (20.3 s with acq on/off), 27–32 s in all.
+
+| run | dir (`~/trim_work/out/fastscan_20261116/`) | what |
+|---|---|---|
+| test | `test_c2c3/` | chips 2,3, +4…−14, map of 17:48. σ vs step 1: +2.3 % mean, 1.3–2.5 % rms, r 0.95–0.99. The 12 chip-3 channels of PLAN §9.3 count again (8.2 → 8.4 kHz etc.) |
+| full (run 1 + resume) | `full/` | chips 2–19, `map_start.json` / `map_end.json`, refs. Points 12–28 of run 1 empty (stall, below) → moved to `stalled_run1/`, resumed from point 11 (`--resume`). 351 channels silent from point 12 on (below) → only +4…−7 for them |
+| **full2** | `full2/` | **the result**: same sweep repeated after the channels were brought back; fit with `full/map_start.json` |
+
+**σ (full2, centre fixed at `full/map_start.json`)**: 1105 ok, 13 few, 34 none (never above 3 Hz,
+dead or masked from the start). Chip medians [p10..p90], mV:
+2: 3.34 [2.37–3.87], 3: 3.23, 4: 3.36, 5: 2.79, 6: 3.41, 7: 2.52, 8: 3.70, 9: 2.78, 10: 2.92,
+11: 3.04, 12: 3.31, 13: 3.22, 14: 2.90, 15: 2.57, 16: 3.17, 17: 2.74, 18: 3.23, 19: 3.12.
+The p10 of several chips is 1.4–1.8 mV: look at those channels before trusting them in `target`.
+**full vs full2** (`noise_ratefit.py repeat`, channels with ≥ 5 points in both): per-channel rms 1.2–6 %
+on 14 chips, 10–11 % on chips 8, 9, 16; mean within ±3.5 %; r 0.85 (chip 6) – 1.00.
+**Baselines**: `map_end` − `map_start` (24 min apart) = 0 ± 1 mV on every chip (±2 on chips 8, 16).
+**References full2** (REF1 start vs end): median ratio 0.90–1.15 per chip, 1 channel changed by > ×2.
+
+**9.1 Read-out stall after a VMM-only write.** At 4 of ~75 VMM-only writes (run 1 point 12,
+resume points 15, 26, full2 point 19) the capture had **0 bytes, no packet at all, also not
+from H0**, while all ten links read 4. Further VMM-only writes do not clear it (run 1: 17 empty
+points, 8 min); a full configure (warm reset + FEC + hybrid + VMM, GUI apply) does, every
+time. Not tied to rate: before the stall the total was 2.1, 1.2, 0.65 and 2.0 MHz.
+`fast_ratescan.py` now treats a capture < 0.3 MB as a stall: full configure of the point
+(file copied to `config_ext/…_fastscan_recover.txt`), capture again, abort if still empty
+(+40 s per stall). **For the developers**: what can stop the FEC sending without a link
+change, and is there a lighter reset than the warm reset?
+
+**9.2 Channels silent on noise after sitting at/below their baseline.** In run 1 the stall
+left ~350 unmasked channels (all of those below 1 kHz at −7) at offsets −8…−24, i.e. at or
+below their baseline with the comparator high, for 8 min. From then on they counted
+**exactly 0** at thresholds where they had counted 1 Hz–10 kHz, while every other channel
+agreed within ~10 % and baselines/thresholds read the same (±1 mV). It survived GUI apply
+(warm reset), a monitor map and 30 min. **Test pulses on every channel bring them back**
+(diag in `full/diag/`): chips 2–3 pulsed (`…_diag_c2c3_allpulsed_a40.txt`, 10 s) → 42/42 back,
+chips 4–19 in the same capture 0/309; then chips 4–19 pulsed in four groups of four
+(`…_fastscan_heal_g1..4.txt`, `pulser_files.py --stride 1 --sdp10 40 --unmask`) → 349/351
+back (the other 2 had ~0.3 Hz). This is what happened in PLAN §9.3 (deep points / trim scan
+→ 12 silent channels; they came back after the all-pulsed test of 19:53).
+Rules from it: never leave unmasked channels near/below their baseline (the scan masks at
+> 10 kHz and on a ×10 drop, so this only happens when data stop); after any deep test, pulse
+all channels once (or check against a reference) before physics data.
+
+**9.3 Burst channels after configures** (developer summary item 1): single channels at
+0.3–0.8 MHz appeared after some configures, e.g. chip 4 ch46 526 kHz and **chip 17 ch32
+326 kHz** (after the pulse groups), chip 10 at 798 kHz at full2 point 0, chip 10 ch22 ~300 kHz
+in both full2 references. The scan masks them at the first point (> 10 kHz); they inflate the
+references. Chip 17 had not been seen bursting before.
+
+**9.4 Traps added**: (a) `pgrep -f 'daq_control.py .*json'` or `pgrep -f noise_probe.py`
+in a remote shell matches **its own command line** (noise_probe then refuses: "a DAQ run or a
+capture is active"); check with a pattern that is not in the command, or in a script.
+(b) Give `fast_ratescan.py` the out dir as you like: it is made absolute (the slow-control
+scripts run in `TestBenchCERN/`). (c) Files added to `config_ext/`: `…_fastscan_trimmed_v1_sdtm6.txt`
+(REF2), `…_fastscan_recover.txt`, `…_fastscan_heal_g1..4.txt` (6). The two deepest pcaps of
+each run are kept (`full2/` 97 MB).
+
+**9.5 Next** (§5): `target` mode from `full2/fit_full2.json` + `full/map_start.json`;
+channels with quality ≠ ok, or σ < 2 mV, listed and left at the chip level.

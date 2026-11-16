@@ -201,7 +201,20 @@ def sweep(a, start_ext, chips, out):
     left, prev, kept = set(), {c: None for c in chips}, []
     os.makedirs(os.path.join(out, 'files'), exist_ok=True)
     offsets = list(range(a.top, a.bottom - 1, -1))
-    for i, off in enumerate(offsets):
+    i0 = 0
+    if a.resume:
+        # continue after a good point: its masks plus the ones it decided, its rates as 'previous'
+        r = json.load(open(a.resume))
+        for c in chips:
+            masked[c] = set(r['masked'].get(str(c), [])) | {int(k) for k in r['new_masks'].get(str(c), {})}
+        left = {c for c in chips if len(masked[c]) >= a.leave_at} | set(r.get('left', []))
+        live = r['live_s']
+        prev = {c: {int(k): v / live for k, v in r['hits'].get(str(c), {}).items()} for c in chips}
+        offsets = list(range(r['offset'] - 1, a.bottom - 1, -1))
+        i0 = r['index'] + 1
+        log('resume after point %d (offset %+d): %d channels masked, chips left %s'
+            % (r['index'], r['offset'], sum(len(m) for m in masked.values()), sorted(left)))
+    for i, off in enumerate(offsets, start=i0):
         t0 = time.time()
         check_hv()
         ext, sdt = point_file(start_ext, ref_sdt, off, chips, masked, left)
@@ -222,6 +235,20 @@ def sweep(a, start_ext, chips, out):
         mb = NP.capture(pcap, a.seconds, a.max_mb)
         t_cap = time.time() - t1
         res = NP.count(pcap) if mb > 0.01 else {'live_s': 0.0, 'hits': {}}
+        empty_recovered = False
+        if mb < a.empty_mb or not res['live_s']:
+            # 16 Nov: after a 2 MHz point the read-out sent nothing at all (links 4) until a warm reset
+            log('point %d: EMPTY capture (%.2f MB, live %.1f s): full configure of this point and capture again'
+                % (i, mb, res['live_s']))
+            shutil.copy(path, os.path.join(EXT_DIR, RECOVER))
+            NP.select_and_apply(RECOVER)
+            L, recovered, empty_recovered = links(), True, True
+            t1 = time.time()
+            mb = NP.capture(pcap, a.seconds, a.max_mb)
+            t_cap = time.time() - t1
+            res = NP.count(pcap) if mb > 0.01 else {'live_s': 0.0, 'hits': {}}
+            if mb < a.empty_mb or not res['live_s']:
+                raise Abort('capture still empty (%.2f MB) after a full configure' % mb)
         live = res['live_s'] or 1e-9
         rates = {c: {int(k): v / live for k, v in res['hits'].get(str(c), {}).items()} for c in chips}
         tot = {c: sum(rates[c].values()) for c in chips}
@@ -239,6 +266,7 @@ def sweep(a, start_ext, chips, out):
                'left': sorted(left), 'new_masks': {str(c): {str(k): v for k, v in d.items()} for c, d in new.items()},
                'chip_total_hz': {str(c): round(tot[c], 1) for c in chips}, 'saturated': saturated,
                'hits': res['hits'], 'live_s': res['live_s'], 'mb': mb, 'links': L, 'recovered': recovered,
+               'empty_recovered': empty_recovered,
                'apply_s': round(t_apply, 1), 'capture_s': round(t_cap, 1), 'ext_file': path}
         with open(os.path.join(out, 'point_%02d.json' % i), 'w') as f:
             json.dump(rec, f)
@@ -301,6 +329,10 @@ def main():
     ap.add_argument('--stuck-min-hz', type=float, default=1e3)
     ap.add_argument('--chip-max-hz', type=float, default=1e6, help='point flagged saturated for that chip')
     ap.add_argument('--leave-at', type=int, default=60)
+    ap.add_argument('--empty-mb', type=float, default=0.3,
+                    help='a capture below this is "no data": full configure and capture again (once)')
+    ap.add_argument('--resume', help='point_NN.json of a good point: continue the sweep after it '
+                                     '(use with --no-refs --no-maps, or with a new map)')
     ap.add_argument('--no-maps', action='store_true', help='skip both monitor maps (test runs)')
     ap.add_argument('--no-refs', action='store_true', help='skip the reference captures (test runs)')
     ap.add_argument('--restore', default=RESTORE)

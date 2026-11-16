@@ -436,3 +436,11 @@ channels into deep noise (hundreds of kHz) longer than necessary.
 
 **9.4 User decision (end of 16 Nov)**: document everything, continue the fast scan in a
 new session: `docs/HANDOFF_FAST_RATESCAN.md`.
+
+## 10. Night of 16 Nov 2026: the fast scan of chips 2–19 — see `HANDOFF_FAST_RATESCAN.md` §9
+
+σ per channel for 1105 of 1152 channels (`~/trim_work/out/fastscan_20261116/full2/fit_full2.json`),
+reproducible to a few % between two full scans. The silent channels of §9.3 are explained:
+channels held at/below their baseline for minutes stop firing on noise and come back
+with test pulses (handoff §9.2). A VMM-only write sometimes stops the read-out until a warm
+reset (handoff §9.1).
