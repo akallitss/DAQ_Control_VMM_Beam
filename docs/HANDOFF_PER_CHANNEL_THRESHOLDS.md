@@ -1,5 +1,10 @@
 # Handoff — per-channel VMM thresholds (state on 2026-11-13, 06:00)
 
+> **Superseded for what comes next by `HANDOFF_FAST_RATESCAN.md` (16 Nov 2026).**
+> This file stays valid for the 13 Nov results (trims, equalisation, `sl 1`,
+> `trimmed_Km18_v1`) and its traps. On 16 Nov the method for per-channel thresholds
+> became baseline (monitor) + n·σ (noise rate scan); see `PLAN_PEDESTAL_NOISE.md`.
+
 For the next session. Read this first, then `PER_CHANNEL_THRESHOLDS.md`
 (results + how-to) and `CODE_MAP.md` (where everything lives). The memory note
 `vmm-slow-control-code-map` holds the same facts in short form.

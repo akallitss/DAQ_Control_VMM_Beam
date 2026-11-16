@@ -1,5 +1,21 @@
 # Pedestal and noise per channel with the internal pulser — check of 16 Nov 2026 and plan
 
+> **Status at the end of 16 Nov 2026 (read this first).** This file is the lab
+> notebook of the day, in the order things were done; sections 1–5 are the
+> morning plan, sections 6–9 what was measured. Outcome:
+> - The internal pulser works (rate = `tp_number` × 10.85 kHz) but its neighbour-ADC σ
+>   does **not** follow the real discriminator noise channel by channel (§6, §7):
+>   a ~3 ADC shift of the whole chip on every pulse, and a different ADC from the one the
+>   threshold uses. **Put on the back burner by the user.**
+> - **Calibration method chosen**: baseline from the monitor read-back (`smx 0`, mV, at
+>   the discriminator) and σ from the **noise rate scan** (§6, §8): reproducible to < 1 %
+>   per channel, agrees with a single-channel trim scan to a few %.
+> - The noise of some channels **changes in time** (§9: 12 chip-3 channels stopped
+>   firing on noise within 25 min, nothing else changed).
+> - A **fast all-chip rate scan** (~35 min instead of ~3 h) is designed and its key
+>   ingredient (VMM-only register write between points) is tested (§9).
+>   Next session: **`docs/HANDOFF_FAST_RATESCAN.md`**.
+
 Goal: give every VMM channel its own threshold at **baseline + n·σ**, where σ
 is the noise of that channel, instead of the same distance in mV for every
 channel (what `vmm_monitor_scan.py equalize` does today). σ is measured with
@@ -374,3 +390,49 @@ a channel has only 3–6 points between 3 Hz and 30 kHz. → For the full scan:
 **Conclusion**: per channel, the rate-scan σ with the centre at the monitor baseline is
 reproducible to < 1 % and agrees with an independent single-channel trim scan to a few %.
 It can be used for baseline + n·σ.
+
+## 9. Evening, 16 Nov 2026: fast point write, and channels whose noise went away
+
+**9.1 Why the deep scan would take 3 h** (analysis by the session
+`vmm-threshold-efficiency-options`, read-only on our files): one point ≈ 47 s
+(GUI apply ≈ 12–15 s: warm reset + FEC + hybrid + VMM for 20 chips, polled every 4 s;
+30 s capture; 1–8 s decode). The link is not the limit (5.5 MHz of hits ≈ 0.33 Gbit/s);
+the 300 MB capture cap is, and it is filled by channels far above the fit's 30 kHz, i.e.
+by useless hits. Each channel's own 10 Hz → 10 kHz window is ~8 sdt counts wide, but
+where it sits varies by ≥ 14 counts inside a chip, so a whole-chip sweep floods with the
+early channels long before it reaches the late ones.
+
+**9.2 VMM-only write between points: tested, works** (that session, 19:46–19:49, HV off,
+no run, restored to `Km18_i5`; scripts and log in `vmm_monitor_tool/fastscan/`).
+`config-vmm-regs` only (no warm reset, no FEC/hybrid write): 3.8 s instead of 12.0 s, all
+ten hybrids `linkStatus 4` after every point and after the restore, per-channel rates equal
+to the GUI apply within ~5–10 % (median ratio 0.99–1.06), the threshold moves both ways.
+Remaining per-point overhead: ~5 s for the two `p2basket-sc` process starts (acq-on/off)
+and ~2 s for the count and the link read: a 20 s capture took 25.3 s.
+
+**9.3 Twelve channels of chip 3 stopped firing on noise.** That test seemed to show a
+drift (chip-3 total at sdt −4/−6: 10/55 kHz vs 18/104 kHz at 18:00 and 19:17). Channel by
+channel (`out/diag/`, my checks 19:52–19:55, HV off, restored each time):
+- every channel that still counts agrees with step 1 within 3–9 %;
+- **12 channels count exactly 0**: chip 3 ch 2, 14, 16, 24, 25, 26, 29, 42, 54, 57, 59, 63
+  (at sdt −6 they counted 0.2–11 kHz at 18:00 and at 19:17); re-capture at 19:54 with
+  `noise_probe` + the GUI apply: still 0. Chip 2: no channel lost;
+- monitor map of those channels at 19:52 (`out/diag/map_c3_dead.json`): baseline and
+  threshold unchanged (≤ 1 mV) since 17:57;
+- every channel of chips 2 and 3 pulsed (`pulser_files.py --stride 1 --sdp10 40` on
+  `trimmed_v1`, file `…_diag_c2c3_allpulsed_a40.txt`): **all 128 count 10.85 kHz**. The
+  channels are alive, their digital path works.
+
+So their **noise** went down, between 19:21 (end of the repeat, still normal) and 19:46.
+In that interval: the deep points of the repeat (chip 3 at 3–5 MHz), the trim scan
+(8 channels up to 640 kHz, ch 24/25 stuck at 0 Hz), GUI restores. Not known whether it is
+an external pickup source that went off (evening) or a chip state left by the floods.
+Channels 24 and 25 are in both groups. **To check first next time** (§ handoff).
+
+Consequences: the σ of some channels is not stable in time → every scan needs a
+reference point at its start and end (same file as today's `step1 … sdt m6`, so it ties
+to today's data), and the thresholds may need a margin; a scan should not drive
+channels into deep noise (hundreds of kHz) longer than necessary.
+
+**9.4 User decision (end of 16 Nov)**: document everything, continue the fast scan in a
+new session: `docs/HANDOFF_FAST_RATESCAN.md`.
