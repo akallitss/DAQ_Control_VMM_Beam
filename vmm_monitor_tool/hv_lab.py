@@ -21,6 +21,7 @@ current stays above --i-max uA (median over the hold) at any stage.
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -117,7 +118,34 @@ def setp(hw, param, value):
     return r
 
 
+def power_off(hw):
+    """Send power=0 to one channel. Never raises: True if the supply took the command.
+
+    banco checks the channel right after the command, so a CAEN N1471 channel that is ramping down
+    answers 'NOT APPLIED ... still on (status 5)' (5 = ON + ramping down). That is the command
+    working, not a refusal: the 17 Nov 20:00 ramp-down stopped on it and left 5 channels at HV."""
+    try:
+        setp(hw, 'power', 0)
+        return True
+    except Exception as e:  # noqa: BLE001 - one channel must never stop the others going off
+        if hw.startswith('N1471') and off_accepted(str(e)):
+            log('%s: ramping down (supply replied: still on, status bit RDW set)' % TARGETS[hw][0])
+            return True
+        log('%s power=0 NOT taken: %s' % (TARGETS[hw][0], e))
+        return False
+
+
 # ------------------------------------------------------------------------- pure logic --
+CAEN_RDW = 4   # CAEN channel status bit 2: ramping down
+
+
+def off_accepted(message):
+    """A CAEN power=0 reply that banco flags as not applied, but whose status says ramping down
+    (the iseg NHR has other status bits: not used for it)."""
+    m = re.search(r'still on \(status (\d+)\)', message or '')
+    return bool(m) and bool(int(m.group(1)) & CAEN_RDW)
+
+
 def bad_status(c):
     """A channel that is supposed to be ON: why it is not fine (None if fine)."""
     s = str(c.get('status_text', '')).lower()
@@ -243,32 +271,50 @@ def detector_off(hws, given_up):
         log('%s: powered OFF (mesh and drift), left off; the others carry on' % det)
         for hw in TARGETS:
             if detector(hw) == det:
-                try:
-                    setp(hw, 'power', 0)
-                except RuntimeError as e:
-                    log(str(e))
+                power_off(hw)
                 given_up.add(hw)
     write_given_up(given_up)
 
 
-def ramp_down(rdw=10.0):
+def ramp_down(rdw=10.0, timeout_s=300, poll=5):
+    """Every channel off at rdw V/s. Never stops on one channel: each gets the off command, a
+    channel still powered whose vmon is not falling gets it again, and the result is checked on vmon.
+    Returns True if every channel is below 20 V at the end, else logs RAMP-DOWN INCOMPLETE."""
     ch, _ = state()
     for hw, c in ch.items():
         if 'rdw' in c.get('settable', []) and abs(float(c.get('rdw', 0)) - rdw) > 0.01:
             try:
                 setp(hw, 'rdw', rdw)
-            except RuntimeError as e:
+            except Exception as e:  # noqa: BLE001
                 log('rdw not set: %s' % e)
     for hw, c in ch.items():
         if int(c.get('power', 0)):
-            setp(hw, 'power', 0)
+            power_off(hw)
     t0 = time.time()
-    while time.time() - t0 < 300:
-        ch, _ = state()
-        if all(float(c.get('vmon', 0)) < 20 for c in ch.values()):
+    last_v = {}
+    while True:
+        try:
+            ch, _ = state()
+        except Exception as e:  # noqa: BLE001 - banco unreadable for a moment: keep waiting
+            log('banco not readable during ramp-down: %s' % e)
+            ch = None
+        if ch is not None:
+            if all(float(c.get('vmon', 0)) < 20 for c in ch.values()):
+                log('ramped down: ' + summary(ch))
+                return True
+            if time.time() - t0 >= timeout_s:
+                break
+            for hw, c in ch.items():
+                v = float(c.get('vmon', 0))
+                if int(c.get('power', 0)) and v >= 20 and hw in last_v and v > last_v[hw] - 1.0:
+                    log('%s still on at %.0f V and not falling: off command again' % (TARGETS[hw][0], v))
+                    power_off(hw)
+                last_v[hw] = v
+        elif time.time() - t0 >= timeout_s:
             break
-        time.sleep(5)
-    log('ramped down: ' + summary(ch))
+        time.sleep(poll)
+    log('RAMP-DOWN INCOMPLETE after %.0f s: %s' % (timeout_s, summary(ch) if ch else 'banco unreadable'))
+    return False
 
 
 def is_trip(c):
@@ -375,11 +421,8 @@ def guard(until, on_trip, retries, end, poll=10, i_warn=3.0, persist_s=30.0):
                 for hw in problems:
                     if used[hw] >= retries:
                         log('%s: tripped again, left OFF (retries used: %d)' % (TARGETS[hw][0], used[hw]))
-                        try:
-                            if int(ch[hw].get('power', 0)):
-                                setp(hw, 'power', 0)
-                        except RuntimeError as e:
-                            log(str(e))
+                        if int(ch[hw].get('power', 0)):
+                            power_off(hw)
                         given_up.add(hw)
                         continue
                     used[hw] += 1
@@ -452,14 +495,14 @@ def main():
                 ch, _ = state()
                 for hw in TARGETS:
                     if detector(hw) in a.only.split(',') and int(ch[hw].get('power', 0)):
-                        setp(hw, 'power', 0)
+                        power_off(hw)
             else:
                 log('RAMP-UP STOPPED: %s -- ramping everything down' % e)
                 ramp_down()
             sys.exit(2)
     elif a.cmd == 'ramp-down':
         log('ramp-down requested')
-        ramp_down(a.rdw)
+        sys.exit(0 if ramp_down(a.rdw) else 1)
     elif a.cmd == 'guard':
         until = datetime.fromisoformat(a.until)
         log('guard until %s, on trip: %s (retries %d), at the end: %s' % (until, a.on_trip, a.retries, a.end))

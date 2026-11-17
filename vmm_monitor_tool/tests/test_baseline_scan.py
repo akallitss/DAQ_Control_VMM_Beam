@@ -137,3 +137,70 @@ def test_repeat_points_use_the_masks_of_the_sweep_at_that_x(monkeypatch, tmp_pat
     BS.run_sweep(a, eq, [2, 3], {2: 245, 3: 226}, {2: 15.0, 3: 15.0}, {2: 0.8, 3: 0.8},
                  d_eq, [30, 20], str(tmp_path), 'r', masked, set(), history=hist)
     assert seen == [('r00', []), ('r01', [7])]
+
+
+def test_off_accepted_reads_caen_rdw_bit():
+    msg = 'P2_IN_Drift: NOT APPLIED: module accepted the command but the channel is still on (status 5)'
+    assert HV.off_accepted(msg)                                       # 5 = ON + ramping down
+    assert not HV.off_accepted(msg.replace('status 5', 'status 1'))   # on, not ramping: a real refusal
+    assert not HV.off_accepted('P2_IN_Drift: permission denied')
+    assert not HV.off_accepted(None)
+
+
+class _FakeSupplies:
+    """Six channels at HV. A CAEN power=0 is answered like banco did on 17 Nov 20:00 (not ok,
+    'still on (status 5)'); each state() call then lowers vmon by 200 V."""
+
+    def __init__(self, refuse=()):
+        self.ch = {hw: {'power': 1, 'vmon': v, 'rdw': 10.0, 'settable': ['rdw']}
+                   for hw, (_, v) in HV.TARGETS.items()}
+        self.ramping, self.refuse, self.sent = set(), set(refuse), []
+
+    def banco(self, path, body=None, timeout=30):
+        hw = body['hw']
+        if body['param'] != 'power':
+            return {'ok': True}
+        self.sent.append(hw)
+        if hw in self.refuse:
+            return {'ok': False, 'message': 'interlock'}
+        self.ramping.add(hw)
+        if hw.startswith('N1471'):
+            return {'ok': False, 'message': '%s: NOT APPLIED: module accepted the command but the '
+                    'channel is still on (status 5)' % HV.TARGETS[hw][0]}
+        return {'ok': True}
+
+    def state(self):
+        for hw in self.ramping:
+            c = self.ch[hw]
+            c['vmon'] = max(0.0, c['vmon'] - 200.0)
+            if c['vmon'] == 0.0:
+                c['power'] = 0
+        return {hw: dict(c) for hw, c in self.ch.items()}, {}
+
+
+def _patch(monkeypatch, tmp_path, fake):
+    monkeypatch.setattr(HV, 'LOGDIR', str(tmp_path))
+    monkeypatch.setattr(HV, 'log', lambda m: None)
+    monkeypatch.setattr(HV, 'banco', fake.banco)
+    monkeypatch.setattr(HV, 'state', fake.state)
+    monkeypatch.setattr(HV.time, 'sleep', lambda s: None)
+
+
+def test_ramp_down_goes_on_after_status5_reply(monkeypatch, tmp_path):
+    fake = _FakeSupplies()
+    _patch(monkeypatch, tmp_path, fake)
+    assert HV.ramp_down() is True
+    assert set(fake.sent) == set(HV.TARGETS)                 # every channel got the off command
+    assert all(c['vmon'] < 20 for c in fake.ch.values())
+
+
+def test_ramp_down_reports_a_channel_that_stays_on(monkeypatch, tmp_path):
+    fake = _FakeSupplies(refuse={'N1471:3'})
+    _patch(monkeypatch, tmp_path, fake)
+    clock = iter(range(0, 10000, 10))
+    monkeypatch.setattr(HV.time, 'time', lambda: next(clock))
+    assert HV.ramp_down(timeout_s=60) is False
+    assert set(fake.sent) == set(HV.TARGETS)                 # the refusal did not stop the others
+    assert fake.sent.count('N1471:3') > 1                    # not falling -> off command again
+    assert fake.ch['N1471:3']['vmon'] == 430.0
+    assert all(c['vmon'] < 20 for hw, c in fake.ch.items() if hw != 'N1471:3')
