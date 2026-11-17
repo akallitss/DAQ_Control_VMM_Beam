@@ -318,3 +318,46 @@ hardware actions. Files added to `config_ext/` tonight (all `p2b-config-cern-ext
 Note for the 60 s check of `target50_p2` (§10.2): per-channel median 38 Hz, 54 channels
 > 500 Hz, chip 10 ch22 40 kHz (burst); measured/predicted per chip median 1.2–2.7
 (`results_20261116/target/check_p2.json`).
+
+## 11. Threshold-above-baseline scan, HV off then HV on (night 16/17 Nov 2026, session d0ca01)
+
+Asked by the user (16 Nov ~22:50): every channel from the lowest usable threshold up to ~+40 mV
+above ITS OWN monitor baseline, with good statistics at each point; HV off first, then HV on
+(gas as on 3–5 Nov, HV at the operating point = the low end of what was run), then cosmics.
+
+**Tools** (branch `worktree-code-map-channel-thresholds`; box copies in `~/trim_work/vmm_monitor_tool/`):
+- `fastscan/baseline_scan.py`: equalise every channel to X0 = 15 mV above its baseline
+  (`vmm_monitor_scan.equalize` on `full/map_start.json` → `config_ext/…_bscan_eq_x15.txt`), map that
+  file (`pilot/map_eq.json` = measured distance of every channel), then each point X only moves the
+  chip sdt: sdt(X) = sdt_eq + round((X − X0_chip)/k_chip). A channel's x is d_eq(ch) + Δsdt·k.
+  Points high → low, capture time grows with X (600 s at X ≥ 28, 180 s at 17–25, 60 s at 11–15,
+  30 s below; stops at 300 MB), in chunks of 120 s. **Stall check per chunk on chips 0–1** (H0,
+  not swept, 456–469 Hz in every chunk all night) → full configure + chunk again. Masks > 10 kHz
+  (and the ×10 "stuck" rule), chips > 1 MHz leave. Channels pulsed (all, `…heal…` files) at start
+  and end; references `target50_p2_rt3` and `trimmed_Km18_v1` (60 s) at start and end.
+  Repeat points (30, 20, 12, 8) — in the HV-off run they inherited the masks of the end of the sweep
+  (894 channels) and so only re-measured quiet channels; fixed for the HV-on run (each repeat starts
+  from the masks the sweep had at that X).
+- `hv_lab.py`: banco API (as `hv_dream_shim.py`): `state`, `ramp-up` (5 V/s, stages 50/80/90/95/100 %,
+  120 s holds, median current ≤ 1 µA), `guard` (10 s poll, CSV in `~/trim_work/out/hv_lab/`; user
+  rule: **a trip → that detector's mesh and drift OFF, carry on with the others**, listed in
+  `GIVEN_UP.json`, which the scan honours), `check-on`, `ramp-down`.
+- `fastscan/bscan_analyze.py`: per-channel curves, Gaussian core fit with free centre, tail list,
+  chip table, `--compare` (HV on vs off).
+- `fastscan/night_chain_20261116.sh` in tmux `bscan_night` (guard in its window `hvguard`).
+
+**HV-off result** (`~/trim_work/out/bscan_20261116/hvoff/`, 23:39–01:56; analysis `hvoff/analysis.json`):
+- x axis: monitor maps at X = 40 and 5: measured − predicted distance per channel median −0.11 / +0.05 mV,
+  rms 0.66 / 0.64 mV (the monitor's 1 mV steps). Baselines/distances 23:21 → 01:56: 0.00 ± 0.5 mV.
+- **Core**: Gaussian, σ median 3.04 mV (chips 2.4–3.5), centre at the monitor baseline (median +0.08 mV;
+  p10 −14.5 / p90 +6.8 for the channels whose fit is poor), 802 channels with ≥ 4 core points.
+- **Rate below R** (per channel, median / p90 / p99 mV above baseline): 1 Hz 14.9 / 20.1 / 23.5;
+  10 Hz 13.2 / 18.2 / 21.6; 50 Hz 12.1 / 17.0 / 20.3. Per chip, d at 10 Hz: medians 10.2 (chip 7)
+  … 15.3 (chip 8) mV.
+- **A flat floor beyond the core**: at X ≥ 27 every channel still counts **0.01–0.05 Hz (chip median),
+  up to 0.26 Hz**, independent of X up to +40 mV and with nearly the same value on all channels of
+  a chip at a given point (e.g. chip 2: 0.25–0.31 Hz on many channels at X 21–25, 0.05 at 28, 0.10
+  at 31). That is not threshold noise: it looks like **common-mode events (many channels at once)**,
+  as the noise coincidences of obs. 59. Next: a capture at X = 30 kept and its hits grouped in time.
+- Stalls (§9.1): 1 in the HV-off run (repeat point at X = 30), 2 at the first HV-on point (both
+  right after the full configure/VMM-only write at the start of the sweep); all recovered.
