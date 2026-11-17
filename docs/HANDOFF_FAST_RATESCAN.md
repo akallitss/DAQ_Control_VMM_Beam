@@ -361,3 +361,30 @@ above ITS OWN monitor baseline, with good statistics at each point; HV off first
   as the noise coincidences of obs. 59. Next: a capture at X = 30 kept and its hits grouped in time.
 - Stalls (§9.1): 1 in the HV-off run (repeat point at X = 30), 2 at the first HV-on point (both
   right after the full configure/VMM-only write at the start of the sweep); all recovered.
+
+**HV on** (`hvon/`, 02:09–04:33; HV ramped 01:56–02:10 at 5 V/s in 5 stages with 120 s holds: currents
+≤ 0.05 µA, nothing tripped). Detector ↔ chips: P2_IN = 2–7, P2_MID = 8–13, P2_OUT = 14–19.
+- **P2_OUT was off 03:06–03:51** (points p04–p15, X = 28…11, for chips 14–19). Cause: at 03:06:12 the
+  OUT mesh sagged to 404 V with 4.8 µA for one 10 s sample (CAEN status UNV) — a discharge, not a
+  supply trip; such spikes (≤ 5.1 µA) were routine on 5 Nov. The guard treated UNV as a trip and
+  switched OUT off: **stricter than the user's rule (trip → detector off)**. Fixed: the guard (and the
+  ramp checks) act at once only on a real trip (supply switched itself off, status trip/kill); any
+  other bad status must last 30 s (`hv_lab.persistent`). OUT re-ramped alone (`ramp-up --only P2_OUT`,
+  03:44–03:51, 0.05 µA), new guard from 03:51. X = 28…11 taken again with all three on (`hvon_patch/`).
+- **Floor at X = 25…40: 0.2–1 Hz per channel** (median per detector IN 0.4–0.95, MID 0.2–0.5,
+  OUT 0.4–0.6 Hz) vs 0.00–0.07 HV off, rising slowly towards low X: real signals (cosmics + chamber).
+- **HV raises the noise edge**: d where a channel's rate falls below 10 Hz (per-channel, on − off)
+  median **+1.3 mV** (p10 +0.7, p90 +2.7); per detector IN +1.7, MID +1.3, OUT +1.0 mV (OUT from the
+  patch, see above). Below 50 Hz, HV on: IN 14.1, MID 13.4 mV median (p90 20.4 / 19.1).
+  At X = 13: IN median 65 Hz/ch with HV on vs 8.8 off.
+- **`target50_p2_rt3` (HV-off 50 Hz file) is unusable with HV on**: 60 s reference 2.7 MHz, median
+  339 Hz/channel, ~1 GB/min (rate guard 100 MB/min). `trimmed_Km18_v1` with HV on: 104–108 MB/min,
+  80 % from two bursting channels (chip 4 ch46 ~118 kHz, chip 17 ch32 ~93 kHz).
+- New file **`…_bscan_hvon50_v1.txt`** (`fastscan/bscan_target.py`): each channel where its HV-on curve
+  crosses 50 Hz, + 0.5 mV, floor 6 mV; chip medians 10.6–19.1 mV above baseline; 8 burst channels
+  masked (2:33, 3:14, 4:46, 8:26, 10:22, 10:45, 13:25, 17:32: > 10 kHz at X ≥ 17 also with HV off, or
+  > 20 kHz in a reference regardless of threshold). `cosmics_prep.py` checks it and an `_hvm` variant of
+  `trimmed_Km18_v1` (same masks) for ≤ 70 MB/min with HV on before the cosmics runs (chain 3).
+- Operational lesson: killing the bash of a chain started as `tmux new-session "bash x.sh | tee"` ends
+  the tmux session and its children (the HV-on patch scan died at its start, 04:35; re-run 04:38).
+  Chain 3 and the patch run under `setsid nohup`.
