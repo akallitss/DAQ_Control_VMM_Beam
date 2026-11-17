@@ -173,6 +173,23 @@ def summary(chans):
 
 
 # ----------------------------------------------------------------------------- actions --
+def persistent(chans, since, persist_s=30.0):
+    """{hw: why} for channels that tripped, or have been in a bad status for >= persist_s
+    (a discharge gives a short UNV); since: {hw: first time seen bad}, updated in place."""
+    out = {}
+    for hw, c in chans.items():
+        if not bad_status(c):
+            since.pop(hw, None)
+            continue
+        t = since.setdefault(hw, time.time())
+        if is_trip(c) or time.time() - t >= persist_s:
+            out[hw] = bad_status(c)
+        elif t == since[hw] and time.time() - t < 1:
+            log('transient: %s %s (%.0f V, %.2f uA)' % (TARGETS[hw][0], bad_status(c),
+                                                       float(c.get('vmon', 0)), float(c.get('imon', 0))))
+    return out
+
+
 class HVProblem(RuntimeError):
     def __init__(self, msg, hws):
         super().__init__(msg)
@@ -181,10 +198,10 @@ class HVProblem(RuntimeError):
 
 def wait_at(values, timeout_s, poll=5):
     """Wait until every channel of values reads back ON within TOL_V; raises HVProblem(hws)."""
-    t0, last = time.time(), 0
+    t0, last, since = time.time(), 0, {}
     while time.time() - t0 < timeout_s:
         ch, err = state()
-        bad = {hw: bad_status(ch[hw]) for hw in values if bad_status(ch[hw])}
+        bad = persistent({hw: ch[hw] for hw in values}, since)
         # a channel just switched on may need a few s to read ON
         if bad and time.time() - t0 > 20:
             raise HVProblem('not ON while ramping: %s' % {TARGETS[h][0]: v for h, v in bad.items()}, bad)
@@ -200,12 +217,13 @@ def wait_at(values, timeout_s, poll=5):
 
 def hold(seconds, i_max, active, poll=5):
     """Hold, sampling currents of the active channels; HVProblem on a trip or a median above i_max."""
-    t0, samples = time.time(), {hw: [] for hw in active}
+    t0, samples, since = time.time(), {hw: [] for hw in active}, {}
     while time.time() - t0 < seconds:
         ch, _ = state()
+        bad = persistent({hw: ch[hw] for hw in active}, since)
+        if bad:
+            raise HVProblem('%s during the hold' % {TARGETS[h][0]: v for h, v in bad.items()}, bad)
         for hw in active:
-            if bad_status(ch[hw]):
-                raise HVProblem('%s %s during the hold' % (TARGETS[hw][0], bad_status(ch[hw])), [hw])
             samples[hw].append(float(ch[hw].get('imon', 0)))
         time.sleep(poll)
     med = {hw: sorted(v)[len(v) // 2] for hw, v in samples.items() if v}
@@ -253,7 +271,13 @@ def ramp_down(rdw=10.0):
     log('ramped down: ' + summary(ch))
 
 
-def ramp_up(stages, rup, hold_s, i_max, timeout_s=900):
+def is_trip(c):
+    """The supply itself switched the channel off, or reports a trip/kill."""
+    st = str(c.get('status_text', '')).lower()
+    return not int(c.get('power', 0)) or 'trip' in st or 'kill' in st
+
+
+def ramp_up(stages, rup, hold_s, i_max, timeout_s=900, only=None):
     """Staged ramp of all six channels. A channel that trips, does not reach its stage or draws
     more than i_max: its detector is powered off and the ramp goes on with the others (user rule,
     16 Nov). Raises only if no detector is left."""
@@ -263,11 +287,13 @@ def ramp_up(stages, rup, hold_s, i_max, timeout_s=900):
         raise RuntimeError('banco reports errors: %s' % err)
     given_up = read_given_up()
     for hw, c in ch.items():
+        if only and detector(hw) not in only:
+            continue
         if 'rup' in c.get('settable', []) and abs(float(c.get('rup', 0)) - rup) > 0.01:
             setp(hw, 'rup', rup)
     for frac in stages:
         while True:
-            active = [hw for hw in TARGETS if hw not in given_up]
+            active = [hw for hw in TARGETS if hw not in given_up and (not only or detector(hw) in only)]
             if not active:
                 raise RuntimeError('every detector is off')
             vals = {hw: v for hw, v in stage_values(frac).items() if hw in active}
@@ -291,14 +317,14 @@ def ramp_up(stages, rup, hold_s, i_max, timeout_s=900):
         (' | OFF after a problem: %s' % sorted({detector(h) for h in given_up}) if given_up else ''))
 
 
-def guard(until, on_trip, retries, end, poll=10, i_warn=3.0):
+def guard(until, on_trip, retries, end, poll=10, i_warn=3.0, persist_s=30.0):
     """Watch the six channels until `until`; handle trips; then leave the HV or ramp it down."""
     os.makedirs(LOGDIR, exist_ok=True)
     csvp = os.path.join(LOGDIR, 'guard_%s.csv' % datetime.now().strftime('%Y%m%d_%H%M'))
     used = {hw: 0 for hw in TARGETS}
     given_up = read_given_up()      # detectors switched off during the ramp stay off
     flag = os.path.join(LOGDIR, 'GUARD_STATUS')
-    last_ok_log, high_since = 0, {}
+    last_ok_log, high_since, bad_since = 0, {}, {}
     with open(csvp, 'a') as f:
         f.write('time,' + ','.join('%s_vmon,%s_imon,%s_power' % ((TARGETS[hw][0],) * 3) for hw in TARGETS) + '\n')
         while datetime.now() < until:
@@ -314,7 +340,19 @@ def guard(until, on_trip, retries, end, poll=10, i_warn=3.0):
             f.write(datetime.now().isoformat(timespec='seconds') + ',' + ','.join(
                 '%s,%s,%s' % (c.get('vmon'), c.get('imon'), c.get('power')) for c in ch.values()) + '\n')
             f.flush()
-            problems = {hw: bad_status(c) for hw, c in ch.items() if hw not in given_up and bad_status(c)}
+            # act on a trip at once; on any other bad status (UNV during a discharge, OVC ...) only if
+            # it lasts >= persist_s (16/17 Nov: a 10 s UNV sag of P2_OUT_Mesh, 4.8 uA, is a discharge)
+            problems = {}
+            for hw, c in ch.items():
+                if hw in given_up or not bad_status(c):
+                    bad_since.pop(hw, None)
+                    continue
+                t_bad = bad_since.setdefault(hw, time.time())
+                if is_trip(c) or time.time() - t_bad >= persist_s:
+                    problems[hw] = bad_status(c)
+                elif time.time() - t_bad < poll:
+                    log('transient: %s %s (%.0f V, %.2f uA) -- acting only if it lasts %.0f s'
+                        % (TARGETS[hw][0], bad_status(c), float(c.get('vmon', 0)), float(c.get('imon', 0)), persist_s))
             for hw, c in ch.items():
                 if float(c.get('imon', 0)) > i_warn:
                     high_since.setdefault(hw, time.time())
@@ -376,6 +414,7 @@ def main():
     s.add_argument('--hold', type=float, default=120.0)
     s.add_argument('--stages', default='0.5,0.8,0.9,0.95,1.0')
     s.add_argument('--i-max', type=float, default=1.0, help='uA, median over each hold')
+    s.add_argument('--only', help='comma list of detectors (P2_IN,P2_MID,P2_OUT) to ramp; the others are not touched')
     s = sub.add_parser('ramp-down')
     s.add_argument('--rdw', type=float, default=10.0)
     s = sub.add_parser('guard')
@@ -405,10 +444,18 @@ def main():
     elif a.cmd == 'ramp-up':
         log('ramp-up: stages %s, rup %.1f V/s, hold %.0f s, i-max %.1f uA' % (a.stages, a.rup, a.hold, a.i_max))
         try:
-            ramp_up([float(x) for x in a.stages.split(',')], a.rup, a.hold, a.i_max)
+            ramp_up([float(x) for x in a.stages.split(',')], a.rup, a.hold, a.i_max,
+                    only=set(a.only.split(',')) if a.only else None)
         except Exception as e:  # noqa: BLE001
-            log('RAMP-UP STOPPED: %s -- ramping everything down' % e)
-            ramp_down()
+            if a.only:
+                log('RAMP-UP (only %s) STOPPED: %s -- those detectors off, the others untouched' % (a.only, e))
+                ch, _ = state()
+                for hw in TARGETS:
+                    if detector(hw) in a.only.split(',') and int(ch[hw].get('power', 0)):
+                        setp(hw, 'power', 0)
+            else:
+                log('RAMP-UP STOPPED: %s -- ramping everything down' % e)
+                ramp_down()
             sys.exit(2)
     elif a.cmd == 'ramp-down':
         log('ramp-down requested')

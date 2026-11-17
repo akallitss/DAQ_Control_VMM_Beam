@@ -84,6 +84,21 @@ def test_detector_and_given_up():
     assert not HV.all_at_target(ch, skip=set(HV.TARGETS))     # nothing left is not "ok"
 
 
+def test_discharge_is_not_a_trip(monkeypatch):
+    import time as _t
+    monkeypatch.setattr(HV, 'log', lambda m: None)
+    unv = {'power': 1, 'vmon': 404.0, 'imon': 4.8, 'status_text': 'UNV'}
+    since = {}
+    assert HV.persistent({'N1471:3': unv}, since) == {}          # first sight of a sag: wait
+    since['N1471:3'] = _t.time() - 31
+    assert 'N1471:3' in HV.persistent({'N1471:3': unv}, since)   # lasts 30 s: act
+    assert HV.persistent({'N1471:3': dict(unv, status_text='ok', vmon=430.0)}, since) == {}
+    assert 'N1471:3' not in since                                # recovered: forgotten
+    tripped = {'power': 0, 'vmon': 0.0, 'imon': 0.0, 'status_text': 'ok'}
+    assert 'N1471:3' in HV.persistent({'N1471:3': tripped}, {})  # supply off by itself: at once
+    assert HV.is_trip({'power': 1, 'status_text': 'TRIP'}) and not HV.is_trip(unv)
+
+
 def test_capture_point_recovers_from_a_stall(monkeypatch, tmp_path):
     seq = [(0.0, {'live_s': 0.0, 'hits': {}}),                         # stalled chunk
            (5.0, {'live_s': 60.0, 'hits': {'0': {'41': 20000}, '2': {'3': 10}}}),
