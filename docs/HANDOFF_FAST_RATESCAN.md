@@ -412,3 +412,19 @@ fault state to its end (files 10 and 29: 54 / 63 Hz valid hits). → run_233 is 
 
 HV events during the runs: OUT mesh discharge sags (UNV) at 05:11:21 (393 V, 4.8 µA) and 05:55:22
 (413 V, 3.1 µA), one sample each, ignored by the fixed guard as transients; nothing tripped.
+| run_235 07:26 | `bscan_hvon50_v1_hvm` (20 min, replaces run_233) | 184 kHz (live) / 183 kHz (last file) | 71 | good |
+
+**Stand at 07:48, 17 Nov**: HV ON at the operating point on all six channels (currents ≤ 0.05 µA); the
+guard (`hv_lab.py guard`, trip → that detector off) runs until 08:00 and then ends leaving the HV on, as
+the user asked (the supplies' own current limits/trip times stay active). No DAQ run, no scan running.
+GUI selection `…_bscan_hvon50_v1_hvm.txt` (configured). Disk 95 GB free.
+Ready, NOT started (needs the user's go): `fastscan/day_cosmics_20261117.sh` (60 min runs alternating
+the two `_hvm` files until 18:00, guard extended to the same time).
+Files added to `config_ext/` tonight: `…_bscan_eq_x15`, `…_bscan_point`, `…_bscan_hvon50_v1`,
+`…_bscan_hvon50_v1_hvm`, `…_trimmed_Km18_v1_hvm` (`.txt`; plus `…_fastscan_recover` rewritten).
+
+**Next**: (1) the common-mode floor (HV off, X ≥ 25): keep a capture at X = 30 and group its hits in time;
+(2) closed-loop tuning of `bscan_hvon50_v1` on the measured HV-on rates (its tail: p90 317 Hz,
+p99 2.1 kHz) — `rate_tune.py` needs a fit in `noise_ratefit` format, or a variant reading the
+baseline_scan curves; (3) the read-out fault of run_233 and the stalls (§9.1) to the developers;
+(4) efficiency vs threshold from runs 231/232/234/235 (cosmic_vmm_analysis).
