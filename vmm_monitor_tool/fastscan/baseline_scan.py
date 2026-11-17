@@ -230,7 +230,7 @@ def run_sweep(a, eq_ext, chips, sdt_eq, x0, k, d_eq, points, out, tag, masked, m
             L, recovered = FR.links(), 1
             if not FR.links_ok(L):
                 raise FR.Abort('links still %s after a full configure' % L)
-        secs = int(seconds_for(x) * a.time_scale)
+        secs = int(getattr(a, 'fixed_seconds', 0) or seconds_for(x) * a.time_scale)
         hits, live, mb, nrec = capture_point(path, secs, a.chunk_s, a.max_mb, out, i)
         recovered += nrec
         ok2, hvs2 = hv_ok(a.hv) if a.hv == 'on' else (True, 'off')
@@ -285,11 +285,11 @@ def run_sweep(a, eq_ext, chips, sdt_eq, x0, k, d_eq, points, out, tag, masked, m
 
 def make_eq(a, chips, map_start):
     """Equalised file at X0 from a map of START; returns its name."""
-    name = EQ_NAME % a.x0
+    name = a.eq_name or EQ_NAME % a.x0
     per_trim = MS._per_chip(TRIMCURVE if os.path.exists(TRIMCURVE) else None, 'mV_per_trim', 1.1)
     per_sdt = MS._per_chip(SDTCAL, 'mV_per_sdt', 0.77)
     table, sdt_new, info = MS.equalize(map_start, per_trim, per_sdt, chips, a.headroom, float(a.x0))
-    ext = VT.ExtFile.load(os.path.join(EXT_DIR, START))
+    ext = VT.ExtFile.load(os.path.join(EXT_DIR, a.start_file or START))
     for cs, v in sdt_new.items():
         ext.set_sdt(int(cs), int(v))
     t = ext.trims()
@@ -324,6 +324,10 @@ def main():
     ap.add_argument('--points', default=DEFAULT_POINTS, help='X in mV above baseline, run in this order')
     ap.add_argument('--repeat', default='30,20,12,8', help='points repeated after the sweep ("" = none)')
     ap.add_argument('--x0', type=int, default=15, help='mV above baseline of the equalised file')
+    ap.add_argument('--start-file', help='config_ext file the equalised file is made from (default START, '
+                    'gain 4.5); another gain = a copy with other sg lines, mapped as --map-start')
+    ap.add_argument('--eq-name', help='name of the equalised file (default %s)' % (EQ_NAME % 15))
+    ap.add_argument('--fixed-seconds', type=int, default=0, help='capture time of every point (0 = by X)')
     ap.add_argument('--headroom', type=int, default=2)
     ap.add_argument('--map-start', help='map of START (default: full/map_start.json of 16 Nov)',
                     default=os.path.expanduser('~/trim_work/out/fastscan_20261116/full/map_start.json'))

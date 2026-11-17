@@ -61,6 +61,8 @@ def main():
     ap.add_argument('--headroom', type=int, default=1)
     ap.add_argument('--chips', default='2-19')
     ap.add_argument('--mask-extra', default='', help='chip:ch,... masked as well (known burst channels)')
+    ap.add_argument('--skip-raise', type=int, default=0,
+                    help='a chip with too few crossings: sdt = sdt_eq + this (0 = leave it at the equalised file)')
     ap.add_argument('--out-ext', required=True); ap.add_argument('--report')
     a = ap.parse_args()
     chips = VT.parse_list(a.chips, 2, 19, 'chip')
@@ -96,6 +98,10 @@ def main():
             dt[ch] = max(a.floor, x + a.margin)
         if len(dt) < 8:
             rep[c] = {'skipped': 'only %d channels with a crossing' % len(dt)}
+            if a.skip_raise:                 # park the chip far above its noise instead of leaving it at X0
+                new_sdt[c] = sdt_eq[c] + a.skip_raise
+                rep[c]['sdt'] = new_sdt[c]
+                print('chip %2d: skipped (%d crossings), sdt %d -> %d (parked)' % (c, len(dt), sdt_eq[c], new_sdt[c]))
             continue
         med = S.median(dt.values())
         for ch in why:
