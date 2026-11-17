@@ -198,13 +198,20 @@ def capture_point(path, seconds, chunk_s, max_mb, out, i):
     return hits, live, mb_tot, nrec
 
 
-def run_sweep(a, eq_ext, chips, sdt_eq, x0, k, d_eq, points, out, tag, masked, map_at):
+def run_sweep(a, eq_ext, chips, sdt_eq, x0, k, d_eq, points, out, tag, masked, map_at, history=None):
+    """history (repeats): {x: masks the main sweep had when it took x}; each repeat point starts
+    from those (not from the masks at the end of the sweep, which cover most channels)."""
     left = set()
     prev = {c: None for c in chips}
+    hist = {}
     os.makedirs(os.path.join(out, 'files'), exist_ok=True)
     for j, x in enumerate(points):
         i = '%s%02d' % (tag, j)
         t0 = time.time()
+        if history is not None:
+            masked = {c: set(v) for c, v in history.get(x, masked).items()}
+            prev = {c: None for c in chips}
+        hist.setdefault(x, {c: set(v) for c, v in masked.items()})
         ok, hvs = hv_gate(a.hv, a.hv_wait_s)
         if not ok:
             log('point %s X %+d skipped: HV' % (i, x))
@@ -273,7 +280,7 @@ def run_sweep(a, eq_ext, chips, sdt_eq, x0, k, d_eq, points, out, tag, masked, m
         if len(left) == len(chips):
             log('all chips have left')
             break
-    return masked
+    return masked, hist
 
 
 def make_eq(a, chips, map_start):
@@ -394,10 +401,10 @@ def main():
         swept = True
         start_masks = eq_ext.channel_bits('sm')
         masked = {c: set(start_masks.get(c, [])) for c in chips}
-        masked = run_sweep(a, eq_ext, chips, sdt_eq, x0, k, d_eq, points, a.out_dir, 'p', masked, map_at)
+        masked, hist = run_sweep(a, eq_ext, chips, sdt_eq, x0, k, d_eq, points, a.out_dir, 'p', masked, map_at)
         if repeat:
             log('repeat points %s' % repeat)
-            run_sweep(a, eq_ext, chips, sdt_eq, x0, k, d_eq, repeat, a.out_dir, 'r', masked, set())
+            run_sweep(a, eq_ext, chips, sdt_eq, x0, k, d_eq, repeat, a.out_dir, 'r', masked, set(), history=hist)
         log('sweep done: %d channels masked' % sum(len(m) for m in masked.values()))
     except FR.Abort as e:
         status = 'aborted: %s' % e

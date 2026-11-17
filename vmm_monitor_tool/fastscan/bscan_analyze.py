@@ -53,28 +53,50 @@ def curves(points):
     return out
 
 
+def _solve3(m, v):
+    """Solve the 3x3 system m x = v (Cramer)."""
+    def det(q):
+        return (q[0][0] * (q[1][1] * q[2][2] - q[1][2] * q[2][1]) - q[0][1] * (q[1][0] * q[2][2] - q[1][2] * q[2][0])
+                + q[0][2] * (q[1][0] * q[2][1] - q[1][1] * q[2][0]))
+    D = det(m)
+    if abs(D) < 1e-300:
+        return None
+    out = []
+    for j in range(3):
+        q = [row[:] for row in m]
+        for i in range(3):
+            q[i][j] = v[i]
+        out.append(det(q) / D)
+    return out
+
+
 def gauss_fit(curve, lo=3.0, hi=5e3):
-    pts = [(d, r, n) for d, r, n, _ in curve if lo < r < hi and n >= 5]
-    if len(pts) < 3:
+    """Weighted fit of ln r = A + B d + C d^2 (a Gaussian with a free centre) on 3 Hz < r < 5 kHz.
+    sigma = sqrt(-1/2C), centre mu = -B/2C (mV relative to the monitor baseline)."""
+    pts = [(d, math.log(r), n) for d, r, n, _ in curve if lo < r < hi and n >= 5]
+    if len(pts) < 4:
         return None
-    # weighted linear fit of y = ln r against x = d^2
-    w = [n for _, _, n in pts]
-    x = [d * d for d, _, _ in pts]
-    y = [math.log(r) for _, r, _ in pts]
-    sw = sum(w)
-    mx = sum(wi * xi for wi, xi in zip(w, x)) / sw
-    my = sum(wi * yi for wi, yi in zip(w, y)) / sw
-    sxx = sum(wi * (xi - mx) ** 2 for wi, xi in zip(w, x))
-    if sxx <= 0:
+    m = [[0.0] * 3 for _ in range(3)]
+    v = [0.0] * 3
+    for d, y, w in pts:
+        f = (1.0, d, d * d)
+        for i in range(3):
+            v[i] += w * f[i] * y
+            for j in range(3):
+                m[i][j] += w * f[i] * f[j]
+    sol = _solve3(m, v)
+    if sol is None:
         return None
-    b = sum(wi * (xi - mx) * (yi - my) for wi, xi, yi in zip(w, x, y)) / sxx
-    a = my - b * mx
-    if b >= 0:
-        return {'bad': 'rate does not fall with d', 'n': len(pts)}
-    sigma = math.sqrt(-1.0 / (2 * b))
-    res = [yi - (a + b * xi) for xi, yi in zip(x, y)]
-    return {'sigma_mV': round(sigma, 3), 'f0_Hz': round(math.exp(a), 1), 'n': len(pts),
-            'rms_ln': round(math.sqrt(sum(r * r for r in res) / len(res)), 3),
+    A, B, C = sol
+    if C >= 0:
+        return {'bad': 'not Gaussian-like (curvature >= 0)', 'n': len(pts)}
+    sigma = math.sqrt(-1.0 / (2 * C))
+    mu = -B / (2 * C)
+    if sigma > 20 or abs(mu) > 40 or A - B * B / (4 * C) > 50:
+        return {'bad': 'fit off scale (sigma %.1f, mu %.1f)' % (sigma, mu), 'n': len(pts)}
+    res = [y - (A + B * d + C * d * d) for d, y, _ in pts]
+    return {'sigma_mV': round(sigma, 3), 'mu_mV': round(mu, 2), 'f0_Hz': round(math.exp(A - B * B / (4 * C)), 1),
+            'n': len(pts), 'rms_ln': round(math.sqrt(sum(r * r for r in res) / len(res)), 3),
             'd_range': [min(d for d, _, _ in pts), max(d for d, _, _ in pts)]}
 
 
@@ -96,11 +118,11 @@ def crossing(curve, R):
 def tail_points(curve, g, n_sigma=4.0, factor=10.0, min_counts=5):
     if not g or 'sigma_mV' not in g:
         return []
-    s, f0 = g['sigma_mV'], g['f0_Hz']
+    s, f0, mu = g['sigma_mV'], g['f0_Hz'], g.get('mu_mV', 0.0)
     out = []
     for d, r, n, live in curve:
-        if d >= n_sigma * s and n >= min_counts:
-            pred = f0 * math.exp(-d * d / (2 * s * s))
+        if d - mu >= n_sigma * s and d > g['d_range'][1] and n >= min_counts:
+            pred = f0 * math.exp(-(d - mu) ** 2 / (2 * s * s))
             if r > factor * max(pred, 1.0 / live):
                 out.append((round(d, 1), round(r, 3), int(n)))
     return out
@@ -159,7 +181,11 @@ def main():
     print('%s: %d points, %d channels with a curve, %d with a Gaussian core fit (sigma median %.2f mV)'
           % (a.dir, res['n_points'], len(ch), len(sig), S.median(sig) if sig else float('nan')))
     tails = {k: v['tail'] for k, v in ch.items() if v['tail']}
-    print('channels with a non-Gaussian tail (rate > 10x the core at d >= 4 sigma): %d' % len(tails))
+    mus = [v['gauss']['mu_mV'] for v in ch.values() if v['gauss'] and 'mu_mV' in v['gauss']]
+    if mus:
+        print('Gaussian centre vs monitor baseline: median %+.2f mV, p10 %+.2f, p90 %+.2f' % (S.median(mus), pct(mus, .1), pct(mus, .9)))
+    print('channels with a non-Gaussian tail (beyond the fitted range, d >= mu + 4 sigma, > 10x the core, >= 5 counts): %d'
+          % len(tails))
     for R in R_LEVELS:
         dd = [v['d_at'][str(R)] for v in ch.values() if v['d_at'][str(R)] is not None]
         if dd:

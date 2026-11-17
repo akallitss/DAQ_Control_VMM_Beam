@@ -95,3 +95,30 @@ def test_capture_point_recovers_from_a_stall(monkeypatch, tmp_path):
     hits, live, mb, nrec = BS.capture_point('x.txt', 120, 60, 300, str(tmp_path), 'p00')
     assert nrec == 1 and calls['apply'] == 1
     assert live == 120.0 and hits['2']['3'] == 15 and mb == 10.0
+
+
+def test_repeat_points_use_the_masks_of_the_sweep_at_that_x(monkeypatch, tmp_path):
+    import types
+    monkeypatch.setattr(BS, 'hv_gate', lambda mode, w: (True, 'off'))
+    monkeypatch.setattr(BS.FR, 'vmm_write', lambda p: 3.8)
+    monkeypatch.setattr(BS.FR, 'links', lambda: {h: 4 for h in range(10)})
+    monkeypatch.setattr(BS, 'log', lambda m: None)
+    seen = []
+
+    def cap(path, secs, chunk, mb, out, i):
+        ext = vt.ExtFile.load(path)
+        seen.append((i, sorted(ext.channel_bits('sm').get(2, []))))
+        # channel 7 of chip 2 is above 10 kHz at every point -> masked after its first point
+        return {'0': {'41': 1000}, '2': {'7': 200000, '1': 10}}, 10.0, 1.0, 0
+    monkeypatch.setattr(BS, 'capture_point', cap)
+    a = types.SimpleNamespace(hv='off', hv_wait_s=0, time_scale=0.01, chunk_s=60, max_mb=300, mask_hz=1e4,
+                              stuck_min_hz=1e3, leave_at=60, chip_max_hz=1e6)
+    eq = vt.ExtFile(list(EQ))
+    d_eq = {2: {ch: 15.0 for ch in range(64)}, 3: {ch: 15.0 for ch in range(64)}}
+    masked, hist = BS.run_sweep(a, eq, [2, 3], {2: 245, 3: 226}, {2: 15.0, 3: 15.0}, {2: 0.8, 3: 0.8},
+                                d_eq, [30, 20], str(tmp_path), 'p', {2: set(), 3: set()}, set())
+    assert masked[2] == {7} and hist[30][2] == set() and hist[20][2] == {7}
+    seen.clear()
+    BS.run_sweep(a, eq, [2, 3], {2: 245, 3: 226}, {2: 15.0, 3: 15.0}, {2: 0.8, 3: 0.8},
+                 d_eq, [30, 20], str(tmp_path), 'r', masked, set(), history=hist)
+    assert seen == [('r00', []), ('r01', [7])]
