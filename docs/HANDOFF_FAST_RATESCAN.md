@@ -398,3 +398,17 @@ within ~2 min. HV unchanged (all six at setpoint). The FEC frame header changes:
 word = the AcqON sub-address mask `0x000fffff` (20 bits, as in the slow-control log) → `0xffffffff`.
 The run was left going so that its raw files keep this state (`runs/run_233/…/raw_daq_data/`).
 Different from §9.1 (there: 0 bytes, no packet at all).
+The warm reset + configure at the start of run_234 cleared it (58 kHz, nominal); run_233 stayed in the
+fault state to its end (files 10 and 29: 54 / 63 Hz valid hits). → run_233 is not usable for physics.
+
+**Cosmics runs, HV on** (`config_scan`, 30 min each; `~/trim_work/out/bscan_20261116/cosmics_prep/`):
+
+| run | config | valid hits (files 10 / 29) | MB/min | note |
+|---|---|---|---|---|
+| run_231 05:19 | `bscan_hvon50_v1_hvm` | 180 / 179 kHz | 68–70 | good; per-channel median 37 Hz in the 60 s check (p90 317, p99 2.1 k) |
+| run_232 05:51 | `trimmed_Km18_v1_hvm` | 59 / 59 kHz | 26 | good |
+| run_233 06:22 | `bscan_hvon50_v1_hvm` | 184 kHz → 61 Hz from 06:25:30 | 71 | **read-out fault above, not usable** |
+| run_234 06:54 | `trimmed_Km18_v1_hvm` | 58 kHz (live) | 26 | good at 06:58 |
+
+HV events during the runs: OUT mesh discharge sags (UNV) at 05:11:21 (393 V, 4.8 µA) and 05:55:22
+(413 V, 3.1 µA), one sample each, ignored by the fixed guard as transients; nothing tripped.
