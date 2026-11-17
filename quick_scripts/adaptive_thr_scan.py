@@ -22,6 +22,11 @@ bursts), so masks are not carried from one K to another. Everything is written t
 a state file (one JSON per scan, --state) and a logbook note per decision, so the analysis can use the pad
 set that was live at every point.
 
+RAISE INSTEAD OF MASK (--raise-steps N, 13 Nov 2026). With a base config whose channels carry threshold
+trims with room to go up (made by vmm_monitor_tool: equalize, then trim_tune), a noisy channel is first RAISED by
+N trim steps (about 1.1 mV each) per probe, by lowering its trim, and stays alive. It is masked only when its trim
+has reached 0 and it is still over the limit. The raises are per point, like the masks.
+
 Runs on the DAQ machine, in tmux. Decoding runs in a memory-capped child (systemd-run MemoryMax).
 
     adaptive_thr_scan.py --points 0,-4,-8,-12 --minutes 180 --tag wk1          # the scan
@@ -58,6 +63,10 @@ SDT_RE = re.compile(
 MASK_RE = re.compile(r'^\s*Sys\s+0\s+Bec\s+0\s+Hyb\s+(\d+)\s+Vmm\s+(\d+)\s+Reg\s+channel\[(\d+)\]\s+Field\s+sm\s+1\b')
 
 LOGF = None
+BASE_TRIMS = {}                            # {chip: {ch: effective trim}} of the base config (raise mode)
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'vmm_monitor_tool'))
+import vmm_trim  # noqa: E402  (ours; text files only)
 
 
 def log(msg):
@@ -145,11 +154,16 @@ class State:
         self.hold = {int(c): v for c, v in d.get('hold', {}).items()}
         self.points = d.get('points', [])
         self.meta = d.get('meta', {})
+        # raised[K][chip][ch] = trim steps the channel was raised at K (raise mode)
+        self.raised = {int(k): {int(c): {int(ch): n for ch, n in v.items()} for c, v in m.items()}
+                       for k, m in d.get('raised', {}).items()}
 
     def save(self):
         d = {'meta': self.meta,
              'masks_found': {str(k): {str(c): sorted(v) for c, v in m.items()} for k, m in sorted(self.found.items())},
              'hold': {str(c): v for c, v in sorted(self.hold.items())},
+             'raised': {str(k): {str(c): {str(ch): n for ch, n in sorted(v.items())} for c, v in sorted(m.items())}
+                        for k, m in sorted(self.raised.items())},
              'points': self.points}
         tmp = self.path + '.tmp'
         json.dump(d, open(tmp, 'w'), indent=1)
@@ -167,6 +181,16 @@ class State:
             if k < h['k']:
                 m[c] = set(base_masks.get(c, set())) | set(h['masks'])
         return m
+
+    def trims_at(self, k):
+        """Trims at K: the base ones minus the raises found at this same K. A held chip keeps the raises it had
+        at its floor (its sdt is the floor's too)."""
+        t = {c: dict(v) for c, v in BASE_TRIMS.items()}
+        for c in list(t):
+            kk = self.hold[c]['k'] if (c in self.hold and k < self.hold[c]['k']) else k
+            for ch, n in self.raised.get(kk, {}).get(c, {}).items():
+                t[c][ch] = max(0, t[c].get(ch, 0) - n)
+        return t
 
     def sdt_at(self, k, base_sdt):
         s = {}
@@ -295,18 +319,46 @@ def make_cfg(st, k, it, base, a):
     out, _ = render(lines, idx, sdt, {c: masks[c] - base_masks.get(c, set()) for c in masks}, hdr)
     stem = BASE[:-4] + f'_ad{a.tag}_K{k_label(k)}_i{it}'
     name = stem + '.txt'
+    if a.raise_steps:
+        n_raised = sum(len(v) for v in st.raised.get(k, {}).values())
+        ext = vmm_trim.ExtFile(out)
+        all_trims = ext.trims()                 # keeps trims of chips the scan does not handle (H0)
+        all_trims.update(st.trims_at(k))
+        ext.set_trims(all_trims,f'adaptive scan {a.tag} K={k:+d}: {n_raised} channels raised by the scan '
+                                      f'instead of being masked')
+        out = [ln + '\n' for ln in ext.lines]
     with open(os.path.join(CFG_DIR, name), 'w') as f:
         f.writelines(out)
     return name, sdt, masks, held, n_extra
 
 
+RAISED_NOW = {}                            # filled by apply_new_masks: what the last call raised (for the notes)
+
+
 def apply_new_masks(st, k, new, base, a, prev_clean_k):
-    """Record new masks at K; chips over the cap are held at their last clean K."""
+    """Record new masks at K; chips over the cap are held at their last clean K.
+    In raise mode (--raise-steps) a hot channel is raised first and masked only at trim 0."""
+    RAISED_NOW.clear()
     lines, idx, base_sdt, base_masks = base
     held_now = []
     for c, chs in new.items():
         if c in st.hold and k < st.hold[c]['k']:
             continue                                   # held chip: its setting does not change any more
+        if a.raise_steps:
+            # raise what can still be raised; only channels already at trim 0 go on to be masked
+            cur_trims = st.trims_at(k).get(c, {})
+            to_mask = set()
+            for ch in chs:
+                room = cur_trims.get(ch, 0)
+                if room <= 0:
+                    to_mask.add(ch)
+                    continue
+                d = st.raised.setdefault(k, {}).setdefault(c, {})
+                d[ch] = d.get(ch, 0) + min(a.raise_steps, room)
+            RAISED_NOW.setdefault(c, set()).update(set(chs) - to_mask)
+            chs = to_mask
+            if not chs:
+                continue
         cur = st.masks_at(k, base_masks).get(c, set()) - base_masks.get(c, set())
         if len(cur | chs) > a.max_masks_per_chip:
             if prev_clean_k is None:
@@ -382,8 +434,12 @@ def do_point(st, k, base, a, prev_clean_k):
             held_now = [c for _, c in loud]
         else:
             held_now = apply_new_masks(st, k, new, base, a, prev_clean_k)
+        if a.raise_steps and RAISED_NOW:
+            log('   raised (not masked): ' + '; '.join(f'VMM {c}: {sorted(v)}' for c, v in sorted(RAISED_NOW.items())))
         note(f'Adaptive scan {a.tag}, K={k:+d}: probe {it} {mbmin:.0f} MB/min'
-             f'{" (rate guard stopped it)" if trip else ""}; masking {hot_txt}'
+             f'{" (rate guard stopped it)" if trip else ""}; '
+             + (f'raising by {a.raise_steps} trim steps (masking only at trim 0) ' if a.raise_steps else 'masking ')
+             + f'{hot_txt}'
              + (f'; chips {held_now} held at K={prev_clean_k:+d} (too many channels)' if held_now else ''), run)
         st.save()
     if not clean:
@@ -453,6 +509,9 @@ def main():
                     help='a chip needing more masked channels is held at its last clean K')
     ap.add_argument('--max-iter', type=int, default=5, help='probes per point')
     ap.add_argument('--base', default=BASE)
+    ap.add_argument('--raise-steps', type=int, default=0,
+                    help='raise a noisy channel by this many trim steps (about 1.1 mV each) instead of masking it; '
+                         'it is masked only once its trim is 0. Needs a base config with trims (vmm_monitor_tool)')
     ap.add_argument('--dry-run', action='store_true', help='write configs, config_scan --dry-run, no runs')
     ap.add_argument('--replay', help='only print the mask decision for an existing run')
     a = ap.parse_args()
@@ -472,10 +531,19 @@ def main():
 
     BASE = a.base
     base = read_base(os.path.join(CFG_DIR, a.base))
+    if a.raise_steps:
+        BASE_TRIMS.update(vmm_trim.full_trims(vmm_trim.ExtFile.load(os.path.join(CFG_DIR, a.base)), CHIPS))
+        room = sum(1 for c in CHIPS for v in BASE_TRIMS[c].values() if v >= a.raise_steps)
+        log(f'raise mode: {a.raise_steps} trim steps per probe; {room} of {64 * len(CHIPS)} detector channels '
+            f'have room for at least one raise in {a.base}')
+        if room == 0:
+            raise SystemExit('--raise-steps: the base config has no trims to give back. Make one with '
+                             'vmm_monitor_tool (vmm_monitor_scan.py equalize) first.')
     st = State(os.path.join(outdir, f'state_{a.tag}.json'))
     st.meta.update({'base': a.base, 'base_sdt': {str(c): base[2][c] for c in CHIPS},
                     'ch_limit_hz': a.ch_limit_hz, 'max_mb_min': a.max_mb_min,
-                    'max_masks_per_chip': a.max_masks_per_chip, 'minutes': a.minutes})
+                    'max_masks_per_chip': a.max_masks_per_chip, 'minutes': a.minutes,
+                    'raise_steps': a.raise_steps})
     st.save()
     ks = [int(x) for x in a.points.split(',')]
     log(f'ADAPTIVE SCAN {a.tag}: points {ks}, {a.minutes} min each, mask channels > {a.ch_limit_hz:g} Hz, '
