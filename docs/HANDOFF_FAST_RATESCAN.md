@@ -428,3 +428,14 @@ Files added to `config_ext/` tonight: `…_bscan_eq_x15`, `…_bscan_point`, `�
 p99 2.1 kHz) — `rate_tune.py` needs a fit in `noise_ratefit` format, or a variant reading the
 baseline_scan curves; (3) the read-out fault of run_233 and the stalls (§9.1) to the developers;
 (4) efficiency vs threshold from runs 231/232/234/235 (cosmic_vmm_analysis).
+
+## 12. Day 17 Nov: cosmics threshold scan with HV on, per-channel noise-rate ladder
+
+`fastscan/day_ladder_20261117.sh` (user's go 07:55; started 08:56): every channel where its own HV-on
+noise rate is R (`bscan_target.py`, files `…_bscan_hvon{R}_v1_hvm.txt`), plus `trimmed_Km18_v1_hvm` as
+the reference. Rate checks (60 s, `ladder_prep/`): R = 2: 22 MB/min, 5: 25, 10: 41, 20: 42 (after 4
+extra masks), 50: 69 (7 extra masks), **100: left out** (106 MB/min after 21 extra masks, over the rate
+guard), Km18 ref: 26. **12 runs of 50 min** from run_236 (09:11): ref, R 2→50, R 50→2, ref; until 19:55.
+Guard until 20:00 (trip → that detector off), **then the HV is ramped down** (user). The HV was on
+without the guard 08:00–08:56 (night guard ended at 08:00 as planned; supplies' own trips active).
+Analysis: efficiency vs each channel's own mV above baseline (known per file in `hvon{R}_v1_report.json`).
