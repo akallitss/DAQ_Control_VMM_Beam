@@ -11,6 +11,8 @@ in wk2 (0.75-0.79) but about 0.10 below 0.95. In this range the limit is not the
 
 ![efficiency](results/eff_ladder_20261117.png)
 
+Explainer for non-experts (animations, CERN SSO): https://alexandra-kallitsopoulou.web.cern.ch/notes/unlisted/2026-11-17-does-a-lower-vmm-threshold-make-the-p2-chambers-more-efficient.html
+
 ## Data and method
 
 - Runs (HV on: IN 420/720, MID and OUT 430/730): night 231, 232, 234, 235 and day ladder 236-247 (12 x 50 min).
