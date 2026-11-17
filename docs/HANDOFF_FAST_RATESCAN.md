@@ -388,3 +388,13 @@ above ITS OWN monitor baseline, with good statistics at each point; HV off first
 - Operational lesson: killing the bash of a chain started as `tmux new-session "bash x.sh | tee"` ends
   the tmux session and its children (the HV-on patch scan died at its start, 04:35; re-run 04:38).
   Chain 3 and the patch run under `setsid nohup`.
+
+**New read-out fault during cosmics run_233 (17 Nov 06:25:30, HV on, `bscan_hvon50_v1_hvm`, 3 min into
+the run)** — for the firmware developers: bytes keep flowing at the normal rate (71 MB/min, 8976-byte UDP
+packets from port 6006, same as before) but **valid hits drop from 184 kHz to 61 Hz** (H0 437 → 36 Hz)
+within ~2 min. HV unchanged (all six at setpoint). The FEC frame header changes:
+`00000000 564d33c0 00000000 000fffff` (good, file `enp4s0f1_00002_20261117062411`) →
+`0000000a 564d33c0 00000000 ffffffff` (bad, `enp4s0f1_00005_20261117062711`): first word 0 → 0xa, 4th
+word = the AcqON sub-address mask `0x000fffff` (20 bits, as in the slow-control log) → `0xffffffff`.
+The run was left going so that its raw files keep this state (`runs/run_233/…/raw_daq_data/`).
+Different from §9.1 (there: 0 bytes, no packet at all).
