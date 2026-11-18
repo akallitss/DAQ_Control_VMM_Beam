@@ -12,8 +12,9 @@ The weekend has three goals:
 
 1. **Pulser runs**: one channel per chip pulsed at 10.85 kHz during cosmics -> read-out efficiency measured directly,
    and whether the pulses go missing when a chamber is "silent" for a muon.
-2. **2D gain x threshold scan with high statistics**: gains 4.5 / 6 / 9 mV/fC x thresholds at the per-channel HV-on
-   noise rate R = 2 / 10 / 50 Hz. The deliverable (user): at high gain the low tail of the muon ADC distribution sits
+2. **2D gain x threshold scan with high statistics**: gains 3.0 / 4.5 / 6 / 9 mV/fC x thresholds at the per-channel
+   HV-on noise rate R = 2 / 10 / 50 Hz (12 points; 3.0 is the low-gain contrast where the threshold should cut the
+   spectrum). The deliverable (user): at high gain the low tail of the muon ADC distribution sits
    above the threshold, while the efficiency does not change -> gain is not what limits the efficiency.
 3. **High-statistics blocks** on the reference (trimmed_Km18) and on the high-gain point (9 mV/fC, R = 10 Hz).
 
@@ -25,7 +26,7 @@ lxplus** as the runs are copied to EOS (never on the DAQ box).
 
 ## 0. Rules (from memory; they cost us before)
 
-- The user decides the measurement; this plan is approved in outline (19 Nov 00:40). Ask before deviating.
+- The user decides the measurement; this plan is approved by the user (19 Nov ~00:50, with the answers of section 1). Ask before deviating.
 - **Never start a lab run without checking HV**; HV changes only through `hv_lab.py` (banco API).
   Limits: Drift <= 1000 V, Mesh <= 500 V. Operating point: IN 420/720, MID 430/730, OUT 430/730 (mesh/drift).
 - Keep all chips in the study (no masking or skipping a chip without asking). Hot channels are masked only by
@@ -40,14 +41,15 @@ lxplus** as the runs are copied to EOS (never on the DAQ box).
 - Commit scripts to `DAQ_Control_VMM_Beam` main (vmm_monitor_tool/fastscan/), deploy by copying to
   `~/trim_work/vmm_monitor_tool/...`; one commit per file.
 
-## 1. Decisions to get from the user before 08:00 (ask at the start)
+## 1. Decisions (answered by the user, 19 Nov ~00:50)
 
-1. **Gas**: is the bottle good until Monday 07:00 (~4 days of flow)? (wk1 ran out of gas on 1 Nov.) If not: end date.
-2. **HV trip policy over 4 days**: the user's rule so far is "trip -> that detector off" (`--on-trip detector-off`).
-   Over 4 days that can lose a chamber for days. Option: `--on-trip retry --retries 3` (re-ramp up to 3 times, then
-   off). Default if no answer: keep `detector-off`.
-3. **Gain 3.0 mV/fC** (optional, adds a low-gain contrast point where the threshold should cut the spectrum): only if
-   the prerequisites below are done by ~05:30. Default if no answer: skip.
+1. **Gas**: OK until Monday 07:00.
+2. **HV trip policy**: unchanged, "trip -> that detector off" (`hv_lab.py guard --on-trip detector-off`). (Read from
+   "same for the HV"; confirm with the user at the start if in doubt.)
+3. **Gain 3.0 mV/fC**: YES, as a full row of the grid (D2, D10, D50). Its preparation needs an HV-OFF monitor map,
+   so it comes BEFORE the HV ramp (section 5).
+4. **The DAQ code changed** (user): the first run is the **end-to-end test of capture, processing and QA on the new
+   code** (section 5, step 0), before anything else is launched.
 
 ## 2. Data transfer and lxplus: verify, do not assume
 
@@ -76,7 +78,7 @@ lxplus** as the runs are copied to EOS (never on the DAQ box).
 | **C2** | `${P}9.0${S}gscan_hvon2_hvm.txt` | **to make** |
 | **PRa / PRb** | REF + pulser on chip set A / B | **to make** |
 | **PCa / PCb** | C10 + pulser on chip set A / B | **to make** |
-| D50, D10 (optional) | `${P}3.0${S}gscan_hvon{50,10}_hvm.txt` | to make (needs a gain-3 scan) |
+| **D50, D10, D2** | `${P}3.0${S}gscan_hvon{50,10,2}_hvm.txt` | **to make** (gain-3 map + HV-on scan, 3.3) |
 
 ### 3.1 B2 and C2 (no new data needed)
 
@@ -112,53 +114,81 @@ channels that never get that quiet are raised (`--skip-raise`), count them. Then
 - Rate: the pulse rate is set by the FEC `tp_number` in the base YAML, not the ext file; with the standard base YAML
   it gave 10 851 Hz on 16 Nov (`base_tp2.yaml` = 2 pulses/frame). Verify in section 5.
 
-### 3.3 Gain 3.0 (optional)
+### 3.3 Gain 3.0
 
-Same procedure as 4.5 -> 6/9 on 17/18 Nov (`fastscan/gain_maps_20261118.sh`, `gain_coarse_20261118.sh`, then
-`baseline_scan.py` HV-on at gain 3 and `bscan_target.py` for R = 10, 50): a gtest start file with `sg` for 3 mV/fC,
-an HV-off monitor map, an HV-on scan (~30-40 min), the targets, the rate check. Only if done by ~05:30; then D10 and
-D50 join every pass (passes become 14 runs, 12.8 h).
+Same procedure as 4.5 -> 6/9 on 17/18 Nov (`fastscan/gain_maps_20261118.sh`, `gain_coarse_20261118.sh`,
+`gain_chain_20261118.sh`):
+1. a gtest start file with the `sg` of 3 mV/fC (the 6/9 ones are `..._gain{6.0,9.0}_..._gtest_Km18_sdtp<N>.txt`, an
+   sdt offset above Km18; at 3 mV/fC the noise in mV is lower, so the offset is smaller or negative: take it from the
+   map);
+2. **HV OFF**: monitor map at gain 3 (`maps/map_g3.0.json`, as `gain_maps_20261118.sh`);
+3. HV ON (section 5): coarse probe (as `gain_coarse_20261118.sh`), then `baseline_scan.py --hv on` at gain 3 with
+   points from ~40 mV down to ~6 mV above baseline (choose from the coarse probe; 40 s per point, ~30-40 min);
+4. `bscan_target.py` for R = 2, 10, 50 (as 3.1), the rate check (section 5, step 6).
+If the gain-3 scan fails or is not ready by ~06:30, start without the D row and add it to the passes later
+(the supervisor skips missing files and logs them; drop the file in config_ext and it is used from the next pass).
 
 ## 4. Run plan: overlapping passes
 
 Each run: 49 min of data (`--minutes 49`), ~6 min overhead -> 55 min. ~720 scintillator-confirmed muons per chamber
-per run (18 Nov: 79.6 k over 36 runs).
+per run (18 Nov: 79.6 k over 36 runs). Grid: D = 3.0, A = 4.5, B = 6, C = 9 mV/fC; 2 / 10 / 50 = R in Hz.
 
 | block | order (each item one run) | runs | hours |
 |---|---|---|---|
-| **P1** | REF, PRa, A50, A10, A2, B50, B10, B2, C50, C10, C2, PCa | 12 | 11.0 |
-| **P2** | REF, PCb, C2, C10, C50, B2, B10, B50, A2, A10, A50, PRb | 12 | 11.0 |
+| **P1** | REF, PRa, D50, D10, D2, A50, A10, A2, B50, B10, B2, C50, C10, C2, PCa | 15 | 13.75 |
+| **P2** | REF, PCb, C2, C10, C50, B2, B10, B50, A2, A10, A50, D2, D10, D50, PRb | 15 | 13.75 |
 | **HS** | REF, C10, REF, C10, REF, C10 | 6 | 5.5 |
-| **P3** | REF, A50, B50, C50, PRa, A10, B10, C10, PCa, A2, B2, C2 | 12 | 11.0 |
-| **P4** | REF, C2, B2, A2, PCb, C10, B10, A10, PRb, C50, B50, A50 | 12 | 11.0 |
+| **P3** | REF, D50, A50, B50, C50, PRa, D10, A10, B10, C10, PCa, D2, A2, B2, C2 | 15 | 13.75 |
+| **P4** | REF, C2, B2, A2, D2, PCb, C10, B10, A10, D10, PRb, C50, B50, A50, D50 | 15 | 13.75 |
 
-Sequence: **P1, P2, HS, P3, P4, HS, P1, P2, HS, P3, P4, ...** until Mon 23 Nov 07:00. Expected, starting ~05:00 Thu:
+Sequence: **P1, P2, HS, P3, P4, HS, P1, P2, HS, ...** until Mon 23 Nov 07:00. Expected, starting ~06:30 Thu after
+the end-to-end test:
 
 | end of | approx. | every grid point | REF / C10 | pulser (PR, PC) |
 |---|---|---|---|---|
-| P1 | Thu 16:00 | 1 run | 1 / 1 | 1 / 1 |
-| P2 | Fri 03:00 | 2 | 2 / 2 | 2 / 2 |
-| HS | Fri 08:30 | 2 | 5 / 5 | 2 / 2 |
-| P4 | Sat 06:30 | 4 | 7 / 7 | 4 / 4 |
-| P2 | Sun 10:00 | 6 | 12 / 12 | 6 / 6 |
-| P3 | Mon 02:30 | 7 | 16 / 16 | 7 / 7 |
-| Mon 07:00 | (P4 partial) | 7-8 | ~17 / ~17 | ~8 / ~8 |
+| P1 | Thu 20:15 | 1 run | 1 / 1 | 1 / 1 |
+| P2 | Fri 10:00 | 2 | 2 / 2 | 2 / 2 |
+| HS | Fri 15:30 | 2 | 5 / 5 | 2 / 2 |
+| P4 | Sat 19:00 | 4 | 7 / 7 | 4 / 4 |
+| HS | Sun 00:30 | 4 | 10 / 10 | 4 / 4 |
+| P2 | Mon 04:00 | 6 | 12 / 12 | 6 / 6 |
+| Mon 07:00 | (HS partial) | 6 | ~14 / ~13 | 6 / 6 |
 
-At the end: ~5 000-5 800 muons per chamber per grid point (+-0.005 per chamber, ~+-0.012 per chip), ~12 000 on REF
-and C10. If the weekend stops early, every completed pass is a balanced grid.
+At the end: ~4 300 muons per chamber per grid point (+-0.006 per chamber, ~+-0.014 per chip), ~10 000 on REF and
+C10. If the weekend stops early, every completed pass is a balanced grid. If the D row is not ready at the start,
+passes without it are 12 runs (11 h) and the timeline moves earlier.
 
 ## 5. Preparation, in order (attended, before 08:00)
 
+0. **End-to-end test of the new code (FIRST run, before anything else is launched).** The box's DAQ checkout was
+   updated late on 18 Nov to GitHub main (`ae2f5a7`, 42 commits since 6 Nov: run sequencing, Kerberos, restart
+   scripts, p2 readout packages pinned via `p2_readout_versions.txt`, p2-decode 0.9.0 and p2-mapping 0.6.0 installed
+   in `.venv`), but the processor / QA watchers still running were started at the 12 Nov reboot (old code in memory).
+   - `bash_scripts/p2_readout.sh check` (both venvs match `p2_readout_versions.txt`); `git status` on the box (only
+     the known machine-state line in `run_config_beam.py`).
+   - Restart the services with the repo's current restart procedure (the GUI's "Restart all" was fixed in 83766c7;
+     the order after a reboot is in the DAQ memory `vmm-daq-lab-mode`): flask GUI, vmm_processor_watcher,
+     qa_watcher, live, backup_watcher (keep it running if it is healthy; check its Kerberos log after), pruner.
+   - Take ONE short run through the normal path: `config_scan.py --until <now+40 min> --minutes 20 --configs REF`.
+     With HV on if it is already on (better: muons in the QA); with HV off it still tests the plumbing, then repeat a
+     10 min check once HV is on.
+   - Check end to end: capture files written (dumpcap log, sizes ~ MB/min as on 18 Nov), sub-run marked complete,
+     `RUN_QUALITY.json` and the QA products for that run, the processor output (p2-monitor reduce), the live view in
+     the GUI, the logbook entry, the run copied to EOS by backup_watcher, and on lxplus one chunk of it dumped with
+     `channel_efficiency.py dump --diag` (the weekend pipeline of section 7 can be the test).
+   - Anything broken: stop, tell the user, do not launch the weekend on a broken chain.
 1. Read this file and the DAQ project memory (`status-p2-lab-cosmics`, `vmm-gain-scan-nov18`, `vmm-daq-lab-mode`,
    `lab-hv-serial-supplies`). Check nothing is running: `pgrep -af "config_scan|hv_lab|baseline_scan"`, the GUI.
-2. Ask the user the three questions of section 1.
+2. Section 1 is answered; only confirm the HV trip policy if the user is reachable.
 3. Verify transfer and disk (section 2). `run_config_beam.py` must have `RUN_PLAN='config_scan'` (config_scan refuses
    otherwise).
 4. Make B2, C2 (3.1) and the pulser files (3.2). Dry-run every file with the existing ext-file summary / datagram
    check used on 17-18 Nov.
+4b. **Gain 3.0, HV-OFF part** (3.3, steps 1-2) while HV is still off.
 5. **HV on**: as `fastscan/gain_hvup_20261118.sh` (write `out/hv_lab/HV_GO` with the user's words, reset
    `GIVEN_UP.json`, `hv_lab.py ramp-up --rup 5 --hold 120 --i-max 1.0`), then `hv_lab.py check-on`. Allow the chambers
    ~30 min to settle before the rate checks.
+5b. **Gain 3.0, HV-ON part** (3.3, steps 3-4), ~1 h.
 6. **Rate checks, HV on** (60 s each): `fastscan/cosmics_prep.py --out-dir out/weekend_20261119/prep --mask $BURSTS`
    on B2 and C2 (writes `_hvm`, masks channels > 5 kHz); and on the four pulser files a rate measurement WITHOUT the
    masking step (e.g. `--hot-hz 1e9` into a separate out-dir, keep the original tp files): the pulsed channels must
@@ -166,7 +196,7 @@ and C10. If the weekend stops early, every completed pass is a balanced grid.
    the base YAML has `tp_number` 0 or the test pulse is disabled in the FEC registers: then the pulser runs need
    `config-fec-regs` with `~/trim_work/pulser/base_tp2.yaml` after each configure (as `noise_probe.py --fec-yaml`),
    which config_scan cannot do -> drop PRa/PRb/PCa/PCb from the passes (replace by REF and C10) and tell the user.
-7. **HV guard until the end**: `hv_lab.py guard --until 2026-11-23T07:30 --on-trip <policy from 1.2> --end down`,
+7. **HV guard until the end**: `hv_lab.py guard --until 2026-11-23T07:30 --on-trip detector-off --end down`,
    in its own `setsid nohup` (see gain_hvup_20261118.sh). It ramps everything down at 07:30 Monday.
 8. **Supervisor** (section 6): write, `bash -n`, run once with `config_scan.py --dry-run` for each pass, then start
    with `setsid nohup ... < /dev/null &`. Logbook note with the plan.
