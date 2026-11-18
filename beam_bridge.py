@@ -31,7 +31,13 @@ import datetime
 
 _REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 # Point kinit/xrdcp at the repo CERN krb5 config and ~/bin (same as backup_watcher).
-os.environ.setdefault('KRB5_CONFIG', os.path.join(_REPO_DIR, 'config', 'krb5_cern.conf'))
+# The system krb5.conf goes after the repo's: the repo file wins for the CERN
+# realm, the system one supplies the rest -- on the DAQ box the KCM credential
+# cache the tickets live in (without it, kinit -R looked for /tmp/krb5cc_<uid>
+# and failed, so the backup skipped every scan; 2026-11-19).
+os.environ.setdefault('KRB5_CONFIG', os.pathsep.join(
+    [os.path.join(_REPO_DIR, 'config', 'krb5_cern.conf')]
+    + (['/etc/krb5.conf'] if os.path.isfile('/etc/krb5.conf') else [])))
 os.environ['PATH'] = os.path.expanduser('~/bin') + os.pathsep + os.environ.get('PATH', '')
 
 sys.path.insert(0, _REPO_DIR)
