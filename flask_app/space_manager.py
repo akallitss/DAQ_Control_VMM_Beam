@@ -52,7 +52,13 @@ REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # banco has no CERN realm in its system krb5.conf and xrdfs/xrdcp live in
 # ~/bin — same environment fixes backup_watcher.py applies for itself.
-os.environ.setdefault('KRB5_CONFIG', os.path.join(REPO_DIR, 'config', 'krb5_cern.conf'))
+# The system krb5.conf goes after the repo's: the repo file wins for the CERN
+# realm, the system one supplies the rest -- on the DAQ box the KCM credential
+# cache the tickets live in (without it, kinit -R looked for /tmp/krb5cc_<uid>
+# and failed, so the backup skipped every scan; 2026-11-19).
+os.environ.setdefault('KRB5_CONFIG', os.pathsep.join(
+    [os.path.join(REPO_DIR, 'config', 'krb5_cern.conf')]
+    + (['/etc/krb5.conf'] if os.path.isfile('/etc/krb5.conf') else [])))
 os.environ['PATH'] = os.path.expanduser('~/bin') + os.pathsep + os.environ.get('PATH', '')
 
 BACKUP_CONFIG_PATH = os.path.join(REPO_DIR, 'config', 'backup_config.json')
