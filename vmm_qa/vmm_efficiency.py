@@ -508,8 +508,8 @@ def analyse(hits, window_ns=2000.0, n_sigma=3.0, mask=True, trigger=None,
             dead_ns=TRIGGER_DEADTIME_NS):
     """Stage-1 analysis on an already-parsed hits DataFrame.
 
-    Returns (summary_dict, per_station_arrays). Safe to call from
-    vmm_pcapng_qa.py with the DataFrame it has already built.
+    Returns (summary_dict, per_station_arrays). Safe to call with a DataFrame
+    another script has already built (vmm_stations.parse_pcapng columns).
     """
     applied, n_masked = {}, 0
     if mask:

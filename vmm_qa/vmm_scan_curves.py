@@ -43,11 +43,11 @@ import vmm_efficiency as ve
 
 DATA_ROOT = '/local/p2/p2data/TB_July26_H4'
 
-# (card, channel) of each station's supplies — mirrors run_config_beam.P2_HV.
+# (card, channel) of each station's supplies, as the run config's keys (strings),
+# from the beam-test setup's HV channel map (p2-mapping, vmm_stations.SETUP).
 P2_HV = {
-    'P2_IN':  {'drift': ('8', '0'), 'mesh': ('8', '1')},
-    'P2_MID': {'drift': ('8', '2'), 'mesh': ('8', '3')},
-    'P2_OUT': {'drift': ('8', '4'), 'mesh': ('8', '5')},
+    st: {k: tuple(str(x) for x in vs.SETUP.hv['channels'][st][k]) for k in ('drift', 'mesh')}
+    for st in vs.STATIONS
 }
 
 

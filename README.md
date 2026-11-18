@@ -192,7 +192,11 @@ capture guard's discriminator.
 ```bash
 git clone <this repo> && cd DAQ_Control_VMM_Beam
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+bash_scripts/p2_readout.sh deploy <host>   # the P2 readout packages, pinned in p2_readout_versions.txt
 ```
+
+The DAQ code imports p2-decode and p2-mapping (the setup file, the GUI, rate_guard,
+vmm_qa); `p2_readout.sh` installs them into `.venv` as well as into the readout venv.
 
 Machine prerequisites:
 
