@@ -12,6 +12,10 @@
 #
 # 2026-11-18: pinned to what was installed on vmm_daplxa; its wheels were
 # checked file by file (RECORD hashes) against wheels built from these tags.
-p2-decode==0.8.1
-p2-mapping==0.5.0
+# 2026-11-18: decode 0.9.0 (get_packets/get_hits, --port/--duration) and
+# mapping 0.6.0 (Mapping.annotate): additive releases. p2-monitor 0.8.1's
+# test suite passes against them; its own pyproject still names decode 0.8.1 /
+# mapping 0.5.0, which does not matter here since install uses --no-deps.
+p2-decode==0.9.0
+p2-mapping==0.6.0
 p2-monitor==0.8.1
