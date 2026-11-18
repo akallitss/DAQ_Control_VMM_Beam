@@ -10,8 +10,10 @@ hist=${3:-5000}
 
 # Check if tmux session already exists
 if tmux has-session -t "$name" 2>/dev/null; then
+    # exit, not return: this file is run (not sourced), and a top-level `return`
+    # only printed an error and went on to type $cmd into the existing pane.
     echo "❌ Tmux session '$name' already exists!"
-    return 1
+    exit 1
 fi
 
 # A pane captures history-limit at the moment it is created, so set the

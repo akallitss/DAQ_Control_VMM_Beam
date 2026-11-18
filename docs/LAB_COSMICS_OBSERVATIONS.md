@@ -49,9 +49,10 @@ Setup: ALINX/FEC at 192.168.0.12, hybrids H1-H9 (VMM 2-19), data NIC enp4s0f1, `
 ### Machine / software
 
 9. `screen` is not installed, so `bash_scripts/restart_all_tmux_processes.sh` kills tmux and does not
-   restart anything.
+   restart anything. (2026-11-19: that script is removed; `restart_daq_tmux_processes.sh`, the GUI's
+   "Restart all", had the same problem and now uses `setsid`.)
 10. `start_servers.sh` is not idempotent: for a session that already exists it types its command into
-    the existing pane.
+    the existing pane. (2026-11-19: fixed in `start_tmux.sh`, which now skips an existing session.)
 11. The Kerberos ticket on the machine had expired on 3 Aug (needed for the EOS backup).
 12. The apply returns before the chips have necessarily settled: the first `/chip_config/status` poll
     after `apply` still showed the previous file, so poll on `last.file` as well as `running`.
