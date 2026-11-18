@@ -5,8 +5,9 @@
 # /local/p2/p2-readout/venv (see p2_readout_config.py); p2-decode and p2-mapping
 # also in this repo's .venv, without dependencies (the DAQ code imports them).
 #
-# To upgrade: change a line here, commit, push, then
-#     bash_scripts/p2_readout.sh deploy vmm_daplxa     (from a PC with network)
+# To upgrade: tag the package's repo, change its line here, commit, push, then
+#     bash_scripts/p2_readout.sh deploy vmm_daplxa     (from any PC)
+# which git-pulls this repo on the box and installs the tags from git there,
 # and restart the vmm_processor / vmm_qa_watcher / vmm_live sessions at a
 # sub-run boundary. `bash_scripts/p2_readout.sh check` says whether a venv
 # matches this file.

@@ -12,16 +12,17 @@ updating them can never change the numpy/pandas the DAQ runs on:
                                    dependencies: the DAQ's own code imports them
                                    (run_config_beam via setup_source, the Flask
                                    app, rate_guard, vmm_qa/vmm_stations)
-    /local/p2/p2-readout/wheels    the wheelhouse they were installed from
-    /local/p2/p2-readout/src       the tagged sources (for their tests)
+    /local/p2/p2-readout/src       git checkouts of the packages' repos, at the
+                                   pinned tags: what is installed is built from them
 
 The versions are pinned in git, in p2_readout_versions.txt: a DAQ version
-fixes its package versions. The box's network to GitHub/PyPI is unreliable,
-so updates go through the wheelhouse: from a PC with network,
+fixes its package versions. Everything is updated through git, nothing is
+copied in by hand: from any PC,
     bash_scripts/p2_readout.sh deploy vmm_daplxa
-builds wheels of the pinned tags, copies them in and installs them offline
-(pip --no-index --no-deps); `bash_scripts/p2_readout.sh check` compares a
-venv with the pins.
+runs `git pull --ff-only` in the box's DAQ checkout, then (on the box) fetches
+the pinned tags into src/ over SSH and installs them from there (pip --no-index
+--no-deps, with the venv's own setuptools, so no PyPI is needed);
+`bash_scripts/p2_readout.sh check` compares the venvs with the pins.
 
 Two users here:
   * the processor (vmm_processor_config.py): ENGINE 'p2' runs
