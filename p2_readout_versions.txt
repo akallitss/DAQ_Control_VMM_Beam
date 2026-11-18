@@ -2,7 +2,8 @@
 #
 # One line per package, NAME==VERSION; VERSION is the git tag vVERSION of
 # https://github.com/akallitss/NAME. They are installed in their own venv,
-# /local/p2/p2-readout/venv (see p2_readout_config.py), never in .venv.
+# /local/p2/p2-readout/venv (see p2_readout_config.py); p2-decode and p2-mapping
+# also in this repo's .venv, without dependencies (the DAQ code imports them).
 #
 # To upgrade: change a line here, commit, push, then
 #     bash_scripts/p2_readout.sh deploy vmm_daplxa     (from a PC with network)

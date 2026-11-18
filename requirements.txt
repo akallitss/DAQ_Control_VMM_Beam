@@ -7,4 +7,6 @@ psutil~=7.2.2
 caen-hv-py
 setuptools
 matplotlib
-scapy
+PyYAML
+# p2-decode and p2-mapping are installed by bash_scripts/p2_readout.sh at the
+# versions in p2_readout_versions.txt (they are not on PyPI).

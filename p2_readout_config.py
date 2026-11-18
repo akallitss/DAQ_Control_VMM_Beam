@@ -4,10 +4,14 @@
 Where the P2 readout packages live and how the DAQ uses them.
 
 The packages (p2-decode, p2-mapping, p2-monitor; github.com/akallitss) are
-installed in their own venv, NOT in this repo's .venv, so installing or
+installed with their dependencies in their own venv, so installing or
 updating them can never change the numpy/pandas the DAQ runs on:
 
     /local/p2/p2-readout/venv      the packages and their dependencies
+    <repo>/.venv                   p2-decode and p2-mapping only, without
+                                   dependencies: the DAQ's own code imports them
+                                   (run_config_beam via setup_source, the Flask
+                                   app, rate_guard, vmm_qa/vmm_stations)
     /local/p2/p2-readout/wheels    the wheelhouse they were installed from
     /local/p2/p2-readout/src       the tagged sources (for their tests)
 

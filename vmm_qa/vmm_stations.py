@@ -1,40 +1,54 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-vmm_stations.py — telescope geometry, trigger, channel masking, and a pcapng
-parser for the offline efficiency/map analyses and rate_guard's culprit decode.
+vmm_stations.py — telescope geometry, trigger, channel masking, and the
+pcapng -> hits / (vmm, ch) -> pad steps for the offline efficiency/map analyses
+of the SPS H4 2026 beam test.
 
-Why this file exists
---------------------
-The parse was lifted from the old online QA script (vmm_pcapng_qa.py, a
-top-level script nothing could import; removed 2026-11-02) so the efficiency
-analysis did not re-implement the bit unpacking a second time.
+The decoding and the mapping are the P2 readout packages', not copies:
+    parse_pcapng      p2_decode.decode          (was a scapy parser lifted from
+                                                 the old vmm_pcapng_qa.py)
+    STATIONS,         p2-mapping setup          (was a copy of
+    build_pad_table   SETUP_NAME, at CABLING_AT  run_config_beam.P2_VMM_CABLING
+                                                 and P2_BASKET_mapping.csv)
+so the analyses, the processor and the QA decode and map the same way. Both
+packages are installed by bash_scripts/p2_readout.sh (in the DAQ .venv too);
+elsewhere (lxplus/EOS) `pip install` them at the tags in p2_readout_versions.txt.
 
-Station cabling mirrors run_config_beam.P2_VMM_CABLING. It is duplicated here
-(not imported) so this module works standalone, e.g. on lxplus/EOS where the DAQ
-config is not checked out. If the cabling ever changes, change both.
+One difference to the old parser: it skipped the last 6-byte word of every
+packet (p2-decode fixed that in 0.2), so captures now give ~0.07% more hits.
+parse_pcapng(..., legacy_word_count=True) gives the old hits exactly.
 
 @author: ak271430 Alexandra Kallitsopoulou
 """
 
 import os
-import struct
-import array
 
 import numpy as np
-import pandas as pd
+
+from p2_mapping import routing
+from p2_mapping.setups import load_setup
+from p2_mapping.table import build_table
 
 # --------------------------------------------------------------------------
 # Telescope
 # --------------------------------------------------------------------------
-# connector -> (hybrid, bottom VMM, top VMM); hybrid H<n> carries VMMs 2n/2n+1.
+# The beam-test setup and the cabling these analyses use. Both SPS cabling
+# entries (2026-07-29, 2026-08-01) have the same hybrids/VMMs and orders; they
+# differ only in P2_MID's cables.
+SETUP_NAME = os.environ.get('VMM_STATIONS_SETUP', 'sps_h4_2026')
+CABLING_AT = os.environ.get('VMM_STATIONS_WHEN', '2026-07-30T12:00:00')
+SETUP = load_setup(SETUP_NAME)
+_CABLING = SETUP.cabling_at(CABLING_AT)
+
+# station -> {'z_mm', 'connectors': {'c<N>': (hybrid, bottom VMM, top VMM)}}
 STATIONS = {
-    'P2_IN':  {'z_mm': 320.0,
-               'connectors': {'c4': (1, 2, 3), 'c5': (2, 4, 5), 'c6': (3, 6, 7)}},
-    'P2_MID': {'z_mm': 630.0,
-               'connectors': {'c4': (4, 8, 9), 'c5': (5, 10, 11), 'c6': (6, 12, 13)}},
-    'P2_OUT': {'z_mm': 940.0,
-               'connectors': {'c4': (7, 14, 15), 'c5': (8, 16, 17), 'c6': (9, 18, 19)}},
+    det: {'z_mm': float(place['z_mm']),
+          'connectors': {f"c{r['connector']}": (int(r['hybrid']), int(r['bottom_vmm']),
+                                                 int(r['top_vmm']))
+                         for r in sorted(_CABLING.hybrids, key=lambda r: r['connector'])
+                         if r['detector'] == det}}
+    for det, place in SETUP.at(CABLING_AT).detectors.items()
 }
 
 STATION_VMMS = {
@@ -82,8 +96,6 @@ NOISY_CHANNELS = {
 HOT_RATIO = 8.0
 
 CLOCK_PERIOD_NS = 22.5   # ns per BCID count (44.44 MHz)
-TAC_SLOPE_NS = 60.0      # ns full scale of the TDC TAC ramp
-TDC_RANGE = 255
 
 
 def auto_hot_channels(hits, ratio=HOT_RATIO, min_hits=200):
@@ -156,64 +168,15 @@ def find_trigger_channel(hits, min_share=0.80):
 
 
 # --------------------------------------------------------------------------
-# pcapng parsing  (lifted from vmm_pcapng_qa.py — keep the two in step)
+# pcapng parsing  (p2_decode)
 # --------------------------------------------------------------------------
-_DEFAULT_MARKER = [0, 0, 0]
-
-
-def gray2bin_np(arr):
-    arr = arr.astype(np.uint32)
-    arr ^= arr >> 16
-    arr ^= arr >> 8
-    arr ^= arr >> 4
-    arr ^= arr >> 2
-    arr ^= arr >> 1
-    return arr.astype(np.uint16)
-
-
-def _parse_block(block, frame_counter, fec_id, markers, data_format,
-                 vmm_buf, ch_buf, adc_buf, ot_buf, offset_buf, bcid_buf,
-                 tdc_buf, srs_ts_buf, bad_vmm):
-    if len(block) < 22 or block[4:7] != b'VM3':
-        return
-    for i in range(0, len(block) - 22, 6):
-        d1, d2 = struct.unpack_from('>IH', block, i + 16)
-        if d2 & 0x8000:
-            vmm_id = (d1 >> 22) & 0x1F
-            if vmm_id not in VMM_TO_STATION and vmm_id != TRIGGER['vmm']:
-                bad_vmm[vmm_id] = bad_vmm.get(vmm_id, 0) + 1
-            m = markers.get((fec_id, vmm_id), _DEFAULT_MARKER)
-            vmm_buf.append(vmm_id)
-            ch_buf.append((d2 >> 8) & 0x3F)
-            adc_buf.append((d1 >> 12) & 0x3FF)
-            ot_buf.append((d2 >> 14) & 0x1)
-            raw_off = (d1 >> 27) & 0x1F
-            offset_buf.append(raw_off if raw_off < 16 else raw_off - 32)
-            bcid_buf.append(d1 & 0xFFF)
-            tdc_buf.append(d2 & 0xFF)
-            srs_ts_buf.append(m[0])
-        else:
-            vmmid_marker = (d2 >> 10) & 0x1F
-            srs_ts = (d1 << 10) | (d2 & 0x3FF)
-            # NOTE: vmm-sdat's ParserSRS (and vmm_pcapng_qa.py, which copies it)
-            # gates this on `vmmid_marker < 16`, because upstream a FEC hosts at
-            # most 16 VMMs and ids >= 16 encode TRG trigger words instead. THIS
-            # FEC HOSTS 20 (hybrids 0-9), so that test silently threw away every
-            # marker for VMMs 16-19 -- they ended up with srs_timestamp = 0 for
-            # every hit, no absolute time, and therefore ZERO trigger
-            # coincidences. That is 4 of P2_OUT's 6 VMMs (37% of all detector
-            # hits). Measured 2026-07-30 on run_24.
-            # In SRS mode there are no TRG markers, so every marker word is a
-            # VMM marker and the id must be taken at face value.
-            if data_format == 'SRS':
-                markers.setdefault((fec_id, vmmid_marker), [0, 0, 0])[0] = srs_ts
-            elif vmmid_marker < 16 and srs_ts < 4096:
-                markers.setdefault((fec_id, vmmid_marker), [0, 0, 0])[0] = srs_ts
+HIT_COLUMNS = ('vmm', 'ch', 'adc', 'over_threshold', 'offset', 'bcid', 'tdc',
+               'timestamp_ns', 'srs_timestamp', 'abs_time_ns')
 
 
 def parse_pcapng(path, max_packets=None, data_format='SRS', src_ips=None,
-                 progress=False):
-    """Parse a VMM pcapng into a hits DataFrame.
+                 progress=False, legacy_word_count=False):
+    """Decode a VMM pcapng into a hits DataFrame, with p2_decode.decode.
 
     Returns (hits, meta). hits columns: vmm, ch, adc, over_threshold, offset,
     bcid, tdc, timestamp_ns, srs_timestamp, abs_time_ns.
@@ -224,65 +187,23 @@ def parse_pcapng(path, max_packets=None, data_format='SRS', src_ips=None,
     `offset` is stuck at a constant in this firmware (see the plan doc), so the
     BCID rollover counter is unavailable and chip time is only unambiguous
     within 4096 * 22.5 ns = 92.16 us of a marker.
+    `progress` is accepted for compatibility (the decode takes seconds now).
     """
-    from scapy.all import PcapReader, UDP, IP
+    from p2_decode import decode
+    dec, m = decode(path, data_format=data_format, src_ips=src_ips,
+                    max_packets=max_packets, legacy_word_count=legacy_word_count)
+    hits = dec[list(HIT_COLUMNS)].reset_index(drop=True)
 
-    if src_ips is None:
-        src_ips = _detect_fec_ips(path)
-    markers = {}
-    bad_vmm = {}
-    vmm_buf = array.array('B'); ch_buf = array.array('B')
-    adc_buf = array.array('H'); ot_buf = array.array('B')
-    offset_buf = array.array('b'); bcid_buf = array.array('H')
-    tdc_buf = array.array('B'); srs_ts_buf = array.array('Q')
-
-    n_pkt = n_vm3 = 0
-    with PcapReader(path) as reader:
-        for pkt in reader:
-            if UDP in pkt and IP in pkt and pkt[IP].src in src_ips:
-                payload = bytes(pkt[UDP].payload)
-                fc = struct.unpack_from('>I', payload)[0]
-                fec_id = (struct.unpack_from('>I', payload, 4)[0] >> 4) & 0x0F
-                before = len(vmm_buf)
-                _parse_block(payload, fc, fec_id, markers, data_format,
-                             vmm_buf, ch_buf, adc_buf, ot_buf, offset_buf,
-                             bcid_buf, tdc_buf, srs_ts_buf, bad_vmm)
-                if len(vmm_buf) > before:
-                    n_vm3 += 1
-            n_pkt += 1
-            if progress and n_pkt % 10000 == 0:
-                print(f'  {n_pkt} packets | {len(vmm_buf):,} hits')
-            if max_packets and n_pkt >= max_packets:
-                break
-
-    offset = np.frombuffer(offset_buf, dtype=np.int8).copy()
-    bcid = gray2bin_np(np.frombuffer(bcid_buf, dtype=np.uint16).copy())
-    tdc = np.frombuffer(tdc_buf, dtype=np.uint8).copy()
-    srs_ts = np.frombuffer(srs_ts_buf, dtype=np.uint64).copy()
-
-    t_coarse = (offset.astype(np.float64) * 4096 + bcid.astype(np.float64)) * CLOCK_PERIOD_NS
-    t_fine = CLOCK_PERIOD_NS - tdc.astype(np.float64) * TAC_SLOPE_NS / TDC_RANGE
-    timestamp_ns = t_coarse + t_fine
-
-    hits = pd.DataFrame({
-        'vmm': np.frombuffer(vmm_buf, dtype=np.uint8).copy(),
-        'ch': np.frombuffer(ch_buf, dtype=np.uint8).copy(),
-        'adc': np.frombuffer(adc_buf, dtype=np.uint16).copy(),
-        'over_threshold': np.frombuffer(ot_buf, dtype=np.uint8).astype(bool),
-        'offset': offset,
-        'bcid': bcid,
-        'tdc': tdc,
-        'timestamp_ns': timestamp_ns,
-        'srs_timestamp': srs_ts,
-        'abs_time_ns': srs_ts.astype(np.float64) * 25.0 + timestamp_ns,
-    })
-
+    vmm = hits['vmm'].to_numpy()
+    stray = vmm[~np.isin(vmm, DETECTOR_VMMS + [TRIGGER['vmm']])]
+    ids, n = np.unique(stray, return_counts=True)
+    offset = hits['offset'].to_numpy()
     meta = {
-        'n_packets': n_pkt,
-        'n_vm3_packets': n_vm3,
+        'n_packets': int(m.get('n_packets', 0)),
+        'n_vm3_packets': int(m.get('n_vm3_packets', 0)),
         'n_hits': len(hits),
-        'fec_ips': sorted(src_ips),
-        'bad_vmm_ids': {int(k): int(v) for k, v in sorted(bad_vmm.items())},
+        'fec_ips': sorted(m.get('fec_ips', [])),
+        'bad_vmm_ids': {int(k): int(v) for k, v in zip(ids, n)},
         'offset_constant': bool(len(np.unique(offset)) == 1),
     }
     meta.update(_marker_cadence(hits))
@@ -308,33 +229,19 @@ def _marker_cadence(hits):
             'bcid_rollover_ns': 4096 * CLOCK_PERIOD_NS}
 
 
-def _detect_fec_ips(path, n_probe=500):
-    from scapy.all import PcapReader, UDP, IP
-    found = set()
-    with PcapReader(path) as r:
-        for i, pkt in enumerate(r):
-            if UDP in pkt and IP in pkt:
-                payload = bytes(pkt[UDP].payload)
-                if len(payload) > 6 and payload[4:7] == b'VM3':
-                    found.add(pkt[IP].src)
-            if i >= n_probe:
-                break
-    return found
-
-
 # --------------------------------------------------------------------------
 # (vmm, ch) -> pad
 # --------------------------------------------------------------------------
-# Chain, mirroring cosmic_bench_analysis/p2_mapping.py (which is M3-validated
-# for the DREAM/K59V readout):
+# Chain, as p2_mapping.table.build_table does it (first written in
+# cosmic_bench_analysis/p2_mapping.py, M3-validated for the DREAM/K59V readout):
 #
 #   (vmm, ch)
-#     -> station, connector N, half          (P2_VMM_CABLING: bottom/top VMM)
+#     -> station, connector N, half          (the setup's cabling: bottom/top VMM)
 #     -> within = ch (0..63)
 #     -> strip   = half_base + f(within)     (WITHIN_STRATEGY, see below)
 #     -> sector  = N - 1
 #     -> channel_id = sector*128 + (strip-1)
-#     -> pad_cx, pad_cy                      (P2_BASKET_mapping.csv)
+#     -> pad_cx, pad_cy                      (p2-mapping geometry/p2_basket_pads.csv)
 #
 # All three stations are identical P2 detectors, so the same 1280-pad map
 # applies to each; they differ only in which connectors are instrumented
@@ -353,12 +260,13 @@ def _detect_fec_ips(path, n_probe=500):
 # which renders the beam spot under every combination and ranks them by
 # compactness -- the same argument that settled the run-67 orientation and the
 # det1 mapping. A wrong ordering scatters the spot across the fan.
-STRIPS_PER_CONN = 128
-CH_PER_HALF = 64
-N_CONNECTORS = 10
+_DESIGN = routing.design(SETUP.design)
+STRIPS_PER_CONN = _DESIGN['strips_per_connector']
+CH_PER_HALF = _DESIGN['channels_per_half']
+N_CONNECTORS = _DESIGN['n_connectors']
 
-WITHIN_STRATEGY = 'reverse'
-BOTTOM_VMM_HALF = 'bot'
+WITHIN_STRATEGY = _DESIGN['default_order']        # 'reverse'
+BOTTOM_VMM_HALF = _DESIGN['bottom_vmm_half']      # 'bot'
 
 # Per-(station, connector_N, half) exceptions to WITHIN_STRATEGY, for ribbons
 # cabled differently from the rest of the detector. The DREAM readout needed
@@ -382,27 +290,18 @@ BOTTOM_VMM_HALF = 'bot'
 # Roughness after: P2_OUT 0.057, P2_MID 0.105, P2_IN 0.239 -> 0.184.
 # P2_MID and P2_OUT are not improved by any ordering, i.e. they are already
 # correct; P2_IN stays roughest even after the fix (see the plan doc).
+# The overrides are recorded in the setup's cabling rows (top_order/bottom_order).
 STRATEGY_OVERRIDES = {
-    ('P2_IN', 5, 'top'): 'linear',
-    ('P2_IN', 6, 'top'): 'linear',
+    (r['detector'], int(r['connector']), half): r[key]
+    for r in _CABLING.hybrids
+    for key, half in (('bottom_order', BOTTOM_VMM_HALF),
+                      ('top_order', 'top' if BOTTOM_VMM_HALF == 'bot' else 'bot'))
+    if r.get(key)
 }
 
-MAP_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       'P2_BASKET_mapping.csv')
-
-
-def _within_to_strip(within, half, strategy=WITHIN_STRATEGY):
-    """within (0..63) + half -> strip (1..128). Same forms as p2_mapping.py."""
-    base = 65 if half == 'top' else 1
-    if strategy == 'linear':
-        off = within
-    elif strategy == 'reverse':
-        off = 63 - within
-    elif strategy == 'pairswap':
-        off = within ^ 1
-    else:
-        raise ValueError(f'unknown strategy {strategy!r}')
-    return base + off
+PAD_TABLE_COLUMNS = ['vmm', 'ch', 'station', 'connector_N', 'half', 'sector', 'strip',
+                     'channel_id', 'pad_cx', 'pad_cy', 'radius', 'phi', 'pad_w', 'pad_h',
+                     'pad_angle', 'delta_phi', 'mapped']
 
 
 def vmm_half_map(bottom_half=BOTTOM_VMM_HALF):
@@ -417,34 +316,22 @@ def vmm_half_map(bottom_half=BOTTOM_VMM_HALF):
     return out
 
 
-def build_pad_table(map_csv=None, strategy=WITHIN_STRATEGY,
-                    bottom_half=BOTTOM_VMM_HALF, overrides=None):
-    """One row per instrumented (vmm, ch), joined to pad geometry.
+def build_pad_table(strategy=WITHIN_STRATEGY, bottom_half=BOTTOM_VMM_HALF,
+                    overrides=None):
+    """One row per instrumented (vmm, ch), joined to pad geometry
+    (p2_mapping.table.build_table of SETUP_NAME at CABLING_AT).
 
+    Every half is read with `strategy`, except the (station, connector_N, half)
+    keys of `overrides` (default STRATEGY_OVERRIDES; {} for none).
     Columns: vmm, ch, station, connector_N, half, sector, strip, channel_id,
-             pad_cx, pad_cy, radius, phi, pad_w, pad_h, pad_angle, mapped.
+             pad_cx, pad_cy, radius, phi, pad_w, pad_h, pad_angle, delta_phi, mapped.
     """
-    pad = pd.read_csv(map_csv or MAP_CSV).set_index('channel_id').sort_index()
-    halves = vmm_half_map(bottom_half)
-
     over = dict(STRATEGY_OVERRIDES if overrides is None else overrides)
-    rows = []
-    for vmm, (station, n, half) in sorted(halves.items()):
-        sector = n - 1
-        strat = over.get((station, n, half), strategy)
-        for within in range(CH_PER_HALF):
-            strip = int(_within_to_strip(within, half, strat))
-            rows.append((vmm, within, station, n, half, sector, strip,
-                         sector * STRIPS_PER_CONN + (strip - 1)))
-
-    tab = pd.DataFrame(rows, columns=['vmm', 'ch', 'station', 'connector_N',
-                                      'half', 'sector', 'strip', 'channel_id'])
-    cols = [c for c in ('pad_cx', 'pad_cy', 'radius', 'phi', 'pad_w', 'pad_h',
-                        'pad_angle', 'delta_phi') if c in pad.columns]
-    tab = tab.merge(pad[cols], left_on='channel_id', right_index=True, how='left')
-    tab['mapped'] = tab['pad_cx'].notna()
-    tab.attrs.update(strategy=strategy, bottom_half=bottom_half,
-                     overrides=dict(over))
+    tab = build_table(SETUP, CABLING_AT, order=strategy, orders=over,
+                      bottom_half=bottom_half)
+    tab = tab[[c for c in PAD_TABLE_COLUMNS if c in tab.columns]].reset_index(drop=True)
+    tab.attrs.clear()
+    tab.attrs.update(strategy=strategy, bottom_half=bottom_half, overrides=over)
     return tab
 
 

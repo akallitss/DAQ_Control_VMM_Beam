@@ -148,10 +148,10 @@ if __name__ == '__main__':
 
         run_simulated_capture(tmp_dir, 'testiface', info, stop_after_three)
 
-        from scapy.all import PcapReader  # noqa: E402  (venv dependency)
+        from p2_decode.pcapng import read_packets  # noqa: E402  (DAQ .venv, p2_readout.sh)
         for name in sorted(os.listdir(tmp_dir)):
             path = os.path.join(tmp_dir, name)
-            n_pkts = sum(1 for _ in PcapReader(path))
+            n_pkts = read_packets(path)[4]
             print(f'self-test: {name}  {os.path.getsize(path)} bytes  {n_pkts} packets')
             assert n_pkts > 0, f'{name} unreadable or empty'
             files_written.append(name)
