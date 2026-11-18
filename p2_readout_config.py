@@ -11,9 +11,13 @@ updating them can never change the numpy/pandas the DAQ runs on:
     /local/p2/p2-readout/wheels    the wheelhouse they were installed from
     /local/p2/p2-readout/src       the tagged sources (for their tests)
 
-The box's network to GitHub/PyPI is unreliable, so updates go through the
-wheelhouse: build wheels on a machine with network, copy them in, then
-    venv/bin/pip install --no-index --no-deps --find-links wheels p2-monitor==X
+The versions are pinned in git, in p2_readout_versions.txt: a DAQ version
+fixes its package versions. The box's network to GitHub/PyPI is unreliable,
+so updates go through the wheelhouse: from a PC with network,
+    bash_scripts/p2_readout.sh deploy vmm_daplxa
+builds wheels of the pinned tags, copies them in and installs them offline
+(pip --no-index --no-deps); `bash_scripts/p2_readout.sh check` compares a
+venv with the pins.
 
 Two users here:
   * the processor (vmm_processor_config.py): ENGINE 'p2' runs

@@ -1,0 +1,17 @@
+# P2 readout packages this version of DAQ_Control_VMM_Beam runs with.
+#
+# One line per package, NAME==VERSION; VERSION is the git tag vVERSION of
+# https://github.com/akallitss/NAME. They are installed in their own venv,
+# /local/p2/p2-readout/venv (see p2_readout_config.py), never in .venv.
+#
+# To upgrade: change a line here, commit, push, then
+#     bash_scripts/p2_readout.sh deploy vmm_daplxa     (from a PC with network)
+# and restart the vmm_processor / vmm_qa_watcher / vmm_live sessions at a
+# sub-run boundary. `bash_scripts/p2_readout.sh check` says whether a venv
+# matches this file.
+#
+# 2026-11-18: pinned to what was installed on vmm_daplxa; its wheels were
+# checked file by file (RECORD hashes) against wheels built from these tags.
+p2-decode==0.8.1
+p2-mapping==0.5.0
+p2-monitor==0.8.1
