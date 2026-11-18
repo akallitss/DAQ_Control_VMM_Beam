@@ -72,7 +72,7 @@ def make(base, chips, phase, sdp10, unmask, sng=1, stride=3):
                 continue
             keep.append(ln)
         ext.lines = keep
-        set_global(ext, c, 'bank1spi2', 'sng', sng, 'neighbour read-out (pedestal/noise measurement)')
+        set_global(ext, c, 'bank1spi2', 'sng', sng, 'neighbour read-out %s' % ('ON (pedestal/noise measurement)' if sng else 'OFF'))
         set_global(ext, c, 'bank1spi1', 'sdp10', sdp10, 'test pulse amplitude DAC')
         for ch in pulsed:
             ext.lines.append('Sys 0 Bec 0 Hyb %d Vmm %d Reg channel[%02d] Field st   1' % (hyb, vmm, ch))
@@ -92,6 +92,8 @@ def main(argv=None):
     ap.add_argument('--all-phases', action='store_true')
     ap.add_argument('--sdp10', type=int, required=True, help='pulser DAC (0..1023); 40 gave 100%% efficiency at K=-18')
     ap.add_argument('--unmask', action='store_true', help='remove the masks of these chips (masked channels give no data)')
+    ap.add_argument('--sng', type=int, choices=(0, 1), default=1,
+                    help='neighbour read-out: 1 = the pedestal method (default); 0 = pulses during cosmics')
     ap.add_argument('--force', action='store_true')
     a = ap.parse_args(argv)
     if not 0 <= a.sdp10 <= 1023:
@@ -106,7 +108,7 @@ def main(argv=None):
             ap.error('--out is required (or --all-phases --out-prefix)')
         jobs = [(a.phase, a.out)]
     for phase, out in jobs:
-        ext, rep = make(a.base, chips, phase, a.sdp10, a.unmask, stride=a.stride)
+        ext, rep = make(a.base, chips, phase, a.sdp10, a.unmask, sng=a.sng, stride=a.stride)
         ext.write(out, a.force)
         for c, r in rep.items():
             print('chip %2d phase %d: %d pulsed channels, unmasked %s, still masked %s'
