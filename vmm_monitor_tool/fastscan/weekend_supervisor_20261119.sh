@@ -11,7 +11,7 @@
 # One config_scan call PER RUN (not per pass, as the handoff sketched): config_scan takes HH:MM within 24 h and only
 # checks its own stop flag between configs, so per-run calls give the STOP flag, the deadline, the HV and the disk checks
 # before every run. Before each run: HV check-on (wait up to 30 min, then run anyway and log it: the HV guard decides
-# about HV, not this script); free disk >= 75 GB (else wait for the pruner, up to 2 h). A run that did not finish is
+# about HV, not this script); free disk >= 65 GB (else wait for the pruner, up to 2 h; the handoff said 75, but the pruner only starts below 70). A run that did not finish is
 # retried once after 15 min; 6 failed attempts in a row -> ALERT and stop (HV left to the guard).
 # runs.csv (run, short, file, pass, start, end) is what the lxplus analysis uses to name the runs.
 set -u
@@ -67,8 +67,8 @@ disk_ok() {
     local i g
     for i in $(seq 1 24); do
         g=$(df -BG --output=avail /local/p2/p2data | tail -1 | tr -dc 0-9)
-        [ "$g" -ge 75 ] && return 0
-        [ $i = 1 ] && say "only ${g} GB free (< 75): waiting for the pruner, up to 2 h"
+        [ "$g" -ge 65 ] && return 0
+        [ $i = 1 ] && say "only ${g} GB free (< 65): waiting for the pruner, up to 2 h"
         sleep 300
     done
     say "still only ${g} GB free after 2 h - trying anyway (config_scan refuses below 60 GB)"
