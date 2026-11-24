@@ -23,7 +23,7 @@ import os
 import re
 import statistics as S
 
-EXT_DIR = '/local/p2/p2testbench/TestBenchCERN/config_ext'
+EXT_DIR = '/local/p2/testbench/TestBenchCERN/config_ext'
 W = os.path.expanduser('~/trim_work/out/gain_20261118')
 P45 = 'p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_'
 LINE = re.compile(r'^\s*Sys\s+0\s+Bec\s+0\s+Hyb\s+(\d+)\s+Vmm\s+(\d+)\s')
