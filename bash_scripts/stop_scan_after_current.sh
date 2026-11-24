@@ -15,7 +15,7 @@
 set -uo pipefail
 
 RUN="${1:?usage: $0 <run_name>}"
-RUNS_DIR=/local/p2/p2data/TB_July26_H4/runs
+RUNS_DIR=/local/p2/data/TB_July26_H4/runs
 FLAG="$RUNS_DIR/$RUN/BEAM_QUALITY.json"
 LOG=/local/p2/config_scan.log
 
