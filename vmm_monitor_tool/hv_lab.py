@@ -10,7 +10,10 @@ are negative polarity).
     hv_lab.py state                          # one line per channel
     hv_lab.py ramp-up   [--rup 5] [--hold 120] [--stages 0.5,0.8,0.9,0.95,1.0]
     hv_lab.py check-on                       # exit 0 if all six are ON and at their setpoint
-    hv_lab.py guard --until 2026-11-17T08:00 [--on-trip retry|all-off] [--end leave|down]
+    hv_lab.py guard --until 2026-11-17T08:00 [--on-trip detector-off|retry|retry-detector-off|all-off]
+                    [--retries 1] [--end leave|down]
+        retry-detector-off (user, 19 Nov): a tripped channel is re-ramped --retries times; the next
+        trip powers off its whole detector (mesh and drift), as detector-off does
     hv_lab.py ramp-down [--rdw 10]
 
 Targets: the operating point of /local/p2/p2-setups/lab_saclay_2026.yaml (run on 3-5 Nov 2026),
@@ -371,6 +374,7 @@ def guard(until, on_trip, retries, end, poll=10, i_warn=3.0, persist_s=30.0):
     given_up = read_given_up()      # detectors switched off during the ramp stay off
     flag = os.path.join(LOGDIR, 'GUARD_STATUS')
     last_ok_log, high_since, bad_since = 0, {}, {}
+    regrace = {}     # hw -> end of the grace after a re-ramp (only a real trip counts while it climbs)
     with open(csvp, 'a') as f:
         f.write('time,' + ','.join('%s_vmon,%s_imon,%s_power' % ((TARGETS[hw][0],) * 3) for hw in TARGETS) + '\n')
         while datetime.now() < until:
@@ -392,6 +396,8 @@ def guard(until, on_trip, retries, end, poll=10, i_warn=3.0, persist_s=30.0):
             for hw, c in ch.items():
                 if hw in given_up or not bad_status(c):
                     bad_since.pop(hw, None)
+                    continue
+                if time.time() < regrace.get(hw, 0) and not is_trip(c):
                     continue
                 t_bad = bad_since.setdefault(hw, time.time())
                 if is_trip(c) or time.time() - t_bad >= persist_s:
@@ -419,7 +425,13 @@ def guard(until, on_trip, retries, end, poll=10, i_warn=3.0, persist_s=30.0):
                     detector_off(problems, given_up)
                     continue
                 for hw in problems:
+                    if hw in given_up:
+                        continue
                     if used[hw] >= retries:
+                        if on_trip == 'retry-detector-off':
+                            log('%s: tripped again (retries used: %d) -> its detector OFF' % (TARGETS[hw][0], used[hw]))
+                            detector_off({hw}, given_up)
+                            continue
                         log('%s: tripped again, left OFF (retries used: %d)' % (TARGETS[hw][0], used[hw]))
                         if int(ch[hw].get('power', 0)):
                             power_off(hw)
@@ -431,6 +443,8 @@ def guard(until, on_trip, retries, end, poll=10, i_warn=3.0, persist_s=30.0):
                     try:
                         setp(hw, 'v0', TARGETS[hw][1])
                         setp(hw, 'power', 1)
+                        regrace[hw] = time.time() + 300
+                        bad_since.pop(hw, None)
                     except RuntimeError as e:
                         log('re-ramp refused: %s' % e)
                 with open(flag, 'w') as g:
@@ -462,7 +476,7 @@ def main():
     s.add_argument('--rdw', type=float, default=10.0)
     s = sub.add_parser('guard')
     s.add_argument('--until', required=True, help='ISO time, e.g. 2026-11-17T08:00')
-    s.add_argument('--on-trip', choices=('detector-off', 'retry', 'all-off'), default='detector-off')
+    s.add_argument('--on-trip', choices=('detector-off', 'retry', 'retry-detector-off', 'all-off'), default='detector-off')
     s.add_argument('--retries', type=int, default=1)
     s.add_argument('--end', choices=('leave', 'down'), default='leave')
     a = ap.parse_args()
