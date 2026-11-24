@@ -4,7 +4,7 @@
 #   -> 60 s noise capture of pass 2 and of trimmed_Km18_v1 -> GUI file configured again.
 set -e
 cd ~/trim_work
-E=/local/p2/p2testbench/TestBenchCERN/config_ext
+E=/local/p2/testbench/TestBenchCERN/config_ext
 P=p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_
 F=out/fastscan_20261116
 T=$F/target
