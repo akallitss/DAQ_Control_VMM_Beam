@@ -1,7 +1,7 @@
 #!/bin/bash
 # monitor maps at several gains (HV off, acquisition off), 18 Nov
 cd ~/trim_work
-CE=/local/p2/p2testbench/TestBenchCERN/config_ext
+CE=/local/p2/testbench/TestBenchCERN/config_ext
 SRC=$CE/p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_trimmed_Km18_v1_hvm.txt
 OUT=~/trim_work/out/gain_20261118/maps; mkdir -p $OUT
 for spec in "7 16.0 60" "5 9.0 30" "6 12.0 45" "4 6.0 15" "3 4.5 0"; do
