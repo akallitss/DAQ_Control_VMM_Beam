@@ -45,8 +45,8 @@ import time
 from datetime import datetime, timedelta
 
 REPO = '/local/p2/DAQ_Control_VMM_Beam'
-CFG_DIR = '/local/p2/p2testbench/TestBenchCERN/config_ext'
-DATA = '/local/p2/p2data/cosmics_3det_202610/runs'
+CFG_DIR = '/local/p2/testbench/TestBenchCERN/config_ext'
+DATA = '/local/p2/data/cosmics_3det_202610/runs'
 BASE = 'p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_safe_m9c16to21_m4c36to41_h0open.txt'
 SCAN_LOG = '/local/p2/config_scan.log'
 TRIP = os.path.join(REPO, 'config', 'rate_guard_tripped.json')
