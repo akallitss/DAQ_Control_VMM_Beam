@@ -134,8 +134,8 @@ try:
     ANALYSIS_DIR = os.path.join(BASE_DATA_DIR, 'analysis')
 except Exception:
     IS_BEAM_SITE = True              # the unknown case keeps the beam behaviour
-    RUNS_DIR = '/local/p2/p2data/TB_July26_H4/runs'
-    ANALYSIS_DIR = '/local/p2/p2data/TB_July26_H4/analysis'
+    RUNS_DIR = '/local/p2/data/TB_July26_H4/runs'
+    ANALYSIS_DIR = '/local/p2/data/TB_July26_H4/analysis'
 
 # Capture volume per minute of the previous point (lab sites), so the next one
 # is refused if it would not fit above MIN_FREE_GB. Thresholds step DOWN through
