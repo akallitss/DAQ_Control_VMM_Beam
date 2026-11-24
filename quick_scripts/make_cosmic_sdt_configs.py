@@ -43,7 +43,7 @@ import os
 import re
 import sys
 
-TEMPLATE_DIR = '/local/p2/p2testbench/TestBenchCERN/config_ext'
+TEMPLATE_DIR = '/local/p2/testbench/TestBenchCERN/config_ext'
 TEMPLATE = 'p2b-config-cern-ext_gain4.5_peaktime200_opt.txt'
 
 # Chip baselines (sdt DAC), from the July beam ADC edges (handoff 5.2).
