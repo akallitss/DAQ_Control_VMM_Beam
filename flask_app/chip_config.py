@@ -4,18 +4,18 @@ VMM chip configuration from the GUI: pick one of the prepared exception .txt
 files (config_ext/) and apply it on top of the base YAML (config_base/) by
 running the p2basket slow-control utility.
 
-The applier is the TestBenchCosmics p2basket_sc_config.py (p2basket-python
+The applier is the TestBenchCERN p2basket_sc_config.py (identical to the TestBenchCosmics one) (p2basket-python
 shebang) — called as a subprocess, never imported and never modified here.
 Its CLI: -c <conf_dir> -b <base_conf> -e <ext_conf>, names joined to conf_dir.
 
 Machine-specific — configured in config/chip_config.json (gitignored):
 
 {
-  "conf_dir": "/local/p2/p2testbench/TestBenchCERN",
+  "conf_dir": "/local/p2/testbench/TestBenchCERN",
   "base_subdir": "config_base",
   "ext_subdir": "config_ext",
   "base_yaml": null,
-  "apply_script": "/local/p2/p2testbench/TestBenchCosmics/p2basket_sc_config.py",
+  "apply_script": "/local/p2/testbench/TestBenchCERN/p2basket_sc_config.py",
   "timeout_s": 300
 }
 
