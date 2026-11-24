@@ -69,7 +69,7 @@ fi
 set -u -o pipefail
 
 REPO=/local/p2/DAQ_Control_VMM_Beam
-CONF_DIR=/local/p2/p2testbench/TestBenchCERN
+CONF_DIR=/local/p2/testbench/TestBenchCERN
 BASE=config_base/p2b-config-cern-base.yaml
 DEFAULT_CFG=p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_safe_m9c16to21_m4c36to41_h0open.txt
 UNMASKED_CFG=p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_safe_h0open_fwtest_unmasked.txt
@@ -81,10 +81,10 @@ HERE=$(cd "$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)
 BURST_STATS=$HERE/fw_burst_stats.py
 P2_PY=/local/p2/p2-readout/venv/bin/python
 SC=/local/p2/deploy/bin/p2basket-sc
-WARM_RESET=/local/p2/p2testbench/TestBenchCosmics/p2basket_sc_warm_reset.py
+WARM_RESET=/local/p2/testbench/TestBenchCERN/p2basket_sc_warm_reset.py
 APPLY=$CONF_DIR/p2basket_sc_config.py
-IFACE=enp4s0f1
-OUT_ROOT=${OUT_ROOT:-/local/p2/p2data/cosmics_3det_202610/fw_test}
+IFACE=enp2s0   # data NIC of dedippcy245 (enp4s0f1 on the old box)
+OUT_ROOT=${OUT_ROOT:-/local/p2/data/cosmics_3det_202610/fw_test}
 LIMIT_HZ=${LIMIT_HZ:-1000}
 WARM_RESET_LOOP=${WARM_RESET_LOOP:-3}
 
