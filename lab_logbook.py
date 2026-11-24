@@ -147,7 +147,8 @@ def run_block(run):
                 nbytes += os.path.getsize(os.path.join(dp, f))
                 nfiles += 1
     cab = sorted({c.get('cable') for d in cfg.get('detectors', [])
-                  for c in d.get('vmm_map', {}).get('enp4s0f1', {}).get('connectors', {}).values()})
+                  for m in d.get('vmm_map', {}).values()   # any data NIC (enp4s0f1 old box, enp2s0 new)
+                  for c in m.get('connectors', {}).values()})
     ch = {d['name']: d.get('chamber') for d in cfg.get('detectors', [])}
     lines = [
         f"- started {cfg.get('start_time')}; plan `{cfg.get('run_plan')}`; measuring {cfg.get('beam_type')}",
