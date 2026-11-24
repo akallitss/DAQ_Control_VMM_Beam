@@ -20,7 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import vmm_trim as VT  # noqa: E402
 
-EXT_DIR = '/local/p2/p2testbench/TestBenchCERN/config_ext'
+EXT_DIR = '/local/p2/testbench/TestBenchCERN/config_ext'
 PROBE = os.path.join(os.path.dirname(HERE), 'noise_probe.py')
 
 
