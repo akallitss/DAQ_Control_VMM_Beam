@@ -46,7 +46,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import vmm_trim  # noqa: E402
 
-BENCH = '/local/p2/p2testbench/TestBenchCERN'
+BENCH = '/local/p2/testbench/TestBenchCERN'
 DEFAULT_BASE = os.path.join(BENCH, 'config_base', 'p2b-config-cern-base.yaml')
 DEFAULT_BIN = os.path.expanduser('~/vmm_monitor_build/vmm_monitor')
 GUI = 'http://localhost:5002'
