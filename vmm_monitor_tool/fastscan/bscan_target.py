@@ -30,7 +30,7 @@ import bscan_analyze as BA  # noqa: E402
 import vmm_trim as VT  # noqa: E402
 import vmm_monitor_scan as MS  # noqa: E402
 
-EXT_DIR = '/local/p2/p2testbench/TestBenchCERN/config_ext'
+EXT_DIR = '/local/p2/testbench/TestBenchCERN/config_ext'
 SDTCAL = os.path.expanduser('~/trim_work/out/sdtcal.json')
 TRIMCURVE = os.path.expanduser('~/trim_work/out/trimcurve_ch5_40.json')
 
