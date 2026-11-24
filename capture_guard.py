@@ -64,7 +64,7 @@ try:
     from run_config_beam import BASE_DATA_DIR, IS_BEAM_SITE
     RUNS_DIR = os.path.join(BASE_DATA_DIR, 'runs')
 except Exception:
-    RUNS_DIR = '/local/p2/p2data/TB_July26_H4/runs'
+    RUNS_DIR = '/local/p2/data/TB_July26_H4/runs'
     IS_BEAM_SITE = True
 
 POLL_S = 20
