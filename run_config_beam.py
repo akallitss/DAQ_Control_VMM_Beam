@@ -551,6 +551,17 @@ GAS_MIXTURE = ('Ar/Iso 95/5 (UNCONFIRMED 2026-10-22)' if SITE == 'lab'
 # run; the hybrids H1-H9 did not move, the chambers did).
 LAB_CHAMBERS = {det: d['alias'] for det, d in STAND.detectors.items() if 'alias' in d}
 
+# Who bulked each chamber (run_config.json 'bulked_from'). det1-det4 were bulked
+# at Saclay (insulation mask V1); det5 at CERN (CERN mask, 0.5 mm pillars on a
+# 2 mm grid). Unknown chambers keep the Saclay default.
+CHAMBER_BULKED_FROM = {'det5': 'CERN'}
+
+
+def _bulked_from(det):
+    if IS_BEAM_SITE:
+        return 'Alex+Enzo'
+    return CHAMBER_BULKED_FROM.get(LAB_CHAMBERS.get(det), 'Alex+Enzo')
+
 # VMM readout cabling in force NOW (a run is configured at its start), per
 # station: connector -> (hybrid, bottom VMM, top VMM), and the cable on each
 # connector. The setup file keeps every earlier cabling with the date it
@@ -1149,7 +1160,7 @@ class Config(RunConfigBase):
                 'chamber': LAB_CHAMBERS[det] if not IS_BEAM_SITE else None,
                 'det_type': 'P2',
                 'resist_type': 'none',
-                'bulked_from': 'Alex+Enzo',
+                'bulked_from': _bulked_from(det),
                 'det_center_coords': {'x': 0, 'y': 0, 'z': _P2_Z_MM[det]},  # mm
                 'det_orientation': {'x': 0, 'y': 0, 'z': 0},  # deg
                 # Empty where the crate is not ours (HV_TARGETS False): the
