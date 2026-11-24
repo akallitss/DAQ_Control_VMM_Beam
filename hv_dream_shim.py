@@ -374,6 +374,10 @@ class RemoteHVLogger:
 LAB_SET_DEFAULTS = {'tolerance_v': 3.0, 'poll_s': 5, 'timeout_s': 900,
                     'settle_s': 30, 'http_timeout_s': 30}
 STOP_RUN_FLAG = os.path.join(BASE_DIR, '.stop_run')
+# Lab: while this file exists the runs never SET the HV; another process owns it (hv_lab.py
+# guard, which switches a tripping detector off and must not see it switched on again by the
+# next run). The gate only prints the readback against the run's targets and lets the run start.
+LAB_HV_HANDS_OFF_FLAG = os.path.join(BASE_DIR, 'config', 'lab_hv_hands_off')
 
 
 def _banco(bridge, path, body=None, timeout=30):
@@ -427,6 +431,16 @@ def _lab_gate(bridge, sub_run):
         if missing:
             return fail(f'banco does not know {missing} ({st.get("errors") or st.get("message")})')
         labels = {hw: chans[hw].get('label') or hw for hw in targets}
+        if os.path.exists(LAB_HV_HANDS_OFF_FLAG):
+            notes = []
+            for hw, v in targets.items():
+                c = chans[hw]
+                ok = (bool(int(c.get('power', 0))) == (v > 0)) and abs(float(c.get('vmon', 0)) - v) <= opts['tolerance_v']
+                notes.append(f'{labels[hw]} {"ON" if int(c.get("power", 0)) else "OFF"} '
+                             f'{float(c.get("vmon", 0)):.1f}/{v:g} V{"" if ok else " (NOT AT TARGET)"}')
+            print(f'[shim] {name}: HV hands-off ({LAB_HV_HANDS_OFF_FLAG}): nothing set; readback: '
+                  + ', '.join(notes) + ' — starting the capture')
+            return f'HV Set {name}'
         print(f'[shim] {name}: setting HV on banco: ' +
               ', '.join(f'{labels[hw]} {v:g} V' for hw, v in targets.items()))
         # 0) refuse the whole sub-run BEFORE touching anything if a target is
