@@ -26,10 +26,10 @@ import urllib.request
 from datetime import datetime
 
 GUI = 'http://localhost:5002'
-BENCH = '/local/p2/p2testbench/TestBenchCERN'
+BENCH = '/local/p2/testbench/TestBenchCERN'
 SC = '/local/p2/deploy/bin/p2basket-sc'
 BASE = 'config_base/p2b-config-cern-base.yaml'
-IFACE = 'enp4s0f1'
+IFACE = 'enp2s0'          # data NIC of dedippcy245 (enp4s0f1 on the old box)
 P2_PY = '/local/p2/p2-readout/venv/bin/python'
 COUNTER = '/local/p2/DAQ_Control_VMM_Beam/quick_scripts/adaptive_thr_scan.py'
 
