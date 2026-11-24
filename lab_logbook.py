@@ -46,12 +46,13 @@ OUT = os.path.join(LOG_DIR, 'LOGBOOK.md')
 OVERVIEW = os.path.join(LOG_DIR, 'OVERVIEW.md')
 STATE = os.path.join(REPO, 'config', 'current_run_state.json')
 
-# chamber -> (station, channels as wired 2026-10-22)
+# chamber -> (station, channels as wired 2026-10-22). The keys stay det2_* (old
+# entries and scripts use them); from run_389 (2026-11-23) the P2_MID chamber is det5.
 HV_CHANNELS = [
     ('det3_drift', 'det3 (P2_IN)  drift  CAEN 4ch ch0'),
     ('det3_mesh',  'det3 (P2_IN)  mesh   CAEN 4ch ch1'),
-    ('det2_mesh',  'det2 (P2_MID) mesh   rack HV ch0'),
-    ('det2_drift', 'det2 (P2_MID) drift  rack HV ch1'),
+    ('det2_mesh',  'P2_MID mesh  (det2 to run_388, det5 from run_389)  rack HV ch0'),
+    ('det2_drift', 'P2_MID drift (det2 to run_388, det5 from run_389)  rack HV ch1'),
     ('det1_drift', 'det1 (P2_OUT) drift  CAEN 4ch ch3'),
     ('det1_mesh',  'det1 (P2_OUT) mesh   CAEN 4ch ch4'),
 ]
