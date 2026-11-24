@@ -41,7 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vmm_stations as vs
 import vmm_efficiency as ve
 
-DATA_ROOT = '/local/p2/p2data/TB_July26_H4'
+DATA_ROOT = '/local/p2/data/TB_July26_H4'
 
 # (card, channel) of each station's supplies, as the run config's keys (strings),
 # from the beam-test setup's HV channel map (p2-mapping, vmm_stations.SETUP).
