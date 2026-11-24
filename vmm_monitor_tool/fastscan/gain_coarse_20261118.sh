@@ -3,7 +3,7 @@
 # to find where each gain becomes quiet, before the per-gain baseline scans. Waits for the gain maps.
 cd ~/trim_work
 until [ "$(grep -c GMAPSDONE gmaps_20261118.log)" -ge 2 ]; do sleep 10; done
-CE=/local/p2/p2testbench/TestBenchCERN/config_ext
+CE=/local/p2/testbench/TestBenchCERN/config_ext
 SRC=$CE/p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_trimmed_Km18_v1_hvm.txt
 OUT=~/trim_work/out/gain_20261118/coarse; mkdir -p $OUT
 LIST=""
