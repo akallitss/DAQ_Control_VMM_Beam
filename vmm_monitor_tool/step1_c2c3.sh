@@ -6,7 +6,7 @@
 # The GUI selection (Km18_i5) is configured again at the end.
 set -e
 cd ~/trim_work
-E=/local/p2/p2testbench/TestBenchCERN/config_ext
+E=/local/p2/testbench/TestBenchCERN/config_ext
 T=p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_trimmed_Km18_v1.txt
 P=p2b-config-cern-ext_gain4.5_peaktime200_opt_cosmic_step1_c2c3
 O=out/step1
