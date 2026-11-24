@@ -61,7 +61,7 @@ LIST="${P45}trimmed_Km18_v1.txt ${P45}bscan_hvon10_v1.txt ${P45}bscan_hvon50_v1.
 for g in $GAINS; do
     for R in 10 50; do
         f=p2b-config-cern-ext_gain${g}_peaktime200_opt_cosmic_gscan_hvon${R}.txt
-        [ -f /local/p2/p2testbench/TestBenchCERN/config_ext/$f ] && LIST="$LIST $f"
+        [ -f /local/p2/testbench/TestBenchCERN/config_ext/$f ] && LIST="$LIST $f"
     done
 done
 say "rate check: $LIST"
