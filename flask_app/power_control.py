@@ -7,9 +7,9 @@ supplies) from the GUI.
 Machine-specific — configured in config/power_config.json (gitignored):
 
 {
-  "cwd": "/local/p2/p2testbench/TestBenchCERN",
-  "path_prepend": ["/local/p2/p2equipment/LVPS/tdk_lambda",
-                   "/local/p2/p2equipment/arduino"],
+  "cwd": "/local/p2/testbench/TestBenchCERN",
+  "path_prepend": ["/local/p2/equipment/LVPS/tdk_lambda",
+                   "/local/p2/equipment/arduino"],
   "actions": {
     "measure": "pilot_tdkl.py -c config/tdkl_Alinx.json --action measure && pilot_tdkl.py -c config/tdkl_Hybrids.json --action measure",
     "on":  "./switchOn_tdk.sh",
