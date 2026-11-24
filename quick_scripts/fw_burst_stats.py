@@ -12,7 +12,7 @@ Run with the p2-readout python (it needs p2_decode), memory-capped:
     systemd-run --user --scope -q -p MemoryMax=2G /local/p2/p2-readout/venv/bin/python -I \\
         fw_burst_stats.py --limit-hz 1000 --json out.json <take dir | run_N | files...>
 
-A take dir is searched for */raw_daq_data/*.pcapng; run_N means /local/p2/p2data/cosmics_3det_202610/runs/run_N.
+A take dir is searched for */raw_daq_data/*.pcapng; run_N means /local/p2/data/cosmics_3det_202610/runs/run_N.
 Files are streamed chunk by chunk (a 5-min cycle of a bursting config is ~1.4 GB). Live time is the span of
 the packet timestamps of each file. Hit-to-hit times are taken within a decoder chunk (pairs across chunk
 boundaries are dropped: a negligible fraction for a channel firing at kHz-MHz).
@@ -27,7 +27,7 @@ import sys
 import numpy as np
 import p2_decode
 
-RUNS = '/local/p2/p2data/cosmics_3det_202610/runs'
+RUNS = '/local/p2/data/cosmics_3det_202610/runs'
 NCH = 20 * 64
 DT_BIN_NS = 25.0
 DT_NBINS = 800              # 0-20 us in 25 ns bins; last bin = overflow
