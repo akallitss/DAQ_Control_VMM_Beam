@@ -43,6 +43,11 @@ if os.path.isfile(_site_file):
     with open(_site_file) as _f:
         SITE = _f.read().strip() or SITE
 
+# Data NIC of the DAQ box: enp2s0 (10 Gb/s, 192.168.1.16) on dedippcy245 since 2026-11-24;
+# it was enp4s0f1 on dedippce185 (vmm_daplxa). The capture files are named after it
+# (<iface>_<seq>_<time>.pcapng) and it keys each detector's vmm_map in run_config.json.
+DATA_IFACE = 'enp2s0'
+
 SITES = {
     'local': {
         # All data under a local test tree (runs/, analysis/, sim_pcapng/, ...)
@@ -66,7 +71,7 @@ SITES = {
         # Saclay VMM test bench (dedippce185 / vmm_daplxa): real ALINX capture,
         # fake HV + fake LV ('sim' IPs — bench LV is the TDK supplies, driven
         # from the GUI's Hybrids LV Power panel, not by lv_control).
-        'base_data_dir': '/local/p2/p2data/vmm_daq_bench/',
+        'base_data_dir': '/local/p2/data/vmm_daq_bench/',
         'daq_host': '127.0.0.1',
         'hv_ip': 'sim',
         'hv_n_cards': 4,
@@ -76,14 +81,14 @@ SITES = {
         },
         'simulate': False,   # real dumpcap capture on the ALINX interface
         'interfaces': [
-            {'name': 'alinx', 'iface': 'enp4s0f1', 'slow_control': 'alinx',
-             'alinx_config': '/local/p2/p2testbench/TestBenchCERN/config/config_alinx_noThresholds.json'},
+            {'name': 'alinx', 'iface': DATA_IFACE, 'slow_control': 'alinx',
+             'alinx_config': '/local/p2/testbench/TestBenchCERN/config/config_alinx_noThresholds.json'},
         ],
     },
     'sps': {
         # July 2026 test beam, SPS H4: shared group data tree on the DAQ machine
         # (basketp2 group-writable, setgid + default ACLs).
-        'base_data_dir': '/local/p2/p2data/TB_July26_H4/',
+        'base_data_dir': '/local/p2/data/TB_July26_H4/',
         'daq_host': '127.0.0.1',
         # HV: the CAEN crate hangs off banco — port 2100 here is served by
         # hv_dream_shim.py (start_servers.sh picks it at sps), which gates
@@ -115,7 +120,7 @@ SITES = {
              # the TestBenchCERN directory. alinx-sc only exists in the old
              # December install and is NOT on PATH here — do not switch back.
              'p2basket_sc': '/local/p2/deploy/bin/p2basket-sc',
-             'sc_cwd': '/local/p2/p2testbench/TestBenchCERN',
+             'sc_cwd': '/local/p2/testbench/TestBenchCERN',
              'sc_config': 'config_base/p2b-config-cern-base.yaml',
              'alinx_config': None},
             # SRS chain — uncomment to also capture the SRS/FEC interface:
@@ -137,7 +142,7 @@ SITES = {
         # at the campaign being taken.
         # 2026-10-22: three-chamber cosmic-muon threshold scan (see
         # docs/HANDOFF_COSMIC_THRESHOLD_SCAN.md).
-        'base_data_dir': '/local/p2/p2data/cosmics_3det_202610/',
+        'base_data_dir': '/local/p2/data/cosmics_3det_202610/',
         'daq_host': '127.0.0.1',
         # HV lives on banco (CAEN crate on the 192.168.10.x cosmic-bench LAN,
         # unreachable from this machine — verified 2026-09-09). Port 2100 is
@@ -168,16 +173,16 @@ SITES = {
         # so a 10-minute file means a dead readout goes unnoticed for 20 min.
         'capture_duration_s': 120,
         'interfaces': [
-            # Same data NIC as at the beam test (enp4s0f1, 192.168.1.16 in the
+            # Data NIC: DATA_IFACE (enp4s0f1 on the old box at the beam test; 192.168.1.16 in the
             # lab). 2026-10-22: the cosmic scan runs the SAME hybrids and ALINX
             # as the beam test, so slow control is the TestBenchCERN chain
             # (bare form, as at CERN) -- the chip configs are then identical to
             # the beam ones apart from what the scan changes. (The earlier
             # TestBenchCosmics/config_alinx_noThresholds_hyb2.json wiring was
             # for the Fe55 bench with hybrid 2 only.)
-            {'name': 'alinx', 'iface': 'enp4s0f1', 'slow_control': 'p2basket',
+            {'name': 'alinx', 'iface': DATA_IFACE, 'slow_control': 'p2basket',
              'p2basket_sc': '/local/p2/deploy/bin/p2basket-sc',
-             'sc_cwd': '/local/p2/p2testbench/TestBenchCERN',
+             'sc_cwd': '/local/p2/testbench/TestBenchCERN',
              'sc_config': 'config_base/p2b-config-cern-base.yaml',
              'alinx_config': None},
         ],
@@ -1169,7 +1174,7 @@ class Config(RunConfigBase):
                 'hv_channels': P2_HV[det] if HV_TARGETS else {},
                 # VMM readout cabling (informational; labels QA plots).
                 'vmm_map': {
-                    'enp4s0f1': {
+                    _SITE_CFG['interfaces'][0]['iface']: {
                         'hybrids': [h for h, _, _ in P2_VMM_CABLING[det].values()],
                         'vmms': sorted(v for _, b, t in P2_VMM_CABLING[det].values()
                                        for v in (b, t)),
