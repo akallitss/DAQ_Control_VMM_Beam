@@ -32,7 +32,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vmm_trim  # noqa: E402
 
-BENCH_EXT = '/local/p2/p2testbench/TestBenchCERN/config_ext'
+BENCH_EXT = '/local/p2/testbench/TestBenchCERN/config_ext'
 
 
 def wlstsq(X, y, w):
