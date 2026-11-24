@@ -44,7 +44,8 @@ fi
 DEST="$(head -n1 "$DEST_FILE" | tr -d '[:space:]')"
 [ -n "$DEST" ] || { log "$DEST_FILE is empty"; exit 1; }
 
-SRC="$("$PY" -c 'from run_config_beam import BASE_DATA_DIR; print(BASE_DATA_DIR)')"
+# cd into the repo for the import: cron starts this from $HOME, where run_config_beam is not importable
+SRC="$(cd "$BASE_DIR" && "$PY" -c 'from run_config_beam import BASE_DATA_DIR; print(BASE_DATA_DIR)')"
 SRC="${SRC%/}"                       # strip trailing slash for basename
 SUBDIR="$(basename "$SRC")"          # e.g. vmm_daq_bench
 DEST_TREE="$DEST/$SUBDIR"
